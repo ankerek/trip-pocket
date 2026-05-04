@@ -89,25 +89,25 @@ Stop shipping new features. Make it okay to hand to a friend.
 
 ## v1.0 — "App Store launch"
 
-Public. Paid.
+Public. Paid from day one.
 
-**Definition of done:** live on the App Store with a working freemium flow, and the AI extraction features clearly gated behind Pro.
+**Definition of done:** live on the App Store. Paywall is the gate at first launch and on entitlement lapse; trial-active and subscribed users get the whole app; everyone else is locked out.
 
 **Scope:**
-- Free tier: small fixed number of trips, no AI extraction.
-- Pro tier: unlimited trips + AI extraction + Places view + tap-to-open in Maps.
-- StoreKit + RevenueCat integration.
-- Auth on the AI proxy: only forward LLM calls for receipts that RevenueCat confirms as active Pro.
-- Paywall screen, triggered when a free user (a) hits the trip cap or (b) attempts an AI-gated action.
-- Disclosure that AI features send screenshot text off-device, with an explicit opt-in the first time a user triggers extraction as Pro.
+- Single paid tier: monthly + yearly subscription, both with a 7-day free trial.
+- StoreKit + RevenueCat integration with the introductory offer (the trial) configured in App Store Connect.
+- Paywall screen at first launch (after onboarding); cannot be dismissed without starting the trial or already being subscribed.
+- Trial-expiry / cancellation lock: when entitlement lapses, the app falls back to the paywall on next foreground. Local data preserved; resubscribing restores access.
+- Auth on the AI proxy: only forward LLM calls for users RevenueCat confirms as trial-active or subscribed.
+- Disclosure that AI features send screenshot text off-device, surfaced during onboarding.
 - Privacy policy, terms, App Store listing copy + screenshots.
 - Lightweight, privacy-respecting analytics (PostHog).
 - In-app feedback / contact link.
 
 **Open questions for launch:**
-- Free trip cap. Decide based on what beta users settle into.
-- Pricing tiers (monthly + yearly).
-- Whether free users get N trial AI extractions per month as a taste, or zero. Default zero unless beta data argues otherwise.
+- Pricing tiers (monthly + yearly amounts).
+- Whether the paywall sits before or after onboarding. Default: paywall *after* onboarding so the user has seen what they're paying for; revisit if beta data argues otherwise.
+- Whether to A/B-test the trial length around 7 days post-launch (PostHog feature flags).
 
 ---
 
@@ -129,7 +129,6 @@ Flagged so they don't get forgotten, but no need to resolve yet:
 
 - LLM provider for the extraction proxy (Anthropic vs. OpenAI vs. small open-weights via a hosted runner). Pick at v0.2 based on accuracy on real screenshots.
 - Where the proxy runs (Cloudflare Workers vs. Vercel Functions). Either is fine; pick whichever is faster to ship.
-- Free-tier "taste of AI" allowance (N free extractions/month vs. zero). Decide from beta data.
 - Sync direction (CloudKit vs. own backend). Deferred to v1.x.
 
 ---

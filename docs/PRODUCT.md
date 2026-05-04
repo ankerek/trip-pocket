@@ -82,13 +82,13 @@ Each of those is a tarpit. The wedge is *save it before it's lost*, and that's w
 
 ## Business model
 
-Freemium.
+Paid subscription with a 7-day free trial. No free tier.
 
-**Free** is the screenshot inbox: capture, store, tag, OCR-search, and a small number of trips. The full save-and-find loop, no AI. Genuinely useful on its own — saving a trip or two of inspiration should already feel worth it.
+The app is behind a paywall from day one. Anyone can start a 7-day trial that unlocks the whole thing — capture, OCR-search, AI place extraction, the Places view, tap-to-open in Maps, unlimited trips. After 7 days the subscription auto-renews (monthly or yearly) unless the user cancels through the App Store.
 
-**Pro** is the smart layer: AI extraction of places from screenshots, the per-trip Places view, tap-to-open in Maps, and unlimited trips. The pitch is simple — without Pro it's a folder of pictures; with Pro the screenshots become places you can use.
+The trial is the only on-ramp. The pitch: a week is enough to see whether the screenshots-to-places loop saves you the time it costs. People who get value will keep it; people who don't, won't.
 
-Pricing is decided at launch from beta data, but the shape is clear: the differentiator is AI doing the work, not a bigger numerical limit.
+Pricing (monthly + yearly) is decided at launch from beta data.
 
 ## Positioning
 

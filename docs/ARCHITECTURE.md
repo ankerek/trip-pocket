@@ -7,7 +7,7 @@ Solo working document. Companion to PRODUCT.md (what) and ROADMAP.md (when). Thi
 In scope:
 
 - The shape of the iOS app from v0.1 capture loop through v1.0 App Store launch.
-- Load-bearing technical decisions: storage, reactivity, native modules, freemium, telemetry.
+- Load-bearing technical decisions: storage, reactivity, native modules, paywall + trial, telemetry.
 - Cheap forward-proofing for v1.x sync (and the no-op for sharing).
 
 Out of scope:
@@ -36,7 +36,7 @@ All primary keys are UUIDs (generated client-side). Every syncable table carries
 Tables:
 
 - `trips` — `id`, `name`, `color`, `created_at`, `updated_at`, `deleted_at`, `owner_id`.
-- `screenshots` — `id`, `trip_id` (nullable; `NULL` = Inbox), `file_path`, `content_hash`, `source` (`share` | `auto` | `manual`), `ocr_status` (`pending` | `done` | `failed`), `ocr_text`, `extraction_status` (`pending` | `done` | `failed` | `skipped`), `captured_at`, `created_at`, `updated_at`, `deleted_at`, `owner_id`. `extraction_status: skipped` covers free-tier screenshots that were never sent to the proxy.
+- `screenshots` — `id`, `trip_id` (nullable; `NULL` = Inbox), `file_path`, `content_hash`, `source` (`share` | `auto` | `manual`), `ocr_status` (`pending` | `done` | `failed`), `ocr_text`, `extraction_status` (`pending` | `done` | `failed`), `captured_at`, `created_at`, `updated_at`, `deleted_at`, `owner_id`.
 - `tags` — `id`, `screenshot_id`, `kind` (`place` | `food` | `activity`), `value`, `created_at`, `updated_at`, `deleted_at`, `owner_id`.
 - `extracted_places` — `id`, `screenshot_id`, `name`, `city`, `category` (nullable), `raw_text` (the OCR snippet the LLM used), `confidence`, `extraction_model`, `created_at`, `updated_at`, `deleted_at`, `owner_id`. One screenshot can produce zero, one, or many rows.
 - `pending_imports` — `id`, `app_group_path`, `suggested_trip_id`, `created_at`. Written by the share extension, consumed by the main app on next foreground. Not synced.
@@ -55,7 +55,7 @@ App code (TypeScript / React):
 - `modules/search/` — FTS query helpers.
 - `modules/trips/` — trip and tag domain logic.
 - `modules/places/` — extracted-places UI logic (per-screenshot badges, per-trip Places tab) and maps deep-link helpers (`openInMaps(name, city?)`).
-- `modules/monetize/` — paywall, entitlements (v1.0). Also the only module that reads RevenueCat receipts; the extraction module asks `monetize.isPro()` before dispatching a proxy call.
+- `modules/monetize/` — paywall, entitlements, trial state (v1.0). The only module that reads RevenueCat receipts. Exposes `isEntitled()` (synchronous, true while trial-active or subscribed), used by `app/` to gate access to the app shell and by `extraction` before dispatching a proxy call.
 - `modules/telemetry/` — PostHog event vocabulary, Sentry wrapper.
 
 Native iOS code (Swift, via Expo Modules):
@@ -114,7 +114,7 @@ The share extension is a *dumb mailbox*. It never runs OCR or anything memory-he
 ### Extraction (AI)
 
 - After a screenshot's `ocr_status` flips to `done`, `modules/extraction` is eligible to process it.
-- `modules/extraction` checks `monetize.isPro()` (v1.0+; before v1.0 the gate is open and TestFlight users get extraction free).
+- `modules/extraction` checks `monetize.isEntitled()` (v1.0+; before v1.0 the gate is open and TestFlight users get extraction free). In v1.0, anyone using the app is by definition entitled — the paywall blocks the rest of the app — so this check is mainly a defense-in-depth.
 - If allowed: posts the OCR text + image hash + a tiny content-type hint to the proxy.
 - The proxy forwards to the LLM with a fixed prompt asking for `[{name, city, category, confidence}]` as JSON. Only the LLM call goes off-device — the image bytes don't.
 - On response: writes one `extracted_places` row per result, joined to the screenshot. FTS picks them up via triggers.
@@ -176,15 +176,17 @@ Three Expo Modules, each ~100–300 lines of Swift. We own them. Community packa
 - SQL migrations as numbered files in `modules/storage/migrations/`. Linear, no down-migrations.
 - A migration runner applies anything new on launch and stores the current version in `meta`.
 
-### Freemium (v1.0)
+### Paywall + trial (v1.0)
 
-- **RevenueCat** wraps StoreKit. Receipt validation server-side (RevenueCat's), entitlements + dashboard, no babysitting StoreKit edge cases (refunds, family sharing, sub-state changes).
-- Products: `pocket_pro_monthly` and `pocket_pro_yearly` (final pricing decided at v1.0 launch).
-- `monetize.isPro()` is synchronous from cached state, refreshed on foreground.
-- **Free tier:** screenshot capture, storage, OCR-search, manual tagging, small trip-count cap. No AI extraction.
-- **Pro tier:** unlimited trips, AI extraction, the per-trip Places tab, tap-to-open in Maps.
-- Paywall is a single screen, triggered when a free user (a) hits the trip cap or (b) attempts a Pro-gated action like opening Places.
-- The AI proxy independently validates the user's RevenueCat receipt before forwarding to the LLM — the client-side `monetize.isPro()` check is a UX hint, not a security boundary.
+The app is paid from day one. There is no free tier.
+
+- **RevenueCat** wraps StoreKit. Receipt validation server-side (RevenueCat's), entitlements + dashboard, no babysitting StoreKit edge cases (refunds, family sharing, sub-state changes, intro-offer eligibility).
+- Products: `pocket_monthly` and `pocket_yearly` (pricing decided at v1.0 launch). Both have a 7-day introductory offer (free trial), configured in App Store Connect.
+- Single entitlement: `pocket_full`, granted while the user is in trial *or* has an active paid subscription. RevenueCat treats both states identically, which is what we want.
+- `monetize.isEntitled()` is synchronous from cached state, refreshed on foreground and on RevenueCat webhooks (via the SDK).
+- **First-launch gate:** new users land on onboarding → paywall. The paywall cannot be dismissed without (a) starting the trial / subscribing or (b) restoring a previous purchase. There's no "skip" — that's the point of paid-from-day-one.
+- **Lapse handling:** when entitlement flips to false (trial ended without conversion, sub canceled, billing failed), the next foreground routes the user back to the paywall. Local data is preserved; resubscribing restores access without data loss.
+- **Server-side gate:** the AI proxy independently validates the user's RevenueCat-issued subscriber identifier before forwarding to the LLM. The client-side `monetize.isEntitled()` is a UX hint, not a security boundary — anyone bypassing the local gate still gets a 403 from the proxy.
 - The `monetize` module is the only place RevenueCat is imported. Swapping later (or going StoreKit-direct) is local to the module.
 
 ### Telemetry
@@ -192,7 +194,7 @@ Three Expo Modules, each ~100–300 lines of Swift. We own them. Community packa
 - **PostHog** for product analytics, wrapped by `modules/telemetry`. Events are defined as a typed vocabulary in one file — no ad-hoc `track("button_clicked")` calls strewn around.
 - **Sentry** for crash + non-fatal error reporting. Initialized in app entry. `telemetry.captureError(err, ctx?)` is the handled-error helper.
 - **Privacy:** telemetry never sees content — image bytes, OCR text, and trip names do not flow to PostHog or Sentry. Telemetry is structural (which screens, which features, which conversions) only.
-- **Privacy (AI):** AI extraction explicitly *does* send OCR text off-device to the proxy and onward to the LLM. Image bytes still don't leave. This is disclosed in onboarding and in the privacy policy, and the first time a Pro user triggers extraction we surface an explicit opt-in modal.
+- **Privacy (AI):** AI extraction explicitly *does* send OCR text off-device to the proxy and onward to the LLM. Image bytes still don't leave. This is disclosed during onboarding (before the paywall) and in the privacy policy. Because every entitled user has access to AI extraction, the disclosure runs once during onboarding rather than per-trigger.
 
 ### Error handling
 
@@ -214,11 +216,11 @@ The proxy is the only piece of server-side infrastructure in v1.0. Keep it borin
 - **Runtime:** Cloudflare Workers (or Vercel Functions; pick whichever is faster to ship). Stateless, no database.
 - **Endpoint:** `POST /extract` taking `{ ocr_text, content_type_hint?, request_id }`. Returns `[{name, city, category, confidence}]`.
 - **LLM call:** a single fixed prompt to Anthropic's API (or equivalent). Prompt and model name versioned; clients send the model version they expect, and the worker pins to it.
-- **Auth:** before v1.0, no auth — TestFlight users hit it freely. At v1.0, the worker validates a RevenueCat-issued subscriber identifier (or RevenueCat's webhook-fed cache) before forwarding. Free users get a 403.
-- **Rate limiting:** per-user (by subscriber id) and global, to bound cost in the worst case.
+- **Auth:** before v1.0, no auth — TestFlight users hit it freely. At v1.0, the worker validates a RevenueCat-issued subscriber identifier (or RevenueCat's webhook-fed cache) before forwarding; trial-active and subscribed users pass, everyone else gets a 403.
+- **Rate limiting:** per-user (by subscriber id) and global, to bound cost in the worst case. Trial users get the same per-user budget as paid users — keeping the trial honest is part of the pitch.
 - **Logging:** request id, latency, token counts. No OCR text in logs by default.
 - **Privacy:** the proxy never persists OCR text. It forwards to the LLM and returns the parsed result.
-- **Cost ceiling:** at expected volume the LLM cost is small change; the worker exists primarily to keep the API key off-device and to enforce the Pro gate.
+- **Cost ceiling:** at expected volume the LLM cost is small change; the worker exists primarily to keep the API key off-device and to enforce the entitlement gate.
 
 The `extraction` module on the device is the only client. If we ever need a second client (e.g., a backfill script), it talks to the same endpoint with a separate auth path.
 
@@ -259,9 +261,8 @@ All of these reuse the existing proxy and the existing `extracted_places` table,
 
 ## Open questions
 
-- Free tier trip cap (decide post-beta).
-- Subscription pricing tiers (decide at v1.0 launch).
-- Free-tier "taste of AI" allowance — N free extractions per month vs zero. Default zero unless beta data argues otherwise.
+- Subscription pricing tiers (monthly + yearly amounts, decide at v1.0 launch).
+- Paywall placement: before vs after onboarding. Default is *after* — show value, then ask. Revisit if beta data argues otherwise.
 - LLM provider for the extraction proxy (Anthropic vs OpenAI vs hosted open-weights). Pick at v0.2 by accuracy on real screenshots.
 - Proxy runtime (Cloudflare Workers vs Vercel Functions). Either is fine; pick whichever is faster to ship.
 - Image storage location: `Documents/` (iCloud-backed-up) vs `Library/Application Support/`. Default to `Application Support/screenshots/` unless we explicitly want OS-managed iCloud Drive backup.
