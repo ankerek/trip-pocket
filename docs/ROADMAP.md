@@ -43,6 +43,7 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 - Auto-detect of new screenshots — deferred to v0.2.
 - OCR — v0.2.
 - Tags — v0.2.
+- AI extraction / Places view — v0.2.
 - Onboarding — v0.3.
 - Any design polish.
 
@@ -50,17 +51,22 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 
 ## v0.2 — "Full MVP, feature-complete"
 
-Everything PRODUCT.md calls MVP. The app is feature-complete for the wedge — *save it before it's lost* — but not yet polished for strangers.
+Everything PRODUCT.md calls "at launch". The app is feature-complete for the wedge — *save it before it's lost* — plus the AI extraction layer that turns screenshots into usable places. Not yet polished for strangers.
 
-**Definition of done:** every MVP bullet from PRODUCT.md works end-to-end, and capture-to-saved-in-trip is under ~5 seconds.
+**Definition of done:** every "at launch" bullet from PRODUCT.md works end-to-end, capture-to-saved-in-trip is under ~5 seconds, and AI extraction reliably produces a tappable place for the obvious cases (single restaurant or POI in a screenshot).
 
 **Scope:**
 - Auto-detect new screenshots in background; surface a review queue on app open.
 - On-device OCR (Apple Vision via native module if needed).
-- Search across OCR text + trip names + tags.
+- Search across OCR text + trip names + tags + extracted place names.
 - Manual tagging: place / food / activity.
 - Trip detail view with grouping/filtering by tag.
+- AI extraction pipeline: thin server-side proxy to an LLM, called from the app per screenshot, results stored locally in `extracted_places`.
+- Per-screenshot "place detected" badge; tap → opens Google or Apple Maps.
+- Per-trip "Places" tab listing distinct extracted names.
 - Performance pass: list scrolling, image loading.
+
+**Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall).
 
 ---
 
@@ -85,17 +91,23 @@ Stop shipping new features. Make it okay to hand to a friend.
 
 Public. Paid.
 
-**Definition of done:** live on the App Store with a working freemium flow.
+**Definition of done:** live on the App Store with a working freemium flow, and the AI extraction features clearly gated behind Pro.
 
 **Scope:**
-- Free tier: small fixed number of trips.
-- Premium tier: unlimited trips. (AI and sync are explicitly *not* gating launch — they live in v1.x.)
-- StoreKit / RevenueCat integration.
+- Free tier: small fixed number of trips, no AI extraction.
+- Pro tier: unlimited trips + AI extraction + Places view + tap-to-open in Maps.
+- StoreKit + RevenueCat integration.
+- Auth on the AI proxy: only forward LLM calls for receipts that RevenueCat confirms as active Pro.
+- Paywall screen, triggered when a free user (a) hits the trip cap or (b) attempts an AI-gated action.
+- Disclosure that AI features send screenshot text off-device, with an explicit opt-in the first time a user triggers extraction as Pro.
 - Privacy policy, terms, App Store listing copy + screenshots.
-- Lightweight, privacy-respecting analytics (PostHog or simple event log).
+- Lightweight, privacy-respecting analytics (PostHog).
 - In-app feedback / contact link.
 
-**Open question for launch:** what's the free trip cap? Decide based on what beta users settle into.
+**Open questions for launch:**
+- Free trip cap. Decide based on what beta users settle into.
+- Pricing tiers (monthly + yearly).
+- Whether free users get N trial AI extractions per month as a taste, or zero. Default zero unless beta data argues otherwise.
 
 ---
 
@@ -103,11 +115,9 @@ Public. Paid.
 
 Sequenced post-launch based on what users actually ask for. Order here is a guess, not a commitment.
 
-- AI place / city extraction from screenshots (cloud, premium-gated).
-- Map view of saved places.
-- Smart suggestions ("Looks like a café in Tokyo").
-- Export to Google Maps.
-- Cloud sync across devices (iCloud or own backend).
+- Smart suggestions on top of extracted places ("Looks like a café in Tokyo", auto-tagging).
+- In-app map view of saved places (geocoding extracted names; complement to the v1.0 maps deep-link).
+- Cloud sync across devices (CloudKit while iOS-only; revisit if Android happens).
 - Itinerary generation from saved ideas.
 - Android.
 
@@ -117,11 +127,10 @@ Sequenced post-launch based on what users actually ask for. Order here is a gues
 
 Flagged so they don't get forgotten, but no need to resolve yet:
 
-- Backend or pure local-first? — pure local through v1.0; revisit when sync is on the table.
-- OCR engine: Apple Vision via a small native module vs. an Expo-friendly wrapper.
-- Storage: SQLite / WatermelonDB vs. plain files + a JSON index.
-- Subscription plumbing: StoreKit direct vs. RevenueCat.
-- Analytics provider.
+- LLM provider for the extraction proxy (Anthropic vs. OpenAI vs. small open-weights via a hosted runner). Pick at v0.2 based on accuracy on real screenshots.
+- Where the proxy runs (Cloudflare Workers vs. Vercel Functions). Either is fine; pick whichever is faster to ship.
+- Free-tier "taste of AI" allowance (N free extractions/month vs. zero). Decide from beta data.
+- Sync direction (CloudKit vs. own backend). Deferred to v1.x.
 
 ---
 
@@ -130,7 +139,7 @@ Flagged so they don't get forgotten, but no need to resolve yet:
 Restated from PRODUCT.md so they stay loud:
 
 - A complex itinerary planner.
-- Server-dependent heavy AI as a core flow.
+- Server-side product logic. The AI proxy is a stateless LLM passthrough; product features live on the device.
 - Social or sharing features.
 - Booking integrations.
 

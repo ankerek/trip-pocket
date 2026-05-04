@@ -22,13 +22,13 @@ Trip Pocket is the layer in between social media and any planner you eventually 
 
 ## What it is
 
-Trip Pocket is a dedicated inbox for travel screenshots.
+Trip Pocket is a dedicated inbox for travel screenshots, with an AI layer that turns those screenshots into places you can actually use.
 
 The default capture path is invisible: keep screenshotting on Instagram or TikTok like you always do, and Trip Pocket surfaces new screenshots when you open the app, ready to be sorted into a trip. When you want to be deliberate, you can also send a screenshot in via the share sheet, or pull from your camera roll from inside the app.
 
-Either way, the screenshot lands in a trip you're collecting (e.g. "Japan 🇯🇵") and gets tagged as a place, food, or activity. Later, when you're actually planning, everything is there — sorted, scannable, not lost.
+Either way, the screenshot lands in a trip you're collecting (e.g. "Japan 🇯🇵") and gets tagged as a place, food, or activity. AI reads the screenshot and pulls out the place name and city, so a picture of "Maru Tonkatsu, Shibuya" becomes a tappable place — one tap opens Google or Apple Maps. Later, when you're actually planning, everything is there — sorted, scannable, not lost.
 
-Capture should feel as fast as taking a screenshot. Browsing should feel as clean as a Pinterest board.
+Capture should feel as fast as taking a screenshot. Browsing should feel as clean as a Pinterest board. The AI does the boring part you would have skipped anyway.
 
 ### Why not just…
 
@@ -44,7 +44,7 @@ The first user is anyone with a camera roll full of screenshots they meant to do
 
 ## What's in the box
 
-**MVP — what ships first:**
+**At launch:**
 
 - Automatic detection of new screenshots in the background, surfaced for review
 - Import via the iOS share sheet
@@ -53,14 +53,15 @@ The first user is anyone with a camera roll full of screenshots they meant to do
 - Trip collections (e.g. "Japan", "Lisbon weekend")
 - Manual tagging: place / food / activity
 - On-device OCR so the text inside screenshots is searchable
+- AI extraction of place names and cities from screenshots
+- A "Places" view per trip that lists everything we've found
+- Tap any extracted place to open Google or Apple Maps
 - A clean list view to browse what you've saved
 
 **Later:**
 
-- AI-powered extraction of place names, cities, and categories
-- Map view of saved locations
 - Smart suggestions ("Looks like a café in Tokyo")
-- Export to Google Maps
+- An in-app map view of saved places
 - Itinerary generation from saved ideas
 - Cloud sync across devices
 
@@ -68,12 +69,12 @@ The first user is anyone with a camera roll full of screenshots they meant to do
 
 ## How we win
 
-Speed. Simplicity. The lowest possible friction between seeing a thing and saving it well.
+Speed. Simplicity. The lowest possible friction between seeing a thing and saving it well — and an AI layer that takes care of the boring step you would have skipped.
 
 What we are deliberately *not* building, at least not early:
 
 - A complex itinerary planner
-- Heavy AI features that depend on a server
+- Server-side product logic (the AI extraction proxy is a stateless passthrough; the app's source of truth stays on the device)
 - Social or sharing features
 - Booking integrations
 
@@ -81,9 +82,13 @@ Each of those is a tarpit. The wedge is *save it before it's lost*, and that's w
 
 ## Business model
 
-Freemium. Free users get a small number of trips and the full capture-tag-browse loop. Premium unlocks unlimited trips, AI-powered organization (place extraction, smart suggestions), and cloud sync across devices.
+Freemium.
 
-The free tier has to be genuinely useful — saving a trip or two of inspiration should already feel worth it on its own. Premium is for people who travel often enough that the limit starts to pinch.
+**Free** is the screenshot inbox: capture, store, tag, OCR-search, and a small number of trips. The full save-and-find loop, no AI. Genuinely useful on its own — saving a trip or two of inspiration should already feel worth it.
+
+**Pro** is the smart layer: AI extraction of places from screenshots, the per-trip Places view, tap-to-open in Maps, and unlimited trips. The pitch is simple — without Pro it's a folder of pictures; with Pro the screenshots become places you can use.
+
+Pricing is decided at launch from beta data, but the shape is clear: the differentiator is AI doing the work, not a bigger numerical limit.
 
 ## Positioning
 
@@ -91,4 +96,4 @@ The free tier has to be genuinely useful — saving a trip or two of inspiration
 >
 > Save travel inspiration before it gets lost.
 >
-> Turn screenshots into trip ideas.
+> Turn screenshots into places you can actually use.

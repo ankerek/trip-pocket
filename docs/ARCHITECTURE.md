@@ -26,7 +26,7 @@ Out of scope:
 - **Styling:** NativeWind v4 with a single token file (colors, spacing, type scale).
 - **Monetization:** RevenueCat wrapping StoreKit (v1.0+).
 - **Crash + analytics:** Sentry for crashes, PostHog for product events. Marketing-site analytics (Umami / Plausible) is a separate concern when the site exists.
-- **Backend:** none for v1.0. Forward-looking notes below.
+- **Backend:** a thin AI extraction proxy (Cloudflare Worker or Vercel Function) ships with the app from v0.2 onward. No app-data backend in v1.0; the device is still the source of truth for everything except the AI call itself.
 - **Platforms:** iOS only through v1.0. Android lives in the v1.x parking lot.
 
 ## Data model
@@ -36,11 +36,12 @@ All primary keys are UUIDs (generated client-side). Every syncable table carries
 Tables:
 
 - `trips` — `id`, `name`, `color`, `created_at`, `updated_at`, `deleted_at`, `owner_id`.
-- `screenshots` — `id`, `trip_id` (nullable; `NULL` = Inbox), `file_path`, `content_hash`, `source` (`share` | `auto` | `manual`), `ocr_status` (`pending` | `done` | `failed`), `ocr_text`, `captured_at`, `created_at`, `updated_at`, `deleted_at`, `owner_id`.
+- `screenshots` — `id`, `trip_id` (nullable; `NULL` = Inbox), `file_path`, `content_hash`, `source` (`share` | `auto` | `manual`), `ocr_status` (`pending` | `done` | `failed`), `ocr_text`, `extraction_status` (`pending` | `done` | `failed` | `skipped`), `captured_at`, `created_at`, `updated_at`, `deleted_at`, `owner_id`. `extraction_status: skipped` covers free-tier screenshots that were never sent to the proxy.
 - `tags` — `id`, `screenshot_id`, `kind` (`place` | `food` | `activity`), `value`, `created_at`, `updated_at`, `deleted_at`, `owner_id`.
+- `extracted_places` — `id`, `screenshot_id`, `name`, `city`, `category` (nullable), `raw_text` (the OCR snippet the LLM used), `confidence`, `extraction_model`, `created_at`, `updated_at`, `deleted_at`, `owner_id`. One screenshot can produce zero, one, or many rows.
 - `pending_imports` — `id`, `app_group_path`, `suggested_trip_id`, `created_at`. Written by the share extension, consumed by the main app on next foreground. Not synced.
 - `meta` — single-row settings table for things like `last_seen_screenshot_at`.
-- `screenshots_fts` — FTS5 virtual table indexing `screenshots.ocr_text` plus the screenshot's tag values and parent trip name as a single searchable document per screenshot. Kept in sync via SQLite triggers.
+- `screenshots_fts` — FTS5 virtual table indexing `screenshots.ocr_text` plus the screenshot's tag values, extracted place names, and parent trip name as a single searchable document per screenshot. Kept in sync via SQLite triggers.
 
 ## Module structure
 
@@ -50,9 +51,11 @@ App code (TypeScript / React):
 - `modules/storage/` — SQLite schema, migrations, repositories. The *only* place that touches SQL.
 - `modules/capture/` — share-extension hand-off, manual import, auto-detect observer client.
 - `modules/processing/` — OCR pipeline, content hashing, dedup, indexing.
+- `modules/extraction/` — AI extraction client: takes OCR text, calls the proxy, persists `extracted_places` rows. The only module that talks to the proxy.
 - `modules/search/` — FTS query helpers.
 - `modules/trips/` — trip and tag domain logic.
-- `modules/monetize/` — paywall, entitlements (v1.0).
+- `modules/places/` — extracted-places UI logic (per-screenshot badges, per-trip Places tab) and maps deep-link helpers (`openInMaps(name, city?)`).
+- `modules/monetize/` — paywall, entitlements (v1.0). Also the only module that reads RevenueCat receipts; the extraction module asks `monetize.isPro()` before dispatching a proxy call.
 - `modules/telemetry/` — PostHog event vocabulary, Sentry wrapper.
 
 Native iOS code (Swift, via Expo Modules):
@@ -64,7 +67,8 @@ Native iOS code (Swift, via Expo Modules):
 Boundaries:
 
 - `storage` is the only module that knows SQL exists. Everyone else asks `storage` for typed objects.
-- `capture`, `processing`, `search` are *workflow* modules — they orchestrate but don't own data.
+- `capture`, `processing`, `extraction`, `search` are *workflow* modules — they orchestrate but don't own data.
+- `places`, `trips`, `monetize`, `telemetry` are *capability* modules — they expose typed APIs for the UI to call.
 - `app/` has zero business logic. Screens call modules and render.
 - No "service" or "repository" layer above `storage`. Storage *is* the repository. One layer of abstraction, not two.
 - No global `models/` or `types/` folder. Types live with the module that owns them.
@@ -107,12 +111,24 @@ The share extension is a *dumb mailbox*. It never runs OCR or anything memory-he
 - On failure: `ocr_status: failed`, retried on next foreground up to N attempts (N TBD; start at 3).
 - No iOS `BGTaskScheduler` in v1.0. If beta users complain about long backlogs not processing in the background, revisit.
 
+### Extraction (AI)
+
+- After a screenshot's `ocr_status` flips to `done`, `modules/extraction` is eligible to process it.
+- `modules/extraction` checks `monetize.isPro()` (v1.0+; before v1.0 the gate is open and TestFlight users get extraction free).
+- If allowed: posts the OCR text + image hash + a tiny content-type hint to the proxy.
+- The proxy forwards to the LLM with a fixed prompt asking for `[{name, city, category, confidence}]` as JSON. Only the LLM call goes off-device — the image bytes don't.
+- On response: writes one `extracted_places` row per result, joined to the screenshot. FTS picks them up via triggers.
+- Failure modes (network down, proxy 5xx, LLM bad JSON): noted on the screenshot row as `extraction_status: failed`, retried on next foreground up to N attempts. Silent in UI — extraction is best-effort.
+- Same single-at-a-time discipline as OCR. No background extraction in v1.0.
+
 ### Browse / search
 
 - **Inbox:** `screenshots` with `trip_id IS NULL` and `deleted_at IS NULL`, ordered by `captured_at desc`.
-- **Trip detail:** `screenshots` for that trip, optionally filtered by tag `kind`.
-- **Search:** FTS5 query against `screenshots_fts`, joined back to `screenshots`.
-- All list views use `useLiveQuery`, so they re-render automatically as ingestion / OCR / tagging completes.
+- **Trip detail:** two tabs.
+    - **Screenshots:** the existing image grid for that trip.
+    - **Places:** distinct rows from `extracted_places` joined through that trip's screenshots, deduped by case-insensitive `(name, city)`. Each row has a "Open in Maps" affordance — `places.openInMaps(name, city)` builds either `comgooglemaps://` (if installed) or `https://www.google.com/maps/search/?api=1&query=…` and hands off via `Linking.openURL`. Tapping the row anywhere else navigates to the source screenshot.
+- **Search:** FTS5 query against `screenshots_fts`, joined back to `screenshots`. Extracted place names are part of the indexed document, so searching "tonkatsu" finds screenshots whose extracted place is "Maru Tonkatsu" even if "tonkatsu" never appeared verbatim in the OCR text.
+- All list views use `useLiveQuery`, so they re-render automatically as ingestion / OCR / extraction / tagging completes.
 
 ## Native iOS modules
 
@@ -165,15 +181,18 @@ Three Expo Modules, each ~100–300 lines of Swift. We own them. Community packa
 - **RevenueCat** wraps StoreKit. Receipt validation server-side (RevenueCat's), entitlements + dashboard, no babysitting StoreKit edge cases (refunds, family sharing, sub-state changes).
 - Products: `pocket_pro_monthly` and `pocket_pro_yearly` (final pricing decided at v1.0 launch).
 - `monetize.isPro()` is synchronous from cached state, refreshed on foreground.
-- Free tier limit: trip-count cap (number TBD from beta data).
-- Paywall is a single screen, triggered when the user tries to create a trip past the cap.
+- **Free tier:** screenshot capture, storage, OCR-search, manual tagging, small trip-count cap. No AI extraction.
+- **Pro tier:** unlimited trips, AI extraction, the per-trip Places tab, tap-to-open in Maps.
+- Paywall is a single screen, triggered when a free user (a) hits the trip cap or (b) attempts a Pro-gated action like opening Places.
+- The AI proxy independently validates the user's RevenueCat receipt before forwarding to the LLM — the client-side `monetize.isPro()` check is a UX hint, not a security boundary.
 - The `monetize` module is the only place RevenueCat is imported. Swapping later (or going StoreKit-direct) is local to the module.
 
 ### Telemetry
 
 - **PostHog** for product analytics, wrapped by `modules/telemetry`. Events are defined as a typed vocabulary in one file — no ad-hoc `track("button_clicked")` calls strewn around.
 - **Sentry** for crash + non-fatal error reporting. Initialized in app entry. `telemetry.captureError(err, ctx?)` is the handled-error helper.
-- **Privacy:** image bytes, OCR text, and trip names never leave the device. Telemetry is structural (which screens, which features, which conversions), never content.
+- **Privacy:** telemetry never sees content — image bytes, OCR text, and trip names do not flow to PostHog or Sentry. Telemetry is structural (which screens, which features, which conversions) only.
+- **Privacy (AI):** AI extraction explicitly *does* send OCR text off-device to the proxy and onward to the LLM. Image bytes still don't leave. This is disclosed in onboarding and in the privacy policy, and the first time a Pro user triggers extraction we surface an explicit opt-in modal.
 
 ### Error handling
 
@@ -184,9 +203,24 @@ Three Expo Modules, each ~100–300 lines of Swift. We own them. Community packa
 
 ### Testing
 
-- Unit tests for pure-logic modules: `processing`, `search`, `storage` repositories. Jest.
+- Unit tests for pure-logic modules: `processing`, `extraction` (mocking the proxy), `search`, `storage` repositories. Jest.
 - Native modules: smoke-tested manually on device. Not unit-tested; cost / value is wrong for solo dev at this stage.
 - E2E: deferred. Maestro is on the table for v0.3+ if it pays back.
+
+### AI extraction proxy
+
+The proxy is the only piece of server-side infrastructure in v1.0. Keep it boring.
+
+- **Runtime:** Cloudflare Workers (or Vercel Functions; pick whichever is faster to ship). Stateless, no database.
+- **Endpoint:** `POST /extract` taking `{ ocr_text, content_type_hint?, request_id }`. Returns `[{name, city, category, confidence}]`.
+- **LLM call:** a single fixed prompt to Anthropic's API (or equivalent). Prompt and model name versioned; clients send the model version they expect, and the worker pins to it.
+- **Auth:** before v1.0, no auth — TestFlight users hit it freely. At v1.0, the worker validates a RevenueCat-issued subscriber identifier (or RevenueCat's webhook-fed cache) before forwarding. Free users get a 403.
+- **Rate limiting:** per-user (by subscriber id) and global, to bound cost in the worst case.
+- **Logging:** request id, latency, token counts. No OCR text in logs by default.
+- **Privacy:** the proxy never persists OCR text. It forwards to the LLM and returns the parsed result.
+- **Cost ceiling:** at expected volume the LLM cost is small change; the worker exists primarily to keep the API key off-device and to enforce the Pro gate.
+
+The `extraction` module on the device is the only client. If we ever need a second client (e.g., a backfill script), it talks to the same endpoint with a separate auth path.
 
 ## Forward look (v1.x and beyond)
 
@@ -199,12 +233,15 @@ These are not in v1.0. They influence today only via the cheap future-proofing r
 - Sync writes hit SQLite the same way local writes do. The reactive UI doesn't care about origin.
 - If/when Android forces a cross-platform sync answer: evaluate **PowerSync** or **ElectricSQL** (both speak SQLite natively) before hand-rolling a backend.
 
-### AI (premium-gated)
+### AI beyond v1.0
 
-- A thin **Cloudflare Worker** (or Vercel Function) as a stateless proxy to Anthropic's API.
-- Auth via RevenueCat receipt validation: the worker only forwards LLM calls for active subscribers.
-- The app remains fully usable without AI; AI features layer on as gated capabilities (place extraction, smart suggestions).
-- Privacy note: AI features explicitly *do* send image / OCR content off-device (that's what the LLM call is). This is a meaningful break from the v1.0 privacy posture and must be surfaced clearly to the user when AI is enabled, with opt-in per feature.
+The v1.0 AI feature is place extraction (covered above under Cross-cutting). v1.x layers add:
+
+- **Smart suggestions** ("looks like a café in Tokyo", auto-tagging) on top of extracted places. Same proxy, richer prompts.
+- **In-app map view** rendering extracted places by lat/lng. Requires geocoding (Apple `MKLocalSearch`); complement to the v1.0 maps deep-link, not a replacement.
+- **Itinerary generation** from extracted places. Larger LLM payloads; same auth model.
+
+All of these reuse the existing proxy and the existing `extracted_places` table, possibly with extra columns (`lat`, `lng`, `geocoded_at`).
 
 ### Sharing (currently a forever non-goal)
 
@@ -218,21 +255,24 @@ These are not in v1.0. They influence today only via the cheap future-proofing r
     - Replace `ScreenshotObserver` with a `MediaStore` / `ContentObserver` equivalent.
     - Replace `ShareExtension` with an Android intent filter activity.
     - CloudKit can't go cross-platform; sync would need PowerSync, Electric, or own backend.
-- The TypeScript app code is platform-agnostic, so the rebuild is concentrated in `native/` and the sync layer.
+- The TypeScript app code (including `extraction`, `places`, the proxy client) is platform-agnostic, so the rebuild is concentrated in `native/` and the sync layer.
 
 ## Open questions
 
 - Free tier trip cap (decide post-beta).
 - Subscription pricing tiers (decide at v1.0 launch).
+- Free-tier "taste of AI" allowance — N free extractions per month vs zero. Default zero unless beta data argues otherwise.
+- LLM provider for the extraction proxy (Anthropic vs OpenAI vs hosted open-weights). Pick at v0.2 by accuracy on real screenshots.
+- Proxy runtime (Cloudflare Workers vs Vercel Functions). Either is fine; pick whichever is faster to ship.
 - Image storage location: `Documents/` (iCloud-backed-up) vs `Library/Application Support/`. Default to `Application Support/screenshots/` unless we explicitly want OS-managed iCloud Drive backup.
 - OCR locale: device default vs auto-detection. Start with device locale; revisit if multilingual screenshots are common in beta.
-- Number of OCR retry attempts before marking `failed` (start at 3).
+- Number of OCR retry attempts before marking `failed` (start at 3). Same default for extraction retries.
 
 ## Non-goals
 
 Restated from PRODUCT.md so they remain loud:
 
-- Itinerary planner.
-- Server-dependent heavy AI as a core flow. (A thin LLM proxy is acceptable; full server-side product features built on it are not.)
+- Itinerary planner. (Place extraction is *not* the same thing as itinerary building.)
+- Server-side product logic. The proxy is a stateless LLM passthrough; product features live on the device.
 - Social or sharing features.
 - Booking integrations.
