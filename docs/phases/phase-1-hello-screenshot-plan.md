@@ -6,9 +6,18 @@
 
 **Architecture:** React Native via Expo (prebuild + config plugins). TypeScript on the JS side, custom Swift Share Extension target on the iOS side. SQLite (`expo-sqlite`) is the source of truth from day 1, populated by both the main app and the share extension via a shared App Group container. Cross-process handoff uses a `pending_imports` table consumed on app foreground. The architecture is laid out fully in `docs/ARCHITECTURE.md`; the spec for this phase is `docs/phases/phase-1-hello-screenshot.md`.
 
-**Tech Stack:** Expo SDK (latest), TypeScript (strict), Expo Router, NativeWind v4, `expo-sqlite`, Jest + `@testing-library/react-native`, Swift + SwiftUI for the share extension, EAS for builds.
+**Tech Stack:** Expo SDK 54+, TypeScript (strict), Expo Router, NativeWind v4 (4.2.x), `expo-sqlite`, `expo-file-system` (modern class-based API: `File`, `Paths`), Jest + `@testing-library/react-native`, Swift + SwiftUI for the share extension, EAS for builds.
 
 ---
+
+## Verified library notes (Context7, 2026-05-04)
+
+- **App Group access from JS is built in.** `Paths.appleSharedContainers['group.com.trippocket.shared'].uri` (from `expo-file-system`) returns the container path on iOS. No custom Expo Module needed for this.
+- **Main-app App Group entitlement** is set declaratively in `app.json` under `ios.entitlements`. The Expo build pipeline writes the entitlements file. The config plugin we still need is only for adding the *extension target itself*, not for entitlements on the main app.
+- **`expo-sqlite` accepts a `directory`** for the database. Combined with the App Group path, this lets the main app and the share extension read the same `trip-pocket.db` file with no extra plumbing.
+- **`expo-file-system` modern API is class-based:** `new File(parent, 'name')`, `file.create()`, `file.move(target)`, `file.copy(target)`, `file.exists`, `file.uri`, `Paths.document`, `Paths.cache`. The legacy `FileSystem.documentDirectory` / `FileSystem.moveAsync` API is still importable from `expo-file-system/legacy` if needed.
+- **NativeWind v4** pins are `tailwindcss@^3.4.17`, `prettier-plugin-tailwindcss@^0.5.11`.
+- **Hashing for dedup** is deferred to Phase 2. Phase 1 always inserts; duplicate screenshots are rare in practice and trivially deletable once Phase 2 ships delete.
 
 ## File structure
 
@@ -239,7 +248,7 @@ Expected: no errors (warnings on default Expo template are acceptable).
 
 ```sh
 npm install nativewind react-native-reanimated react-native-safe-area-context
-npm install --save-dev tailwindcss@^3.4 prettier-plugin-tailwindcss
+npm install --save-dev tailwindcss@^3.4.17 prettier-plugin-tailwindcss@^0.5.11
 ```
 
 - [ ] **Step 2: Initialize Tailwind**
@@ -350,7 +359,7 @@ Expected: simulator shows centered "Trip Pocket" text on white. `Ctrl-C` to stop
 - Create: `eas.json`
 - Modify: `app.json`
 
-- [ ] **Step 1: Set bundle identifier**
+- [ ] **Step 1: Set bundle identifier and App Group entitlement**
 
 Edit `app.json` and set:
 
@@ -361,11 +370,16 @@ Edit `app.json` and set:
     "slug": "trip-pocket",
     "ios": {
       "bundleIdentifier": "com.trippocket.app",
-      "supportsTablet": false
+      "supportsTablet": false,
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.trippocket.shared"]
+      }
     }
   }
 }
 ```
+
+The `ios.entitlements` block makes the main app a member of the App Group at build time — no config plugin needed for *this* part. (The extension target itself still needs a config plugin; that's Task 14.)
 
 - [ ] **Step 2: Run `eas init`**
 
@@ -1351,6 +1365,8 @@ npm install uuid
 npm install --save-dev @types/uuid
 ```
 
+> **Note:** Phase 1 always inserts and does not dedup by content hash. Hashing is deferred to Phase 2 alongside delete and the OCR pipeline (which both benefit from real dedup). Duplicate screenshots in Phase 1 are rare and visually obvious; the user can delete them once Phase 2 ships delete.
+
 - [ ] **Step 2: Write the failing test**
 
 Create `modules/capture/__tests__/ingest.test.ts`:
@@ -1369,15 +1385,13 @@ async function freshDb(): Promise<Database> {
   return db;
 }
 
-const noopFs = {
-  moveAsync: jest.fn(async () => undefined),
-  hashFileAsync: jest.fn(async (path: string) => `hash-of-${path}`),
+const fakeFs = {
+  moveFile: jest.fn(async (_from: string, _to: string) => undefined),
 };
 
 describe('ingestPendingImports', () => {
   beforeEach(() => {
-    noopFs.moveAsync.mockClear();
-    noopFs.hashFileAsync.mockClear();
+    fakeFs.moveFile.mockClear();
   });
 
   it('drains a pending import into a screenshots row', async () => {
@@ -1393,7 +1407,7 @@ describe('ingestPendingImports', () => {
     await ingestPendingImports(db, {
       ownerId,
       sandboxDir: '/sandbox',
-      fs: noopFs,
+      fs: fakeFs,
     });
 
     const rows = await listScreenshots(db, { tripId: null });
@@ -1406,40 +1420,26 @@ describe('ingestPendingImports', () => {
 
     const remaining = await db.getAllAsync('SELECT * FROM pending_imports');
     expect(remaining).toEqual([]);
-    expect(noopFs.moveAsync).toHaveBeenCalledTimes(1);
+    expect(fakeFs.moveFile).toHaveBeenCalledTimes(1);
   });
 
-  it('skips a pending import whose hash already exists (dedup)', async () => {
+  it('drains multiple pending imports in created_at order', async () => {
     const db = await freshDb();
-
-    // existing screenshot with same hash
-    await db.runAsync(
-      `INSERT INTO screenshots (id, trip_id, file_path, content_hash, source,
-        ocr_status, extraction_status, captured_at, owner_id, created_at, updated_at)
-       VALUES ('s1', NULL, '/sandbox/old.jpg', 'hash-of-/appgroup/dup.jpg', 'share',
-       'pending', 'pending', '2026-05-01T00:00:00Z', ?, '2026-05-01T00:00:00Z',
-       '2026-05-01T00:00:00Z')`,
-      ownerId,
-    );
-
     await db.runAsync(
       `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
-       VALUES (?, ?, NULL, ?)`,
-      'p1',
-      '/appgroup/dup.jpg',
-      '2026-05-04T10:00:00Z',
+       VALUES ('p2', '/appgroup/b.jpg', NULL, '2026-05-04T10:00:01Z'),
+              ('p1', '/appgroup/a.jpg', NULL, '2026-05-04T10:00:00Z')`,
     );
 
     await ingestPendingImports(db, {
       ownerId,
       sandboxDir: '/sandbox',
-      fs: noopFs,
+      fs: fakeFs,
     });
 
-    const rows = await listScreenshots(db, { tripId: null });
-    expect(rows).toHaveLength(1); // not duplicated
-    const remaining = await db.getAllAsync('SELECT * FROM pending_imports');
-    expect(remaining).toEqual([]); // pending row drained even though deduped
+    expect(fakeFs.moveFile).toHaveBeenCalledTimes(2);
+    expect(fakeFs.moveFile.mock.calls[0]?.[0]).toBe('/appgroup/a.jpg');
+    expect(fakeFs.moveFile.mock.calls[1]?.[0]).toBe('/appgroup/b.jpg');
   });
 });
 ```
@@ -1463,8 +1463,7 @@ import { insertScreenshot } from '@/modules/storage/screenshots';
 import { notifyChange } from '@/modules/storage/live-query';
 
 type FsLike = {
-  moveAsync: (input: { from: string; to: string }) => Promise<void>;
-  hashFileAsync: (path: string) => Promise<string>;
+  moveFile: (from: string, to: string) => Promise<void>;
 };
 
 export type IngestOptions = {
@@ -1485,29 +1484,23 @@ export async function ingestPendingImports(
   }>('SELECT * FROM pending_imports ORDER BY created_at ASC');
 
   for (const p of pending) {
-    const hash = await opts.fs.hashFileAsync(p.app_group_path);
+    const screenshotId = uuidv4();
+    const target = `${opts.sandboxDir}/${screenshotId}.jpg`;
+    await opts.fs.moveFile(p.app_group_path, target);
 
-    const dup = await db.getFirstAsync<{ id: string }>(
-      'SELECT id FROM screenshots WHERE content_hash = ? AND deleted_at IS NULL',
-      hash,
-    );
-
-    if (!dup) {
-      const screenshotId = uuidv4();
-      const filename = `${screenshotId}.jpg`;
-      const target = `${opts.sandboxDir}/${filename}`;
-      await opts.fs.moveAsync({ from: p.app_group_path, to: target });
-
-      await insertScreenshot(db, {
-        id: screenshotId,
-        tripId: p.suggested_trip_id,
-        filePath: target,
-        contentHash: hash,
-        source: 'share',
-        capturedAt: p.created_at,
-        ownerId: opts.ownerId,
-      });
-    }
+    // No content_hash in Phase 1 — column is NOT NULL in schema, so we stamp the
+    // image filename's UUID as the placeholder. Phase 2 replaces with a real hash
+    // and adds a unique index that this row will be allowed to keep (UUIDs don't
+    // collide). The architecture allows this because Phase 1 has no dedup logic.
+    await insertScreenshot(db, {
+      id: screenshotId,
+      tripId: p.suggested_trip_id,
+      filePath: target,
+      contentHash: screenshotId,
+      source: 'share',
+      capturedAt: p.created_at,
+      ownerId: opts.ownerId,
+    });
 
     await db.runAsync('DELETE FROM pending_imports WHERE id = ?', p.id);
   }
@@ -1544,36 +1537,73 @@ export { ingestPendingImports } from './ingest';
 
 ---
 
-### Task 13: Wire ingestion to app foreground
+### Task 13: Wire ingestion + App Group SQLite into the root layout
 
-**Why:** `ingestPendingImports` needs a real caller. App foreground is the only trigger in Phase 1.
+**Why:** `ingestPendingImports` needs a real caller. App foreground is the only trigger in Phase 1. The main app's SQLite must also point at the *same* file the share extension writes — both live in the App Group container at `group.com.trippocket.shared/trip-pocket.db`. `Paths.appleSharedContainers` from `expo-file-system` resolves the container directly, so no custom Expo Module is needed.
 
 **Files:**
 - Modify: `app/_layout.tsx`
-- Create: `modules/capture/owner.ts`
+- Create: `modules/capture/owner.ts`, `modules/capture/paths.ts`
 
-- [ ] **Step 1: Stamp an owner UUID on first launch**
+- [ ] **Step 1: Helpers for App Group + sandbox paths**
+
+Create `modules/capture/paths.ts`:
+
+```ts
+import { Directory, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
+
+export const APP_GROUP_ID = 'group.com.trippocket.shared';
+
+/**
+ * Returns the App Group container URI on iOS (the same path the share extension writes
+ * into), or undefined off-iOS. expo-sqlite accepts this as `directory` to open the
+ * shared trip-pocket.db file.
+ */
+export function getAppGroupContainerUri(): string | undefined {
+  if (Platform.OS !== 'ios') return undefined;
+  return Paths.appleSharedContainers[APP_GROUP_ID]?.uri;
+}
+
+/**
+ * The directory inside the App Group where the share extension drops images and where
+ * the main app moves them to. On non-iOS (or if the App Group entitlement is missing)
+ * we fall back to the document directory so the rest of the app keeps working.
+ */
+export function getSandboxDirectory(): Directory {
+  const groupUri = getAppGroupContainerUri();
+  const parent = groupUri
+    ? new Directory(groupUri)
+    : new Directory(Paths.document);
+  const dir = new Directory(parent, 'screenshots');
+  if (!dir.exists) dir.create({ intermediates: true });
+  return dir;
+}
+```
+
+- [ ] **Step 2: Stamp an owner UUID on first launch**
 
 Create `modules/capture/owner.ts`:
 
 ```ts
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import { v4 as uuidv4 } from 'uuid';
 
-const OWNER_FILE = `${FileSystem.documentDirectory}owner.txt`;
+const OWNER_FILE_NAME = 'owner.txt';
 
-export async function getOrCreateOwnerId(): Promise<string> {
-  const info = await FileSystem.getInfoAsync(OWNER_FILE);
-  if (info.exists) {
-    return (await FileSystem.readAsStringAsync(OWNER_FILE)).trim();
-  }
+export function getOrCreateOwnerId(): string {
+  const file = new File(Paths.document, OWNER_FILE_NAME);
+  if (file.exists) return file.text().trim();
   const id = uuidv4();
-  await FileSystem.writeAsStringAsync(OWNER_FILE, id);
+  file.create();
+  file.write(id);
   return id;
 }
 ```
 
-- [ ] **Step 2: Wire ingestion + owner-id into the root layout**
+> **Note:** `expo-file-system`'s class-based API is synchronous for small reads/writes. The legacy `FileSystem.documentDirectory` / `readAsStringAsync` API is still available at `expo-file-system/legacy` if needed.
+
+- [ ] **Step 3: Wire ingestion + owner-id + App Group SQLite into the root layout**
 
 Replace `app/_layout.tsx` with:
 
@@ -1582,35 +1612,33 @@ import '../global.css';
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import {
   openDatabase,
   runMigrations,
   migrations,
   provideDatabase,
+  type Database,
 } from '@/modules/storage';
 import { ingestPendingImports } from '@/modules/capture';
 import { getOrCreateOwnerId } from '@/modules/capture/owner';
-
-const SANDBOX_DIR = `${FileSystem.documentDirectory}screenshots`;
-
-async function ensureSandbox(): Promise<void> {
-  const info = await FileSystem.getInfoAsync(SANDBOX_DIR);
-  if (!info.exists) await FileSystem.makeDirectoryAsync(SANDBOX_DIR, { intermediates: true });
-}
+import { getAppGroupContainerUri, getSandboxDirectory } from '@/modules/capture/paths';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
-  const [ctx, setCtx] = useState<{ db: Awaited<ReturnType<typeof openDatabase>>; ownerId: string } | null>(null);
+  const [ctx, setCtx] = useState<{ db: Database; ownerId: string; sandboxDirUri: string } | null>(null);
 
   useEffect(() => {
     (async () => {
-      const db = await openDatabase();
+      // Open the SQLite file inside the App Group container so the share extension
+      // and the main app read/write the same database.
+      const db = await openDatabase('trip-pocket.db', getAppGroupContainerUri());
       await runMigrations(db, migrations);
       provideDatabase(db);
-      await ensureSandbox();
-      const ownerId = await getOrCreateOwnerId();
-      setCtx({ db, ownerId });
+
+      const sandbox = getSandboxDirectory();
+      const ownerId = getOrCreateOwnerId();
+      setCtx({ db, ownerId, sandboxDirUri: sandbox.uri });
       setReady(true);
     })();
   }, []);
@@ -1620,13 +1648,13 @@ export default function RootLayout() {
     const run = async () => {
       await ingestPendingImports(ctx.db, {
         ownerId: ctx.ownerId,
-        sandboxDir: SANDBOX_DIR!,
+        sandboxDir: ctx.sandboxDirUri,
         fs: {
-          moveAsync: ({ from, to }) => FileSystem.moveAsync({ from, to }),
-          hashFileAsync: (path) =>
-            FileSystem.getInfoAsync(path, { md5: true }).then((i) =>
-              i.exists && 'md5' in i && i.md5 ? i.md5 : '',
-            ),
+          moveFile: async (from, to) => {
+            const src = new File(from);
+            const dst = new File(to);
+            src.move(dst);
+          },
         },
       });
     };
@@ -1642,21 +1670,72 @@ export default function RootLayout() {
 }
 ```
 
-> **Note:** `expo-file-system`'s `md5` option gives us a content hash without a separate dependency. We can swap to a real content-defined hash when v0.2 needs robustness — for now MD5 is fine for dedup.
+- [ ] **Step 4: Update the storage `openDatabase` to accept a directory**
 
-- [ ] **Step 3: Verify the app still builds + runs**
+Edit `modules/storage/db.ts` — replace the body of `openDatabase` so it forwards an optional `directory`:
+
+```ts
+import * as SQLite from 'expo-sqlite';
+
+export type Database = SQLite.SQLiteDatabase;
+
+export type Migration = {
+  version: number;
+  up: (db: Database) => Promise<void>;
+};
+
+export async function openDatabase(
+  name = 'trip-pocket.db',
+  directory?: string,
+): Promise<Database> {
+  const db = await SQLite.openDatabaseAsync(name, undefined, directory);
+  await db.execAsync('PRAGMA journal_mode = WAL;');
+  await db.execAsync(
+    'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
+  );
+  return db;
+}
+
+export async function getMigrationVersion(db: Database): Promise<number> {
+  const row = await db.getFirstAsync<{ v: number | null }>(
+    'SELECT MAX(version) AS v FROM schema_migrations',
+  );
+  return row?.v ?? 0;
+}
+
+export async function runMigrations(db: Database, migrations: Migration[]): Promise<void> {
+  const sorted = [...migrations].sort((a, b) => a.version - b.version);
+  const current = await getMigrationVersion(db);
+  for (const m of sorted) {
+    if (m.version <= current) continue;
+    await db.withTransactionAsync(async () => {
+      await m.up(db);
+      await db.runAsync(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+        m.version,
+        new Date().toISOString(),
+      );
+    });
+  }
+}
+```
+
+(Tests still pass — `:memory:` ignores the directory parameter.)
+
+- [ ] **Step 5: Run tests + smoke test**
 
 ```sh
+npm test
 npx expo start --dev-client --clear
 ```
 
-Expected: empty-state screen still appears; no crashes.
+Expected: tests pass; empty-state screen renders on the dev build; no crashes.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```sh
 /opt/homebrew/bin/git add -A
-/opt/homebrew/bin/git commit -m "feat(app): wire ingestion to app foreground"
+/opt/homebrew/bin/git commit -m "feat(app): wire ingestion + App Group SQLite into root layout"
 ```
 
 ---
@@ -1674,6 +1753,8 @@ Expected: empty-state screen still appears; no crashes.
 ```sh
 npm install --save-dev @expo/config-plugins xcode plist
 ```
+
+> **Note:** The main app's App Group entitlement was already added declaratively in Task 5's `app.json`. This config plugin only adds the *extension target itself* — it does not touch the main app's entitlements.
 
 - [ ] **Step 2: Stub Swift source files**
 
@@ -1848,7 +1929,7 @@ struct PendingImportWriter {
 }
 ```
 
-> **Note:** The extension uses raw `SQLite3` (not the JS `expo-sqlite`) because Swift extensions can't use Node-bridged APIs. Path is the App Group's `trip-pocket.db`. The main app's SQLite needs to point at the same file — see Task 15.
+> **Note:** The extension uses raw `SQLite3` (not the JS `expo-sqlite`) because Swift extensions can't use Node-bridged APIs. Path is the App Group's `trip-pocket.db`. The main app opens the same file via `Paths.appleSharedContainers` in Task 13.
 
 Create `native/ShareExtension/Info.plist`:
 
@@ -1898,26 +1979,14 @@ Create `native/ShareExtension/TripPocketShare.entitlements`:
 Create `plugins/with-share-extension.js`:
 
 ```js
-const { withXcodeProject, withInfoPlist, withEntitlementsPlist } = require('@expo/config-plugins');
+const { withXcodeProject } = require('@expo/config-plugins');
 const path = require('path');
 const fs = require('fs');
 
-const APP_GROUP = 'group.com.trippocket.shared';
 const TARGET_NAME = 'TripPocketShare';
 const SOURCE_DIR = path.resolve(__dirname, '..', 'native', 'ShareExtension');
 
-const withShareExtension = (config) => {
-  config = withMainAppGroup(config);
-  config = withExtensionTarget(config);
-  return config;
-};
-
-function withMainAppGroup(config) {
-  return withEntitlementsPlist(config, (cfg) => {
-    cfg.modResults['com.apple.security.application-groups'] = [APP_GROUP];
-    return cfg;
-  });
-}
+const withShareExtension = (config) => withExtensionTarget(config);
 
 function withExtensionTarget(config) {
   return withXcodeProject(config, async (cfg) => {
@@ -2006,223 +2075,53 @@ Expected: a non-zero number (the target is registered).
 
 ---
 
-### Task 15: Point main-app SQLite at the App Group container
+### Task 15: Build with the extension and run on device
 
-**Why:** The Swift extension and the JS main app must read/write the *same* `trip-pocket.db` file. Currently they don't.
+**Why:** Now that the config plugin is in place and the main app reads from the App Group SQLite, a fresh prebuild + EAS build produces an IPA where the share extension and the main app share `trip-pocket.db`. This is the last build before the end-to-end smoke test.
 
-**Files:**
-- Modify: `modules/storage/db.ts`
+**Files:** none.
 
-- [ ] **Step 1: Adjust `openDatabase` to accept an explicit path**
-
-Replace the body of `modules/storage/db.ts` (keep the test `:memory:` path working):
-
-```ts
-import * as SQLite from 'expo-sqlite';
-
-export type Database = SQLite.SQLiteDatabase;
-
-export type Migration = {
-  version: number;
-  up: (db: Database) => Promise<void>;
-};
-
-export async function openDatabase(name = 'trip-pocket.db'): Promise<Database> {
-  const db = await SQLite.openDatabaseAsync(name);
-  await db.execAsync('PRAGMA journal_mode = WAL;');
-  await db.execAsync(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
-  );
-  return db;
-}
-
-export async function getMigrationVersion(db: Database): Promise<number> {
-  const row = await db.getFirstAsync<{ v: number | null }>(
-    'SELECT MAX(version) AS v FROM schema_migrations',
-  );
-  return row?.v ?? 0;
-}
-
-export async function runMigrations(db: Database, migrations: Migration[]): Promise<void> {
-  const sorted = [...migrations].sort((a, b) => a.version - b.version);
-  const current = await getMigrationVersion(db);
-  for (const m of sorted) {
-    if (m.version <= current) continue;
-    await db.withTransactionAsync(async () => {
-      await m.up(db);
-      await db.runAsync(
-        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
-        m.version,
-        new Date().toISOString(),
-      );
-    });
-  }
-}
-```
-
-> **Note:** `expo-sqlite` doesn't expose an absolute-path option directly; on iOS the database lives under `Library/LocalDatabases/<name>`. To point at the App Group container we use `expo-sqlite`'s `directory` option (added in SDK 50+).
-
-Replace `openDatabase` with the App-Group-aware version:
-
-```ts
-export async function openDatabase(name = 'trip-pocket.db', directory?: string): Promise<Database> {
-  const db = await SQLite.openDatabaseAsync(name, undefined, directory);
-  await db.execAsync('PRAGMA journal_mode = WAL;');
-  await db.execAsync(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
-  );
-  return db;
-}
-```
-
-- [ ] **Step 2: Resolve the App Group container path on the JS side**
-
-Install the helper:
-
-```sh
-npx expo install expo-application
-```
-
-Edit `app/_layout.tsx` — replace the `openDatabase()` call with:
-
-```tsx
-import { Platform } from 'react-native';
-
-const APP_GROUP_ID = 'group.com.trippocket.shared';
-
-async function appGroupContainerPath(): Promise<string | undefined> {
-  if (Platform.OS !== 'ios') return undefined;
-  const { default: AppGroupDir } = await import('expo-application');
-  // Fall back to undefined if the API isn't available; main app will use its sandbox.
-  // expo-application doesn't expose this directly; we'll add a tiny native helper later
-  // if we hit the wall. For Phase 1 we tolerate the main-app DB being separate from the
-  // extension's only on dev builds where the App Group entitlement isn't fully wired.
-  return undefined;
-}
-```
-
-> **Reality check:** there isn't a one-liner JS API to fetch the App Group path. For Phase 1, we accept a pragmatic compromise: write a tiny Expo Module (Task 17) to expose `appGroupContainerPath(groupId) → string`. Until then, leave this stubbed and verify the share extension wires up *its* side cleanly first.
-
-- [ ] **Step 3: Run tests + smoke test**
-
-```sh
-npm test
-npx expo start --dev-client --clear
-```
-
-Expected: tests still pass; app still boots.
-
-- [ ] **Step 4: Commit**
-
-```sh
-/opt/homebrew/bin/git add -A
-/opt/homebrew/bin/git commit -m "chore(storage): prep openDatabase for App Group path injection"
-```
-
----
-
-### Task 16: Tiny Expo Module for App Group container path
-
-**Why:** JS needs to know where the App Group container lives so the main app's SQLite can target the same file as the share extension.
-
-**Files:**
-- Create: `modules/native-ios/` (new Expo Module), `plugins/with-app-group-helper.js` (or fold into `with-share-extension.js`)
-
-- [ ] **Step 1: Generate an Expo Module skeleton**
-
-```sh
-npx create-expo-module@latest --local native-ios --description "Native iOS helpers"
-```
-
-Accept defaults. Verify a `modules/native-ios/` directory was created with `ios/`, `src/`, and `expo-module.config.json`.
-
-- [ ] **Step 2: Replace the generated Swift with our app-group helper**
-
-Open `modules/native-ios/ios/NativeIosModule.swift` and replace it with:
-
-```swift
-import ExpoModulesCore
-
-public class NativeIosModule: Module {
-    public func definition() -> ModuleDefinition {
-        Name("NativeIos")
-
-        Function("appGroupContainerPath") { (groupId: String) -> String? in
-            FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: groupId)?
-                .path
-        }
-    }
-}
-```
-
-- [ ] **Step 3: Replace the generated TS surface**
-
-Edit `modules/native-ios/src/index.ts`:
-
-```ts
-import { requireNativeModule } from 'expo-modules-core';
-
-const NativeIos = requireNativeModule('NativeIos');
-
-export function appGroupContainerPath(groupId: string): string | null {
-  return NativeIos.appGroupContainerPath(groupId);
-}
-```
-
-- [ ] **Step 4: Wire it into root layout**
-
-Edit `app/_layout.tsx` and replace the placeholder helper with:
-
-```tsx
-import { appGroupContainerPath } from '@/modules/native-ios';
-
-const APP_GROUP_ID = 'group.com.trippocket.shared';
-
-function getAppGroupDir(): string | undefined {
-  const path = appGroupContainerPath(APP_GROUP_ID);
-  return path ?? undefined;
-}
-```
-
-Use it when opening the database:
-
-```tsx
-const db = await openDatabase('trip-pocket.db', getAppGroupDir());
-```
-
-And use it for the sandbox dir:
-
-```tsx
-const groupDir = getAppGroupDir();
-const SANDBOX_DIR = groupDir
-  ? `${groupDir}/inbox`
-  : `${FileSystem.documentDirectory}screenshots`;
-```
-
-- [ ] **Step 5: Run prebuild + dev build**
+- [ ] **Step 1: Clean prebuild**
 
 ```sh
 npx expo prebuild --clean -p ios
+```
+
+Expected: `ios/TripPocketShare/` exists; the entitlements file is present; `ios/*.xcodeproj/project.pbxproj` references the extension target.
+
+- [ ] **Step 2: Local device build**
+
+```sh
 eas build --profile dev --platform ios --local
 ```
 
-Install the new IPA on the iPhone.
+Expected: an `.ipa` is produced.
 
-- [ ] **Step 6: Smoke test**
+- [ ] **Step 3: Install on iPhone**
 
-Open the app on the iPhone. Expected: empty-state screen, no crashes.
+Open Xcode → Window → Devices and Simulators → drag the IPA onto your device.
 
-- [ ] **Step 7: Commit**
+Expected: the app installs and launches.
+
+- [ ] **Step 4: Verify the App Group is wired both ways**
+
+Open the app once (so the main app creates `trip-pocket.db` inside the App Group container). Then dismiss the app and confirm the share extension is visible from Photos → tap a screenshot → Share — "Trip Pocket" should appear.
+
+If the extension does NOT appear: revisit the config plugin (Task 14) — `prebuild --clean` is the recovery.
+
+- [ ] **Step 5: Commit any prebuild artifacts that should not be in `.gitignore`**
+
+By default Expo's `.gitignore` excludes `ios/`. We don't need to commit native project files. Confirm there are no untracked items that *should* be tracked.
 
 ```sh
-/opt/homebrew/bin/git add -A
-/opt/homebrew/bin/git commit -m "feat(native): add NativeIos Expo Module for App Group path"
+/opt/homebrew/bin/git status
 ```
+
+If clean, no commit needed. Otherwise add only what should be tracked.
 
 ---
 
-### Task 17: End-to-end smoke test
+### Task 16: End-to-end smoke test
 
 **Why:** Validate the goal — share, see, repeat.
 
@@ -2281,15 +2180,15 @@ Edit `docs/phases/phase-1-hello-screenshot.md` and append a `## Status` section:
 
 ## Self-review notes
 
-Run through the spec one more time:
+Spec coverage:
 
-- ✅ Dev build on real iPhone — Tasks 5, 16
+- ✅ Dev build on real iPhone — Tasks 5, 15
 - ✅ Share extension shows in Photos share sheet — Task 14
-- ✅ Image copies to app storage on Save — Task 14 (PendingImportWriter)
-- ✅ Sandbox image is consumed into `screenshots` — Task 12, 13
+- ✅ Image copies to App Group storage on Save — Task 14 (PendingImportWriter)
+- ✅ Sandbox image is moved into the main app's view — Task 12, 13
 - ✅ List shows the saved screenshot — Task 11
-- ✅ Closing/reopening still shows it — Task 13 (real DB, not in-memory)
-- ✅ Repeats reliably 3+ times — Task 17
+- ✅ Closing/reopening still shows it — Task 13 (real shared DB, not in-memory)
+- ✅ Repeats reliably 3+ times — Task 16
 
 What this plan does *not* do (intentional, in spec):
 
@@ -2297,4 +2196,13 @@ What this plan does *not* do (intentional, in spec):
 - No trips table writes (defer to Phase 2)
 - No tap-to-view detail (defer to Phase 2)
 - No delete (defer to Phase 2)
+- No content-hash dedup (defer to Phase 2)
 - No OCR / AI / auto-detect (defer to v0.2)
+
+What changed from the first draft of this plan:
+
+- Removed the custom `NativeIos` Expo Module — `expo-file-system` exposes `Paths.appleSharedContainers` natively as of SDK 54+.
+- The main app's App Group entitlement is set declaratively in `app.json` instead of via a config plugin.
+- File operations use the modern `expo-file-system` class API (`File`, `Directory`, `Paths`) instead of the legacy `FileSystem.*Async` calls.
+- Content-hash dedup is deferred to Phase 2; `content_hash` is filled with the screenshot UUID for now to satisfy the NOT NULL constraint.
+- NativeWind pins tightened to `tailwindcss@^3.4.17`, `prettier-plugin-tailwindcss@^0.5.11`.
