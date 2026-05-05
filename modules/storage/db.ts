@@ -10,6 +10,7 @@ export type Migration = {
 export async function openDatabase(name = 'trip-pocket.db'): Promise<Database> {
   const db = await SQLite.openDatabaseAsync(name);
   await db.execAsync('PRAGMA journal_mode = WAL;');
+  await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
   );
