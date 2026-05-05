@@ -1,4 +1,4 @@
-const { withXcodeProject } = require('@expo/config-plugins');
+const { withXcodeProject } = require('expo/config-plugins');
 const path = require('path');
 const fs = require('fs');
 

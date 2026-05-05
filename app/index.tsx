@@ -1,4 +1,5 @@
-import { FlatList, Image, SafeAreaView, Text, View } from 'react-native';
+import { FlatList, Image, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLiveQuery } from '@/modules/storage';
 
 type Row = {
