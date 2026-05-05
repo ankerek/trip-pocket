@@ -1,11 +1,6 @@
-import { openDatabase, runMigrations, getMigrationVersion } from '../db';
+import { openDatabase, runMigrations, getMigrationVersion, type Database } from '../db';
 
 describe('runMigrations', () => {
-  beforeEach(async () => {
-    const db = await openDatabase(':memory:');
-    await db.execAsync('DROP TABLE IF EXISTS schema_migrations');
-  });
-
   it('starts at version 0 on a fresh database', async () => {
     const db = await openDatabase(':memory:');
     expect(await getMigrationVersion(db)).toBe(0);
@@ -16,7 +11,7 @@ describe('runMigrations', () => {
     const migrations = [
       {
         version: 1,
-        up: async (d: typeof db) => {
+        up: async (d: Database) => {
           await d.execAsync('CREATE TABLE example (id TEXT PRIMARY KEY)');
         },
       },
@@ -31,7 +26,7 @@ describe('runMigrations', () => {
     const migrations = [
       {
         version: 1,
-        up: async (d: typeof db) => {
+        up: async (d: Database) => {
           runs += 1;
           await d.execAsync('CREATE TABLE example (id TEXT PRIMARY KEY)');
         },
@@ -40,5 +35,19 @@ describe('runMigrations', () => {
     await runMigrations(db, migrations);
     await runMigrations(db, migrations);
     expect(runs).toBe(1);
+  });
+
+  it('rolls back a failed migration and leaves version at 0', async () => {
+    const db = await openDatabase(':memory:');
+    const migrations = [
+      {
+        version: 1,
+        up: async (_d: Database) => {
+          throw new Error('migration failed');
+        },
+      },
+    ];
+    await expect(runMigrations(db, migrations)).rejects.toThrow('migration failed');
+    expect(await getMigrationVersion(db)).toBe(0);
   });
 });

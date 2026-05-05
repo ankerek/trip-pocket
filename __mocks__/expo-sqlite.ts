@@ -1,10 +1,15 @@
 import BetterSqlite3 from 'better-sqlite3';
 
+export type SQLiteRunResult = {
+  lastInsertRowId: number;
+  changes: number;
+};
+
 export interface MockSQLiteDatabase {
   execAsync(sql: string): Promise<void>;
   getFirstAsync<T>(sql: string, ...params: unknown[]): Promise<T | null>;
   getAllAsync<T>(sql: string, ...params: unknown[]): Promise<T[]>;
-  runAsync(sql: string, ...params: unknown[]): Promise<void>;
+  runAsync(sql: string, ...params: unknown[]): Promise<SQLiteRunResult>;
   withTransactionAsync(fn: () => Promise<void>): Promise<void>;
 }
 
@@ -28,9 +33,13 @@ export async function openDatabaseAsync(_name: string): Promise<MockSQLiteDataba
       return stmt.all(...params) as T[];
     },
 
-    async runAsync(sql: string, ...params: unknown[]): Promise<void> {
+    async runAsync(sql: string, ...params: unknown[]): Promise<SQLiteRunResult> {
       const stmt = db.prepare(sql);
-      stmt.run(...params);
+      const info = stmt.run(...params);
+      return {
+        lastInsertRowId: Number(info.lastInsertRowid),
+        changes: info.changes,
+      };
     },
 
     async withTransactionAsync(fn: () => Promise<void>): Promise<void> {
