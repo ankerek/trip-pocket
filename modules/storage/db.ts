@@ -7,8 +7,11 @@ export type Migration = {
   up: (db: Database) => Promise<void>;
 };
 
-export async function openDatabase(name = 'trip-pocket.db'): Promise<Database> {
-  const db = await SQLite.openDatabaseAsync(name);
+export async function openDatabase(
+  name = 'trip-pocket.db',
+  directory?: string,
+): Promise<Database> {
+  const db = await SQLite.openDatabaseAsync(name, undefined, directory);
   await db.execAsync('PRAGMA journal_mode = WAL;');
   await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(
