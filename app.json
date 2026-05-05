@@ -12,7 +12,12 @@
       "bundleIdentifier": "com.trippocket.app",
       "supportsTablet": false,
       "entitlements": {
-        "com.apple.security.application-groups": ["group.com.trippocket.shared"]
+        "com.apple.security.application-groups": [
+          "group.com.trippocket.shared"
+        ]
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -48,6 +53,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2dee30ac-eb35-4cc6-80d7-4e6a664237b5"
+      }
+    },
+    "owner": "ankerek"
   }
 }

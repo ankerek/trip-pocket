@@ -23,8 +23,16 @@ function withExtensionTarget(config) {
 
     const target = project.addTarget(TARGET_NAME, 'app_extension', TARGET_NAME);
 
+    // Source paths are prefixed with the target directory so the resulting
+    // PBXFileReference resolves to ios/TripPocketShare/<file> rather than ios/<file>.
+    // (sourceTree defaults to '<group>'; with no parent group, Xcode resolves
+    // relative to the project main group, i.e. the ios/ root.)
     project.addBuildPhase(
-      ['ShareViewController.swift', 'SaveButtonView.swift', 'PendingImportWriter.swift'],
+      [
+        `${TARGET_NAME}/ShareViewController.swift`,
+        `${TARGET_NAME}/SaveButtonView.swift`,
+        `${TARGET_NAME}/PendingImportWriter.swift`,
+      ],
       'PBXSourcesBuildPhase',
       'Sources',
       target.uuid,
