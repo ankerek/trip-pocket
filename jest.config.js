@@ -7,6 +7,6 @@ module.exports = {
     '^expo-sqlite$': '<rootDir>/__mocks__/expo-sqlite.ts',
   },
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native|expo[^/]*|@expo|@expo/.*|nativewind|react-native-css-interop)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native|expo[^/]*|@expo|@expo/.*|nativewind|react-native-css-interop|uuid)/)',
   ],
 };
