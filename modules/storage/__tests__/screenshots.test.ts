@@ -75,4 +75,42 @@ describe('screenshots repository', () => {
     const rows = await listScreenshots(db, { tripId: null });
     expect(rows).toEqual([]);
   });
+
+  it('lists only screenshots for the given tripId when one is provided', async () => {
+    const db = await freshDb();
+    const tripId = '11111111-1111-1111-1111-111111111111';
+    await db.runAsync(
+      `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      tripId,
+      'Trip 1',
+      ownerId,
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
+    );
+    await insertScreenshot(db, {
+      id: 'a',
+      tripId,
+      filePath: '/x/a.jpg',
+      contentHash: 'h-a',
+      source: 'share',
+      capturedAt: '2026-05-01T00:00:00Z',
+      ownerId,
+    });
+    await insertScreenshot(db, {
+      id: 'b',
+      tripId: null,
+      filePath: '/x/b.jpg',
+      contentHash: 'h-b',
+      source: 'share',
+      capturedAt: '2026-05-01T00:00:00Z',
+      ownerId,
+    });
+
+    const inTrip = await listScreenshots(db, { tripId });
+    expect(inTrip.map((r) => r.id)).toEqual(['a']);
+
+    const inbox = await listScreenshots(db, { tripId: null });
+    expect(inbox.map((r) => r.id)).toEqual(['b']);
+  });
 });

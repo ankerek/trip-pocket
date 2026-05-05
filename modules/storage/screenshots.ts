@@ -92,6 +92,8 @@ export async function listScreenshots(
             owner_id, created_at, updated_at
        FROM screenshots
       WHERE deleted_at IS NULL
+        -- tripId=null matches IS NULL rows; a real id matches trip_id=?
+        -- (the OR's second arm is dead when ? is NULL because NULL=NULL is false)
         AND ((? IS NULL AND trip_id IS NULL) OR trip_id = ?)
    ORDER BY captured_at DESC`,
     filter.tripId,
