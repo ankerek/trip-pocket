@@ -59,11 +59,14 @@ struct PendingImportWriter {
 
         let id = UUID().uuidString
         let createdAt = ISO8601DateFormatter().string(from: Date())
+        // SQLITE_TRANSIENT — force SQLite to copy the C string immediately, since the
+        // bridged buffer from Swift String only lives for the duration of this call.
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         // Store the full file:// URI so the JS side (expo-file-system class API)
         // can construct a File directly from app_group_path without inferring scheme.
-        sqlite3_bind_text(stmt, 1, id, -1, nil)
-        sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, nil)
-        sqlite3_bind_text(stmt, 3, createdAt, -1, nil)
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, createdAt, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw PendingImportError.dbFailed

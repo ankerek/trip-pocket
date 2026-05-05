@@ -30,12 +30,9 @@ function withExtensionTarget(config) {
       target.uuid,
     );
     project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', target.uuid);
-    project.addBuildPhase(
-      ['SQLite.framework'],
-      'PBXFrameworksBuildPhase',
-      'Frameworks',
-      target.uuid,
-    );
+    // No explicit Frameworks entry: `import SQLite3` in Swift triggers the system
+    // SQLite3 clang module, which auto-links libsqlite3 via its module map.
+    project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', target.uuid);
 
     const configurations = project.pbxXCBuildConfigurationSection();
     for (const key in configurations) {
