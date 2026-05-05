@@ -1,6 +1,6 @@
 import '../global.css';
 import { Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { File } from 'expo-file-system';
 import {
@@ -16,7 +16,12 @@ import { getAppGroupContainerUri, getSandboxDirectory } from '@/modules/capture/
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
-  const [ctx, setCtx] = useState<{ db: Database; ownerId: string; sandboxDirUri: string } | null>(null);
+  const [ctx, setCtx] = useState<{
+    db: Database;
+    ownerId: string;
+    sandboxDirUri: string;
+  } | null>(null);
+  const ingesting = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -27,26 +32,34 @@ export default function RootLayout() {
       provideDatabase(db);
 
       const sandbox = getSandboxDirectory();
-      const ownerId = await getOrCreateOwnerId();
+      const ownerId = getOrCreateOwnerId();
       setCtx({ db, ownerId, sandboxDirUri: sandbox.uri });
       setReady(true);
-    })();
+    })().catch((err) => {
+      console.error('[RootLayout] init failed', err);
+    });
   }, []);
 
   useEffect(() => {
     if (!ctx) return;
     const run = async () => {
-      await ingestPendingImports(ctx.db, {
-        ownerId: ctx.ownerId,
-        sandboxDir: ctx.sandboxDirUri,
-        fs: {
-          moveFile: async (from, to) => {
-            const src = new File(from);
-            const dst = new File(to);
-            await src.move(dst);
+      if (ingesting.current) return;
+      ingesting.current = true;
+      try {
+        await ingestPendingImports(ctx.db, {
+          ownerId: ctx.ownerId,
+          sandboxDir: ctx.sandboxDirUri,
+          fs: {
+            moveFile: async (from, to) => {
+              const src = new File(from);
+              const dst = new File(to);
+              src.move(dst);
+            },
           },
-        },
-      });
+        });
+      } finally {
+        ingesting.current = false;
+      }
     };
     run();
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
