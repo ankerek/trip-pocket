@@ -45,3 +45,19 @@ ios/*.xcworkspace/xcuserdata/
 ios/*.xcodeproj/xcuserdata/
 *.xcuserstate
 DerivedData/
+/ios
+/android
+
+# React Native / Expo additional
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.metro-health-check*
+*.pem
+*.tsbuildinfo
+app-example
+expo-env.d.ts
