@@ -1,4 +1,5 @@
 import { openDatabase, runMigrations, getMigrationVersion, type Database } from '../db';
+import { migrations } from '../migrations';
 
 describe('runMigrations', () => {
   it('starts at version 0 on a fresh database', async () => {
@@ -49,5 +50,36 @@ describe('runMigrations', () => {
     ];
     await expect(runMigrations(db, migrations)).rejects.toThrow('migration failed');
     expect(await getMigrationVersion(db)).toBe(0);
+  });
+});
+
+describe('initial migration (0001)', () => {
+  it('creates every Phase-1+v0.2+v1.0 table', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    const tables = await db.getAllAsync<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    );
+    const names = tables.map((t) => t.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'trips',
+        'screenshots',
+        'tags',
+        'extracted_places',
+        'pending_imports',
+        'meta',
+        'schema_migrations',
+      ]),
+    );
+  });
+
+  it('creates the screenshots_fts virtual table', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    const row = await db.getFirstAsync<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='screenshots_fts'",
+    );
+    expect(row?.name).toBe('screenshots_fts');
   });
 });
