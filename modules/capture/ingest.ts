@@ -22,11 +22,18 @@ export async function ingestPendingImports(
     app_group_path: string;
     suggested_trip_id: string | null;
     created_at: string;
-  }>('SELECT * FROM pending_imports ORDER BY created_at ASC');
+  }>(
+    `SELECT id, app_group_path, suggested_trip_id, created_at
+       FROM pending_imports
+   ORDER BY created_at ASC`,
+  );
 
   for (const p of pending) {
     const screenshotId = uuidv4();
     const target = `${opts.sandboxDir}/${screenshotId}.jpg`;
+    // Phase 1: moveFile happens before the DB write. If insertScreenshot throws,
+    // the source file is gone and re-ingest will fail. Per-row try/catch is a
+    // Phase 2 concern alongside delete + recovery.
     await opts.fs.moveFile(p.app_group_path, target);
 
     // No content_hash in Phase 1 — column is NOT NULL in schema, so we stamp the
