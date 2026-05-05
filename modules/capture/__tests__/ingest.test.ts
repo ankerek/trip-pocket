@@ -67,4 +67,42 @@ describe('ingestPendingImports', () => {
     expect(fakeFs.moveFile.mock.calls[0]?.[0]).toBe('/appgroup/a.jpg');
     expect(fakeFs.moveFile.mock.calls[1]?.[0]).toBe('/appgroup/b.jpg');
   });
+
+  it('skips a row whose moveFile rejects, keeps draining the rest', async () => {
+    const flakyFs = {
+      moveFile: jest
+        .fn<Promise<void>, [string, string]>()
+        .mockImplementationOnce(async () => {
+          throw new Error('disk pressure');
+        })
+        .mockImplementation(async () => undefined),
+    };
+    const db = await freshDb();
+    await db.runAsync(
+      `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
+       VALUES ('p1', '/appgroup/a.jpg', NULL, '2026-05-04T10:00:00Z'),
+              ('p2', '/appgroup/b.jpg', NULL, '2026-05-04T10:00:01Z')`,
+    );
+
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await ingestPendingImports(db, {
+        ownerId,
+        sandboxDir: '/sandbox',
+        fs: flakyFs,
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    expect(flakyFs.moveFile).toHaveBeenCalledTimes(2);
+
+    const rows = await listScreenshots(db, { tripId: null });
+    expect(rows).toHaveLength(1);
+
+    const remaining = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM pending_imports ORDER BY id',
+    );
+    expect(remaining.map((r) => r.id)).toEqual(['p1']);
+  });
 });

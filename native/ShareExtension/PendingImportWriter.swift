@@ -33,8 +33,14 @@ struct PendingImportWriter {
         }
         defer { sqlite3_close(db) }
 
+        // Set WAL so the main app and extension can read/write concurrently. WAL is
+        // a persistent per-database property, so this only matters when the extension
+        // is the first process to ever open the file.
+        sqlite3_exec(db, "PRAGMA journal_mode = WAL;", nil, nil, nil)
+
         // The main app creates the table at first launch; the extension creates it
-        // defensively in case it runs first.
+        // defensively in case it runs first. CREATE IF NOT EXISTS matches the
+        // migration's idempotent shape so the main app's first migration won't fail.
         let create = """
             CREATE TABLE IF NOT EXISTS pending_imports (
                 id TEXT PRIMARY KEY NOT NULL,

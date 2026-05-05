@@ -28,32 +28,37 @@ export async function ingestPendingImports(
    ORDER BY created_at ASC`,
   );
 
+  let committed = 0;
   for (const p of pending) {
     const screenshotId = uuidv4();
     const target = `${opts.sandboxDir}/${screenshotId}.jpg`;
-    // Phase 1: moveFile happens before the DB write. If insertScreenshot throws,
-    // the source file is gone and re-ingest will fail. Per-row try/catch is a
-    // Phase 2 concern alongside delete + recovery.
-    await opts.fs.moveFile(p.app_group_path, target);
+    try {
+      // moveFile happens before the DB write. If insertScreenshot then throws,
+      // the source file is gone — Phase 2 adds proper recovery; for now we log
+      // and skip so a single bad row does not wedge the rest of the queue.
+      await opts.fs.moveFile(p.app_group_path, target);
 
-    // No content_hash in Phase 1 — column is NOT NULL in schema, so we stamp the
-    // image filename's UUID as the placeholder. Phase 2 replaces with a real hash
-    // and adds a unique index that this row will be allowed to keep (UUIDs don't
-    // collide). The architecture allows this because Phase 1 has no dedup logic.
-    await insertScreenshot(db, {
-      id: screenshotId,
-      tripId: p.suggested_trip_id,
-      filePath: target,
-      contentHash: screenshotId,
-      source: 'share',
-      capturedAt: p.created_at,
-      ownerId: opts.ownerId,
-    });
+      // contentHash is the screenshot UUID (Phase 1 placeholder). Real content
+      // hashing + dedup land in Phase 2 alongside delete; UUIDs trivially satisfy
+      // the unique partial index in the meantime.
+      await insertScreenshot(db, {
+        id: screenshotId,
+        tripId: p.suggested_trip_id,
+        filePath: target,
+        contentHash: screenshotId,
+        source: 'share',
+        capturedAt: p.created_at,
+        ownerId: opts.ownerId,
+      });
 
-    await db.runAsync('DELETE FROM pending_imports WHERE id = ?', p.id);
+      await db.runAsync('DELETE FROM pending_imports WHERE id = ?', p.id);
+      committed += 1;
+    } catch (err) {
+      console.warn('[ingestPendingImports] row failed', p.id, err);
+    }
   }
 
-  if (pending.length > 0) {
+  if (committed > 0) {
     notifyChange('screenshots');
     notifyChange('pending_imports');
   }

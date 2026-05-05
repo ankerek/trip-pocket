@@ -45,14 +45,25 @@ class ShareViewController: UIViewController {
 
     private func materializeImage(_ data: NSSecureCoding?) -> URL? {
         if let url = data as? URL { return url }
-        if let img = data as? UIImage,
-           let jpeg = img.jpegData(compressionQuality: 0.95) {
-            let tmp = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString + ".jpg")
-            try? jpeg.write(to: tmp)
-            return tmp
+        if let raw = data as? Data, let img = UIImage(data: raw) {
+            return writeJpegToTemp(img)
+        }
+        if let img = data as? UIImage {
+            return writeJpegToTemp(img)
         }
         return nil
+    }
+
+    private func writeJpegToTemp(_ img: UIImage) -> URL? {
+        guard let jpeg = img.jpegData(compressionQuality: 0.95) else { return nil }
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jpg")
+        do {
+            try jpeg.write(to: tmp)
+            return tmp
+        } catch {
+            return nil
+        }
     }
 
     private func cancel() {
