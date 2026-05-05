@@ -42,7 +42,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "./plugins/with-share-extension"
     ],
     "experiments": {
       "typedRoutes": true,
