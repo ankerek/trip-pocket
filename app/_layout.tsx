@@ -10,9 +10,12 @@ import {
   provideDatabase,
   type Database,
 } from '@/modules/storage';
-import { ingestPendingImports } from '@/modules/capture';
-import { getOrCreateOwnerId } from '@/modules/capture/owner';
-import { getAppGroupContainerUri, getSandboxDirectory } from '@/modules/capture/paths';
+import {
+  ingestPendingImports,
+  getOrCreateOwnerId,
+  getAppGroupContainerUri,
+  getSandboxDirectory,
+} from '@/modules/capture';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);

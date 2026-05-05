@@ -629,6 +629,7 @@ export type Migration = {
 export async function openDatabase(name = 'trip-pocket.db'): Promise<Database> {
   const db = await SQLite.openDatabaseAsync(name);
   await db.execAsync('PRAGMA journal_mode = WAL;');
+  await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
   );
@@ -741,8 +742,11 @@ import type { Migration } from '../db';
 export const init: Migration = {
   version: 1,
   up: async (db) => {
+    // All CREATEs are idempotent. The Swift share extension creates pending_imports
+    // defensively (so it can run before the main app's first launch); IF NOT EXISTS
+    // keeps this migration from crashing on a pre-created table.
     await db.execAsync(`
-      CREATE TABLE trips (
+      CREATE TABLE IF NOT EXISTS trips (
         id TEXT PRIMARY KEY NOT NULL,
         name TEXT NOT NULL,
         color TEXT,
@@ -752,7 +756,7 @@ export const init: Migration = {
         deleted_at TEXT
       );
 
-      CREATE TABLE screenshots (
+      CREATE TABLE IF NOT EXISTS screenshots (
         id TEXT PRIMARY KEY NOT NULL,
         trip_id TEXT,
         file_path TEXT NOT NULL,
@@ -769,11 +773,11 @@ export const init: Migration = {
         FOREIGN KEY (trip_id) REFERENCES trips(id)
       );
 
-      CREATE INDEX idx_screenshots_trip ON screenshots(trip_id) WHERE deleted_at IS NULL;
-      CREATE INDEX idx_screenshots_captured_at ON screenshots(captured_at DESC) WHERE deleted_at IS NULL;
-      CREATE UNIQUE INDEX idx_screenshots_hash ON screenshots(content_hash) WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_screenshots_trip ON screenshots(trip_id) WHERE deleted_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_screenshots_captured_at ON screenshots(captured_at DESC) WHERE deleted_at IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_screenshots_hash ON screenshots(content_hash) WHERE deleted_at IS NULL;
 
-      CREATE TABLE tags (
+      CREATE TABLE IF NOT EXISTS tags (
         id TEXT PRIMARY KEY NOT NULL,
         screenshot_id TEXT NOT NULL,
         kind TEXT NOT NULL CHECK (kind IN ('place','food','activity')),
@@ -785,7 +789,7 @@ export const init: Migration = {
         FOREIGN KEY (screenshot_id) REFERENCES screenshots(id)
       );
 
-      CREATE TABLE extracted_places (
+      CREATE TABLE IF NOT EXISTS extracted_places (
         id TEXT PRIMARY KEY NOT NULL,
         screenshot_id TEXT NOT NULL,
         name TEXT NOT NULL,
@@ -801,19 +805,19 @@ export const init: Migration = {
         FOREIGN KEY (screenshot_id) REFERENCES screenshots(id)
       );
 
-      CREATE TABLE pending_imports (
+      CREATE TABLE IF NOT EXISTS pending_imports (
         id TEXT PRIMARY KEY NOT NULL,
         app_group_path TEXT NOT NULL,
         suggested_trip_id TEXT,
         created_at TEXT NOT NULL
       );
 
-      CREATE TABLE meta (
+      CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY NOT NULL,
         value TEXT
       );
 
-      CREATE VIRTUAL TABLE screenshots_fts USING fts5(
+      CREATE VIRTUAL TABLE IF NOT EXISTS screenshots_fts USING fts5(
         screenshot_id UNINDEXED,
         content,
         tokenize = 'porter unicode61'
@@ -1591,7 +1595,7 @@ const OWNER_FILE_NAME = 'owner.txt';
 
 export function getOrCreateOwnerId(): string {
   const file = new File(Paths.document, OWNER_FILE_NAME);
-  if (file.exists) return file.text().trim();
+  if (file.exists) return file.textSync().trim();
   const id = uuidv4();
   file.create();
   file.write(id);
@@ -1651,7 +1655,7 @@ export default function RootLayout() {
           moveFile: async (from, to) => {
             const src = new File(from);
             const dst = new File(to);
-            await src.move(dst);
+            src.move(dst);
           },
         },
       });
@@ -1688,6 +1692,7 @@ export async function openDatabase(
 ): Promise<Database> {
   const db = await SQLite.openDatabaseAsync(name, undefined, directory);
   await db.execAsync('PRAGMA journal_mode = WAL;');
+  await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
   );
@@ -1916,11 +1921,15 @@ struct PendingImportWriter {
 
         let id = UUID().uuidString
         let createdAt = ISO8601DateFormatter().string(from: Date())
+        // SQLITE_TRANSIENT — force SQLite to copy the C string immediately. The
+        // bridged buffer from a Swift String temporary only lives for the duration
+        // of this call; passing nil (SQLITE_STATIC) is undefined behavior.
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         // Store the full file:// URI so the JS side (expo-file-system class API)
         // can construct a File directly from app_group_path without inferring scheme.
-        sqlite3_bind_text(stmt, 1, id, -1, nil)
-        sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, nil)
-        sqlite3_bind_text(stmt, 3, createdAt, -1, nil)
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, createdAt, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw PendingImportError.dbFailed
@@ -2011,12 +2020,9 @@ function withExtensionTarget(config) {
       target.uuid,
     );
     project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', target.uuid);
-    project.addBuildPhase(
-      ['SQLite.framework'],
-      'PBXFrameworksBuildPhase',
-      'Frameworks',
-      target.uuid,
-    );
+    // No explicit Frameworks entry: `import SQLite3` in Swift triggers the system
+    // SQLite3 clang module, which auto-links libsqlite3 via its module map.
+    project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', target.uuid);
 
     const configurations = project.pbxXCBuildConfigurationSection();
     for (const key in configurations) {

@@ -10,7 +10,14 @@ export const APP_GROUP_ID = 'group.com.trippocket.shared';
  */
 export function getAppGroupContainerUri(): string | undefined {
   if (Platform.OS !== 'ios') return undefined;
-  return Paths.appleSharedContainers[APP_GROUP_ID]?.uri;
+  const uri = Paths.appleSharedContainers[APP_GROUP_ID]?.uri;
+  if (!uri) {
+    // Surfaces an entitlement misconfig immediately — without this the main app
+    // silently falls back to its private sandbox and the share-extension writes
+    // into a different DB, leaving the inbox perpetually empty.
+    console.warn(`[paths] App Group "${APP_GROUP_ID}" not available — check ios.entitlements`);
+  }
+  return uri;
 }
 
 /**
