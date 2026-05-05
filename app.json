@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "tmp-scaffold",
-    "slug": "tmp-scaffold",
+    "name": "Trip Pocket",
+    "slug": "trip-pocket",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "tmpscaffold",
+    "scheme": "trippocket",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
