@@ -485,7 +485,7 @@ Create `jest.config.js`:
 ```js
 module.exports = {
   preset: 'jest-expo',
-  setupFilesAfterEach: ['<rootDir>/jest.setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/__tests__/**/*.test.tsx'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
@@ -1321,7 +1321,7 @@ export default function Index() {
         renderItem={({ item }) => (
           <View className="w-1/2 p-1">
             <Image
-              source={{ uri: 'file://' + item.file_path }}
+              source={{ uri: item.file_path }}
               className="aspect-[3/4] w-full rounded-lg bg-slate-100"
               resizeMode="cover"
             />
@@ -1566,16 +1566,14 @@ export function getAppGroupContainerUri(): string | undefined {
 }
 
 /**
- * The directory inside the App Group where the share extension drops images and where
- * the main app moves them to. On non-iOS (or if the App Group entitlement is missing)
- * we fall back to the document directory so the rest of the app keeps working.
+ * The main app's private sandbox for stored screenshots. The architecture says the
+ * App Group container is the share-extension *mailbox*, not the long-term store —
+ * once the main app drains a pending import it moves the image into its own sandbox.
+ * That gives us cleaner accounting (App Group only holds the DB + the inbox subdir)
+ * and matches the documented data flow.
  */
 export function getSandboxDirectory(): Directory {
-  const groupUri = getAppGroupContainerUri();
-  const parent = groupUri
-    ? new Directory(groupUri)
-    : new Directory(Paths.document);
-  const dir = new Directory(parent, 'screenshots');
+  const dir = new Directory(Paths.document, 'screenshots');
   if (!dir.exists) dir.create({ intermediates: true });
   return dir;
 }
@@ -1653,7 +1651,7 @@ export default function RootLayout() {
           moveFile: async (from, to) => {
             const src = new File(from);
             const dst = new File(to);
-            src.move(dst);
+            await src.move(dst);
           },
         },
       });
@@ -1918,8 +1916,10 @@ struct PendingImportWriter {
 
         let id = UUID().uuidString
         let createdAt = ISO8601DateFormatter().string(from: Date())
+        // Store the full file:// URI so the JS side (expo-file-system class API)
+        // can construct a File directly from app_group_path without inferring scheme.
         sqlite3_bind_text(stmt, 1, id, -1, nil)
-        sqlite3_bind_text(stmt, 2, destURL.path, -1, nil)
+        sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, nil)
         sqlite3_bind_text(stmt, 3, createdAt, -1, nil)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -2024,6 +2024,7 @@ function withExtensionTarget(config) {
       if (!buildSettings) continue;
       if (buildSettings.PRODUCT_NAME && buildSettings.PRODUCT_NAME.includes(TARGET_NAME)) {
         buildSettings.CODE_SIGN_ENTITLEMENTS = `${TARGET_NAME}/TripPocketShare.entitlements`;
+        buildSettings.INFOPLIST_FILE = `${TARGET_NAME}/Info.plist`;
         buildSettings.PRODUCT_BUNDLE_IDENTIFIER = `${cfg.ios.bundleIdentifier}.share`;
         buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '15.1';
         buildSettings.SWIFT_VERSION = '5.0';
