@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.trippocket.app",
+      "supportsTablet": false,
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.trippocket.shared"]
+      }
     },
     "android": {
       "adaptiveIcon": {
