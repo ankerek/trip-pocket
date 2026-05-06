@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import * as Crypto from 'expo-crypto';
 import type { Database } from '@/modules/storage/db';
 import { insertScreenshot } from '@/modules/storage/screenshots';
 import { notifyChange } from '@/modules/storage/live-query';
@@ -30,7 +30,7 @@ export async function ingestPendingImports(
 
   let committed = 0;
   for (const p of pending) {
-    const screenshotId = uuidv4();
+    const screenshotId = Crypto.randomUUID();
     const target = `${opts.sandboxDir}/${screenshotId}.jpg`;
     try {
       // moveFile happens before the DB write. If insertScreenshot then throws,
