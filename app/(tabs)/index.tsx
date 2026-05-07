@@ -50,6 +50,9 @@ export default function Places() {
           headerRight: () => <HeaderPlusButton />,
         }}
       />
+      {/* SectionList provides outer vertical scroll + per-section headers; each
+          section's `data: []` is intentional — the grid lives inside renderSectionHeader
+          so PlaceGrid (a non-scrolling FlatList) can own its own layout. */}
       <SectionList
         sections={sections}
         keyExtractor={(_, idx) => `slot-${idx}`}
@@ -72,9 +75,11 @@ function HeaderPlusButton() {
     <Pressable
       onPress={() => {
         // Camera-roll import is wired in Task 11.
-        console.log('[places] + tapped — camera roll picker not yet wired');
+        if (__DEV__) console.log('[places] + tapped — camera roll picker not yet wired');
       }}
       className="px-3"
+      accessibilityRole="button"
+      accessibilityLabel="Add screenshots from camera roll"
     >
       <Text className="text-2xl font-semibold text-slate-900">＋</Text>
     </Pressable>

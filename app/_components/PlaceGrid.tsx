@@ -1,4 +1,4 @@
-import { FlatList, Image, Pressable, View } from 'react-native';
+import { FlatList, Image, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 
 export type GridItem = {
@@ -19,14 +19,14 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
         <Pressable
           className="w-1/2 p-1"
           onPress={() => router.push(`/places/${item.id}`)}
+          accessibilityRole="button"
+          accessibilityLabel="Screenshot"
         >
-          <View>
-            <Image
-              source={{ uri: item.file_path }}
-              className="aspect-[3/4] w-full rounded-lg bg-slate-100"
-              resizeMode="cover"
-            />
-          </View>
+          <Image
+            source={{ uri: item.file_path }}
+            className="aspect-[3/4] w-full rounded-lg bg-slate-100"
+            resizeMode="cover"
+          />
         </Pressable>
       )}
     />
