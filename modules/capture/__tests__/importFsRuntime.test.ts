@@ -19,4 +19,12 @@ describe('sha256OfBytes', () => {
     const expected = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
     expect(await sha256OfBytes(new Uint8Array(0))).toBe(expected);
   });
+
+  it('hashes a subarray view (non-zero byteOffset) using only the view bytes', async () => {
+    // FIPS 180-2 test vector for 'abc'
+    const expected = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
+    const big = new TextEncoder().encode('XXabcYY');
+    const view = big.subarray(2, 5); // 'abc' as a view with byteOffset=2
+    expect(await sha256OfBytes(view)).toBe(expected);
+  });
 });

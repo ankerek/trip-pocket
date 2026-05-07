@@ -19,14 +19,6 @@ export async function digest(
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
 }
 
-export async function digestStringAsync(
-  _algorithm: string,
-  _data: string,
-  _options?: unknown,
-): Promise<string> {
-  return '';
-}
-
 export function getRandomValues(typedArray: unknown): unknown {
   return typedArray;
 }

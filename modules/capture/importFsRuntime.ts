@@ -3,10 +3,10 @@ import { File } from 'expo-file-system';
 import type { ImportFs } from './importImage';
 
 export async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
-  const buf = await Crypto.digest(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
-  );
+  // Copy into a fresh ArrayBuffer-backed Uint8Array to satisfy `BufferSource`
+  // (avoids `ArrayBufferLike`/`SharedArrayBuffer` typing friction) and to
+  // correctly handle subarray views (non-zero byteOffset).
+  const buf = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, new Uint8Array(bytes));
   return arrayBufferToHex(buf);
 }
 
