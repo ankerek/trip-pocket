@@ -1,0 +1,8 @@
+{
+  "name": "vision-ocr",
+  "version": "0.0.1",
+  "description": "On-device Apple Vision text recognition for Trip Pocket.",
+  "main": "index.ts",
+  "private": true,
+  "license": "UNLICENSED"
+}
