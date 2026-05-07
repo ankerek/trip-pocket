@@ -28,16 +28,26 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
           accessibilityRole="button"
           accessibilityLabel="Screenshot"
         >
-          <View className="relative">
+          {/* aspect-ratio + bg lives on the wrapper so the slot keeps its
+              dimensions even when Image fails to load (no intrinsic size). */}
+          <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-slate-100">
             <Image
               source={{ uri: item.file_path }}
-              className="aspect-[3/4] w-full rounded-lg bg-slate-100"
+              className="h-full w-full"
               resizeMode="cover"
+              onError={(e) =>
+                console.warn(
+                  '[PlaceGrid] image load failed',
+                  item.id,
+                  item.file_path,
+                  e.nativeEvent,
+                )
+              }
             />
             {item.ocr_status === 'pending' ? (
               <View
                 pointerEvents="none"
-                className="absolute inset-0 animate-pulse rounded-lg bg-black/10"
+                className="absolute inset-0 animate-pulse bg-black/10"
               />
             ) : null}
           </View>

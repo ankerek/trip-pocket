@@ -43,13 +43,20 @@ export async function importImage(
   }
 
   const screenshotId = Crypto.randomUUID();
-  const targetUri = `${input.storageDir}/${screenshotId}.jpg`;
+  // expo-file-system's Directory.uri can come back with a trailing slash; strip
+  // it so we never produce `file://.../screenshots//<id>.jpg`. Some iOS code
+  // paths choke on the double slash even though the filesystem itself doesn't.
+  const dir = input.storageDir.endsWith('/')
+    ? input.storageDir.slice(0, -1)
+    : input.storageDir;
+  const targetUri = `${dir}/${screenshotId}.jpg`;
 
   if (input.transfer === 'move') {
     await input.fs.move(input.sourceUri, targetUri);
   } else {
     await input.fs.copy(input.sourceUri, targetUri);
   }
+  console.log('[importImage]', input.transfer, input.sourceUri, '->', targetUri);
 
   try {
     await insertScreenshot(db, {
