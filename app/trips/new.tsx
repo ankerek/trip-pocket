@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import { Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import * as Crypto from 'expo-crypto';
+import * as Haptics from 'expo-haptics';
 import { createTrip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { getOrCreateOwnerId } from '@/modules/capture';
@@ -22,6 +23,9 @@ export default function NewTrip() {
         name: trimmed,
         ownerId: getOrCreateOwnerId(),
       });
+      if (process.env.EXPO_OS === 'ios') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
       router.back();
     } catch (err) {
       Alert.alert('Could not create trip', String(err));

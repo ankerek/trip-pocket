@@ -1,7 +1,12 @@
 import '../global.css';
 import { Stack } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
+import {
+  DarkTheme,
+  DefaultTheme,
+  ThemeProvider,
+} from '@react-navigation/native';
 import {
   openDatabase,
   runMigrations,
@@ -24,6 +29,15 @@ import {
 } from '@/modules/processing';
 import { recognizeText } from '@/modules/vision-ocr';
 
+const SHARED_HEADER_OPTIONS = {
+  headerTransparent: true,
+  headerShadowVisible: false,
+  headerLargeTitleShadowVisible: false,
+  headerLargeStyle: { backgroundColor: 'transparent' },
+  headerBlurEffect: 'systemMaterial',
+  headerBackButtonDisplayMode: 'minimal',
+} as const;
+
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
   const [ctx, setCtx] = useState<{
@@ -33,6 +47,7 @@ export default function RootLayout() {
     processor: Processor;
   } | null>(null);
   const ingesting = useRef(false);
+  const colorScheme = useColorScheme();
 
   useEffect(() => {
     (async () => {
@@ -92,19 +107,54 @@ export default function RootLayout() {
 
   if (!ready) return null;
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="places/[id]" options={{ headerShown: true }} />
-      <Stack.Screen name="search" options={{ headerShown: true, presentation: 'modal' }} />
-      <Stack.Screen name="trips/[id]" options={{ headerShown: true }} />
-      <Stack.Screen
-        name="trips/new"
-        options={{ headerShown: true, presentation: 'modal', title: 'New trip' }}
-      />
-      <Stack.Screen
-        name="trips/[id]/edit"
-        options={{ headerShown: true, presentation: 'modal', title: 'Edit trip' }}
-      />
-    </Stack>
+    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="places/[id]"
+          options={{ headerShown: true, ...SHARED_HEADER_OPTIONS }}
+        />
+        <Stack.Screen
+          name="search"
+          options={{
+            headerShown: true,
+            presentation: 'modal',
+            ...SHARED_HEADER_OPTIONS,
+          }}
+        />
+        <Stack.Screen
+          name="trips/[id]"
+          options={{ headerShown: true, ...SHARED_HEADER_OPTIONS }}
+        />
+        <Stack.Screen
+          name="trips/new"
+          options={{
+            headerShown: true,
+            presentation: 'modal',
+            title: 'New trip',
+            ...SHARED_HEADER_OPTIONS,
+          }}
+        />
+        <Stack.Screen
+          name="trips/[id]/edit"
+          options={{
+            headerShown: true,
+            presentation: 'modal',
+            title: 'Edit trip',
+            ...SHARED_HEADER_OPTIONS,
+          }}
+        />
+        <Stack.Screen
+          name="places/[id]/ocr-debug"
+          options={{
+            headerShown: true,
+            presentation: 'formSheet',
+            sheetGrabberVisible: true,
+            sheetAllowedDetents: [0.5, 1.0],
+            title: 'OCR debug',
+          }}
+        />
+      </Stack>
+    </ThemeProvider>
   );
 }

@@ -4,7 +4,6 @@ import {
 } from 'react-native-css';
 import {
   FlatList as RNFlatList,
-  Image as RNImage,
   Pressable as RNPressable,
   ScrollView as RNScrollView,
   SectionList as RNSectionList,
@@ -14,6 +13,7 @@ import {
   type FlatListProps,
   type SectionListProps,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { SafeAreaView as RNSafeAreaView } from 'react-native-safe-area-context';
 import React from 'react';
 
@@ -88,9 +88,9 @@ export const TextInput = (
 TextInput.displayName = 'CSS(TextInput)';
 
 export const Image = (
-  props: React.ComponentProps<typeof RNImage> & { className?: string },
+  props: React.ComponentProps<typeof ExpoImage> & { className?: string },
 ) => {
-  return useCssElement(RNImage, props, { className: 'style' });
+  return useCssElement(ExpoImage, props, { className: 'style' });
 };
 Image.displayName = 'CSS(Image)';
 

@@ -1,11 +1,7 @@
-import { Pressable, Text } from '@/tw';
+import { Pressable } from '@/tw';
 import { useRouter, type Href } from 'expo-router';
+import { Icon } from './Icon';
 
-/**
- * Magnifier icon shown in the right-side of the Inbox and Trip Detail
- * headers. Pushes the dedicated /search screen — search is global, no
- * trip pre-filter is applied even when launched from a trip view.
- */
 export function SearchButton() {
   const router = useRouter();
   // The literal route is cast to Href because Expo Router's typed-routes
@@ -19,7 +15,7 @@ export function SearchButton() {
       accessibilityRole="button"
       accessibilityLabel="Search screenshots"
     >
-      <Text className="text-xl text-slate-900">🔍</Text>
+      <Icon name="magnifyingglass" size={22} tintColor="#0f172a" />
     </Pressable>
   );
 }

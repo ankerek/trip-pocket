@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, Text, View } from '@/tw';
+import { Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   getTrip,
@@ -11,6 +11,7 @@ import {
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid } from '@/components/PlaceGrid';
 import { SearchButton } from '@/components/SearchButton';
+import { Icon } from '@/components/Icon';
 
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -45,10 +46,12 @@ export default function TripDetail() {
 
   if (state.trip === null) {
     return (
-      <SafeAreaView className="flex-1 items-center justify-center bg-white">
+      <>
         <Stack.Screen options={{ title: '' }} />
-        <Text className="text-base text-slate-500">Trip not found.</Text>
-      </SafeAreaView>
+        <View className="flex-1 items-center justify-center bg-white">
+          <Text className="text-base text-slate-500">Trip not found.</Text>
+        </View>
+      </>
     );
   }
 
@@ -56,10 +59,11 @@ export default function TripDetail() {
   const screenshots = state.screenshots;
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <>
       <Stack.Screen
         options={{
           title: trip.name,
+          headerLargeTitle: true,
           headerRight: () => (
             <View className="flex-row items-center">
               <SearchButton />
@@ -69,20 +73,27 @@ export default function TripDetail() {
                 accessibilityRole="button"
                 accessibilityLabel="Edit trip"
               >
-                <Text className="text-base text-slate-900">✏️</Text>
+                <Icon name="pencil" size={22} tintColor="#0f172a" />
               </Pressable>
             </View>
           ),
         }}
       />
       {screenshots.length === 0 ? (
-        <View className="flex-1 items-center justify-center px-8">
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          className="flex-1 bg-white"
+          contentContainerClassName="flex-1 items-center justify-center px-8"
+        >
           <Text className="text-center text-base text-slate-500">
             No places in this trip yet — add some from Inbox.
           </Text>
-        </View>
+        </ScrollView>
       ) : (
-        <ScrollView className="flex-1">
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          className="flex-1 bg-white"
+        >
           <PlaceGrid
             data={screenshots.map((s) => ({
               id: s.id,
@@ -92,6 +103,6 @@ export default function TripDetail() {
           />
         </ScrollView>
       )}
-    </SafeAreaView>
+    </>
   );
 }

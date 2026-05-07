@@ -1,5 +1,9 @@
+import { Alert } from 'react-native';
 import { Image, Pressable, View } from '@/tw';
-import { useRouter } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { softDeleteScreenshot } from '@/modules/storage';
+import { useDatabase } from './useDatabase';
 
 export type GridItem = {
   id: string;
@@ -19,39 +23,79 @@ export type GridItem = {
  * viewport to anchor layout to). Outer scrolling lives in the parent.
  */
 export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
+  const db = useDatabase();
   const router = useRouter();
+
+  const confirmDelete = (id: string) => {
+    Alert.alert(
+      'Delete this place?',
+      "This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (!db) return;
+            if (process.env.EXPO_OS === 'ios') {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+            }
+            await softDeleteScreenshot(db, id);
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  };
+
   return (
     <View className="flex-row flex-wrap p-2">
       {data.map((item) => (
-        <Pressable
-          key={item.id}
-          className="w-1/2 p-1"
-          onPress={() => router.push(`/places/${item.id}`)}
-          accessibilityRole="button"
-          accessibilityLabel="Screenshot"
-        >
-          <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-slate-100">
-            <Image
-              source={{ uri: item.file_path }}
-              className="h-full w-full"
-              resizeMode="cover"
-              onError={(e) =>
-                console.warn(
-                  '[PlaceGrid] image load failed',
-                  item.id,
-                  item.file_path,
-                  e.nativeEvent,
-                )
-              }
+        <Link key={item.id} href={`/places/${item.id}`} asChild>
+          <Link.Trigger>
+            <Pressable
+              className="w-1/2 p-1"
+              accessibilityRole="button"
+              accessibilityLabel="Screenshot"
+            >
+              <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-slate-100">
+                <Image
+                  source={item.file_path}
+                  className="h-full w-full"
+                  contentFit="cover"
+                  onError={(error) =>
+                    console.warn(
+                      '[PlaceGrid] image load failed',
+                      item.id,
+                      item.file_path,
+                      error,
+                    )
+                  }
+                />
+                {item.ocr_status === 'pending' ? (
+                  <View
+                    pointerEvents="none"
+                    className="absolute inset-0 animate-pulse bg-black/10"
+                  />
+                ) : null}
+              </View>
+            </Pressable>
+          </Link.Trigger>
+          <Link.Preview />
+          <Link.Menu>
+            <Link.MenuAction
+              title="Show OCR text"
+              icon="info.circle"
+              onPress={() => router.push(`/places/${item.id}/ocr-debug`)}
             />
-            {item.ocr_status === 'pending' ? (
-              <View
-                pointerEvents="none"
-                className="absolute inset-0 animate-pulse bg-black/10"
-              />
-            ) : null}
-          </View>
-        </Pressable>
+            <Link.MenuAction
+              title="Delete"
+              icon="trash"
+              destructive
+              onPress={() => confirmDelete(item.id)}
+            />
+          </Link.Menu>
+        </Link>
       ))}
     </View>
   );

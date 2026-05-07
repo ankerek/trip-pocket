@@ -3,7 +3,6 @@ import {
   FlatList,
   Image,
   Pressable,
-  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
@@ -75,7 +74,7 @@ export default function Search() {
   const tooShort = match === null && trimmed.length > 0;
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <View className="flex-1 bg-white">
       <Stack.Screen
         options={{
           title: '',
@@ -148,6 +147,7 @@ export default function Search() {
         </View>
       ) : (
         <FlatList
+          contentInsetAdjustmentBehavior="automatic"
           data={rows}
           keyExtractor={(r) => r.id}
           contentContainerClassName="px-4 py-2"
@@ -160,9 +160,9 @@ export default function Search() {
               accessibilityLabel={`Open screenshot${item.trip_name ? ` in ${item.trip_name}` : ''}`}
             >
               <Image
-                source={{ uri: item.file_path }}
+                source={item.file_path}
                 className="h-16 w-16 rounded-md bg-slate-100"
-                resizeMode="cover"
+                contentFit="cover"
               />
               <View className="flex-1">
                 <View className="mb-1 self-start rounded-full bg-slate-100 px-2 py-0.5">
@@ -179,7 +179,7 @@ export default function Search() {
           )}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

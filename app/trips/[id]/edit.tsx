@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import { Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import {
   countByTrip,
   getTrip,
@@ -71,6 +72,9 @@ export default function EditTrip() {
     if (!db || !id || !canSave) return;
     try {
       await renameTrip(db, { id, name: trimmed });
+      if (process.env.EXPO_OS === 'ios') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
       router.back();
     } catch (err) {
       Alert.alert('Could not rename trip', String(err));
@@ -89,6 +93,9 @@ export default function EditTrip() {
           style: 'destructive',
           onPress: async () => {
             try {
+              if (process.env.EXPO_OS === 'ios') {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+              }
               await softDeleteTrip(db, id);
               // Pop twice: first this modal, then the trip detail screen behind it.
               // Assumes we were opened from /trips/[id] (the only entry path in v0.1).

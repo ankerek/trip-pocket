@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { FlatList, Image, Pressable, SafeAreaView, Text, View } from '@/tw';
-import { Tabs, useRouter } from 'expo-router';
+import { FlatList, Image, Pressable, Text, View } from '@/tw';
+import { Stack, useRouter } from 'expo-router';
+import { Icon } from '@/components/Icon';
 import {
   countByTrip,
   listScreenshotsByTrip,
@@ -60,17 +61,21 @@ export default function Trips() {
 
   if (rows.length === 0) {
     return (
-      <SafeAreaView className="flex-1 items-center justify-center bg-white">
-        <Tabs.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
-        <Text className="text-base text-slate-500">No trips yet — tap + to create one.</Text>
-      </SafeAreaView>
+      <>
+        <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
+        <View className="flex-1 items-center justify-center bg-white">
+          <Text className="text-base text-slate-500">No trips yet — tap + to create one.</Text>
+        </View>
+      </>
     );
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <Tabs.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
+    <>
+      <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
       <FlatList
+        contentInsetAdjustmentBehavior="automatic"
+        className="bg-white"
         data={rows}
         keyExtractor={(r) => r.trip.id}
         contentContainerClassName="p-2"
@@ -88,7 +93,12 @@ export default function Trips() {
               >
                 {item.trip.name}
               </Text>
-              <Text className="text-sm text-slate-500">{item.count}</Text>
+              <Text
+                className="text-sm text-slate-500"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
+                {item.count}
+              </Text>
             </View>
             <FlatList
               data={item.previews}
@@ -104,9 +114,9 @@ export default function Trips() {
                   accessibilityLabel="Screenshot"
                 >
                   <Image
-                    source={{ uri: p.filePath }}
+                    source={p.filePath}
                     className="h-20 w-16 rounded-md bg-slate-200"
-                    resizeMode="cover"
+                    contentFit="cover"
                   />
                 </Pressable>
               )}
@@ -117,7 +127,7 @@ export default function Trips() {
           </Pressable>
         )}
       />
-    </SafeAreaView>
+    </>
   );
 }
 
@@ -130,7 +140,7 @@ function HeaderPlusButton() {
       accessibilityRole="button"
       accessibilityLabel="Add new trip"
     >
-      <Text className="text-2xl font-semibold text-slate-900">＋</Text>
+      <Icon name="plus" size={22} tintColor="#0f172a" />
     </Pressable>
   );
 }
