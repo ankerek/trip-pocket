@@ -83,7 +83,12 @@ export default function Trips() {
             accessibilityLabel={item.trip.name}
           >
             <View className="flex-row items-baseline justify-between">
-              <Text className="text-base font-semibold text-slate-900">{item.trip.name}</Text>
+              <Text
+                className="flex-1 pr-2 text-base font-semibold text-slate-900"
+                numberOfLines={1}
+              >
+                {item.trip.name}
+              </Text>
               <Text className="text-sm text-slate-500">{item.count}</Text>
             </View>
             <FlatList

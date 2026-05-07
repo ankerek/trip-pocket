@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -16,8 +16,10 @@ export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [screenshots, setScreenshots] = useState<Screenshot[] | null>(null);
+  const [state, setState] = useState<
+    | { kind: 'loading' }
+    | { kind: 'loaded'; trip: Trip | null; screenshots: Screenshot[] }
+  >({ kind: 'loading' });
 
   const tick = useLiveQuery<{ v: number }>(
     `SELECT 0 AS v`,
@@ -32,15 +34,26 @@ export default function TripDetail() {
       const t = await getTrip(db, id);
       const ss = await listScreenshotsByTrip(db, id);
       if (cancelled) return;
-      setTrip(t);
-      setScreenshots(ss);
+      setState({ kind: 'loaded', trip: t, screenshots: ss });
     })();
     return () => {
       cancelled = true;
     };
   }, [db, id, tick]);
 
-  if (!trip || screenshots === null) return null;
+  if (state.kind === 'loading') return null;
+
+  if (state.trip === null) {
+    return (
+      <SafeAreaView className="flex-1 items-center justify-center bg-white">
+        <Stack.Screen options={{ title: '' }} />
+        <Text className="text-base text-slate-500">Trip not found.</Text>
+      </SafeAreaView>
+    );
+  }
+
+  const trip = state.trip;
+  const screenshots = state.screenshots;
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -66,9 +79,11 @@ export default function TripDetail() {
           </Text>
         </View>
       ) : (
-        <PlaceGrid
-          data={screenshots.map((s) => ({ id: s.id, file_path: s.filePath }))}
-        />
+        <ScrollView className="flex-1">
+          <PlaceGrid
+            data={screenshots.map((s) => ({ id: s.id, file_path: s.filePath }))}
+          />
+        </ScrollView>
       )}
     </SafeAreaView>
   );
