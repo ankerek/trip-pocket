@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { createTrip } from '@/modules/storage';
-import { useDatabase } from '@/app/_components/useDatabase';
+import { useDatabase } from '@/components/useDatabase';
 import { getOrCreateOwnerId } from '@/modules/capture';
 
 export default function NewTrip() {

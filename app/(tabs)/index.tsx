@@ -2,8 +2,8 @@ import { Alert, Pressable, SectionList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Tabs } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
-import { PlaceGrid, type GridItem } from '@/app/_components/PlaceGrid';
-import { SearchButton } from '@/app/_components/SearchButton';
+import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
+import { SearchButton } from '@/components/SearchButton';
 import * as ImagePicker from 'expo-image-picker';
 import {
   createImportFs,
@@ -11,7 +11,7 @@ import {
   getSandboxDirectory,
   importImage,
 } from '@/modules/capture';
-import { useDatabase } from '@/app/_components/useDatabase';
+import { useDatabase } from '@/components/useDatabase';
 
 type Row = GridItem & { captured_at: string };
 

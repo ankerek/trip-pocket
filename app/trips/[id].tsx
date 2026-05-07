@@ -9,9 +9,9 @@ import {
   type Screenshot,
   type Trip,
 } from '@/modules/storage';
-import { useDatabase } from '@/app/_components/useDatabase';
-import { PlaceGrid } from '@/app/_components/PlaceGrid';
-import { SearchButton } from '@/app/_components/SearchButton';
+import { useDatabase } from '@/components/useDatabase';
+import { PlaceGrid } from '@/components/PlaceGrid';
+import { SearchButton } from '@/components/SearchButton';
 
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();

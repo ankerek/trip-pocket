@@ -17,8 +17,8 @@ import {
   assignTrip,
   type Screenshot,
 } from '@/modules/storage';
-import { useDatabase } from '@/app/_components/useDatabase';
-import { TripPicker, type TripPickerMode } from '@/app/_components/TripPicker';
+import { useDatabase } from '@/components/useDatabase';
+import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
 
 export default function PlaceDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();

@@ -10,7 +10,7 @@ import {
   type Screenshot,
   type Trip,
 } from '@/modules/storage';
-import { useDatabase } from '@/app/_components/useDatabase';
+import { useDatabase } from '@/components/useDatabase';
 
 type TripRowData = {
   trip: Trip;
