@@ -407,7 +407,7 @@ await ctx.extractor.runExtractionSweep();
 The Inbox grid query (`modules/storage/screenshots.ts`) widens to:
 
 ```sql
-SELECT s.id, s.file_path, s.ocr_status,
+SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
        COALESCE(p.place_count, 0) AS place_count
   FROM screenshots s
   LEFT JOIN (
@@ -423,11 +423,27 @@ SELECT s.id, s.file_path, s.ocr_status,
 
 Same shape for the trip-detail grid (`WHERE s.trip_id = ?`). The pin overlay component (a tiny `MapPin` icon in the bottom-right of the thumbnail) renders when `place_count > 0`.
 
-The shimmer (`ocr_status='pending'`) and pin badge (`place_count>0`) are independent — both can render together in the rare case of a screenshot whose OCR is still pending (no shimmer + no pin), or an extraction-pending screenshot whose OCR has completed (no shimmer, no pin yet) → pin appears live when `useLiveQuery` re-fires after extraction commits.
+**Shimmer extends across the full background pipeline.** Today's OCR-only shimmer becomes the "still processing this" affordance for both phases. The condition:
 
-### Per-screenshot "Places" section in `app/places/[id].tsx`
+```ts
+const shimmer =
+  ocr_status === 'pending' ||
+  (ocr_status === 'done' && extraction_status === 'pending');
+```
 
-Below the existing image and OCR-text panel, render a "Places" section iff the screenshot has ≥1 extracted place:
+Read as: shimmer when the pipeline still has live work to do for this row. OCR-pending counts (OCR will run); OCR-done-and-extraction-pending counts (extraction will run); OCR-failed does NOT count even though `extraction_status` is still at its default `'pending'` (extraction's sweep requires `ocr_status='done'`, so it'll never reach this row this session — shimmer would be a lie). There's no visual distinction between the OCR phase and the extraction phase; the user shouldn't have to care which step we're on. On the live transition from extraction-pending → done-with-places, the shimmer disappears and the pin badge appears in the same `useLiveQuery` re-fire (the SQLite COMMIT is atomic).
+
+Trade-off acknowledged: a screenshot whose OCR completed but whose extraction `failed` will show no shimmer and no pin badge — visually identical to a screenshot whose extraction completed with 0 places. That's the same posture as ARCHITECTURE.md's "OCR failures: silent in UI", extended consistently. Sentry will surface real failures in v0.3.
+
+### Per-screenshot detail — Places section + "No places" annotation in `app/places/[id].tsx`
+
+Below the existing image and OCR-text panel, render one of three blocks based on extraction state:
+
+- `extraction_status='done'`, ≥1 places → a "Places" section listing them (see below).
+- `extraction_status='done'`, 0 places → a single line: **"No places detected."** Footnote weight, system-gray. No CTA; the screen already has a delete affordance.
+- `extraction_status` ∈ {`pending`, `failed`} → render nothing in the section's slot.
+
+The "Places" section iff the screenshot has ≥1 extracted place:
 
 ```
 Places
@@ -578,11 +594,14 @@ The queue dedupes on `screenshotId`, so the OCR-success path and the sweep path 
 
 | Surface | State | Behavior |
 |---|---|---|
-| Inbox / Trip detail thumbnail | `place_count > 0` | Pin overlay (bottom-right corner). |
-| Inbox / Trip detail thumbnail | `place_count == 0`, `extraction_status` ∈ {pending, done, failed} | No overlay. (No "extraction pending" UI — silent like OCR failures. Once it lands, the badge appears live.) |
-| Screenshot detail | ≥1 places exist | "Places" section renders below image + OCR panel. |
-| Screenshot detail | 0 places, `extraction_status='done'` | No section (clean detail view). |
-| Screenshot detail | 0 places, `extraction_status='pending'` | No section (silent until done). |
+| Inbox / Trip detail thumbnail | shimmer condition true (see above) | Shimmer (`animate-pulse` + `bg-black/10`). Single affordance for both background phases — no visual distinction between OCR-pending and extraction-pending. |
+| Inbox / Trip detail thumbnail | `extraction_status='done'`, `place_count > 0` | **Pin badge** (bottom-right corner): SF Symbol `mappin.circle.fill`, system-blue, full opacity. On extraction commit, the shimmer-off and pin-on transitions are atomic. |
+| Inbox / Trip detail thumbnail | `extraction_status='done'`, `place_count == 0` | **"No places" badge** (bottom-right corner): SF Symbol `mappin.slash`, system-gray, ~60% opacity. Tells the user "we processed this and didn't find anything to save" so they can confidently delete. Visually subordinate to the positive pin badge. |
+| Inbox / Trip detail thumbnail | `ocr_status='failed'` OR `extraction_status='failed'` | No badge, no shimmer. Failure is silent — the row may still produce places after a process restart (`runStartupRecovery`), so showing "no places" would be a false signal. Same posture as ARCHITECTURE.md's OCR rule. |
+| Screenshot detail | `extraction_status='done'`, ≥1 places | "Places" section renders below image + OCR panel. |
+| Screenshot detail | `extraction_status='done'`, 0 places | Small annotation below the OCR panel: "No places detected." Subtle (system-gray, footnote weight). No CTA — the existing detail-screen delete affordance is what the user uses. |
+| Screenshot detail | `extraction_status='pending'` | No "Places" section yet, no annotation. The thumbnail-grid shimmer is the only "still working" cue; the detail screen doesn't get its own. |
+| Screenshot detail | `extraction_status='failed'` | No "Places" section, no annotation. Silent. |
 | Trip detail | trip has any extracted places | Tab toggle visible: Photos / Places. |
 | Trip detail | trip has 0 extracted places | Tab toggle hidden (just the Photos grid as today). Avoids an empty Places tab dangling at the top of every brand-new trip. |
 | Trip detail | tab toggle visible, Places tab tapped | Distinct-place list, ordered by last-seen DESC. |
@@ -636,7 +655,9 @@ Resolved:
 | Empty-OCR handling | Short-circuit to `extraction_status='done'` with 0 places. No proxy call. |
 | Classifier-driven hiding (Inbox) | **Not** in v0.2. Manual imports remain visible regardless of place count. Auto-detect (next spec) is the consumer of the 0-place signal. |
 | Places-tab dedup | `GROUP BY LOWER(name), LOWER(city)`. |
-| Per-screenshot badge | Pin overlay on thumbnail when `place_count > 0`. |
+| Per-screenshot badge | Three states: pin (`place_count > 0`, system-blue full-opacity), "no places" (`extraction_status='done' AND place_count == 0`, system-gray ~60% opacity), or none (any `failed` or shimmer-active). |
+| Pending indicator | Existing OCR shimmer extends to extraction. Render shimmer when `ocr_status='pending' OR (ocr_status='done' AND extraction_status='pending')`. Failures silent. One visual, both phases. |
+| 0-places posture | NOT silent. Show a "no places" badge on the thumbnail and a "No places detected." annotation in the detail screen so users can spot junk and clean it up. Failures stay silent (could be transient). |
 | FTS expansion | Out of scope. OCR text already covers the common case; inferred-city search is a later spec. |
 | Re-extraction | Out of scope. `done` is terminal in v0.2. |
 
@@ -661,6 +682,16 @@ Deferred to later specs:
 - 429 with missing `Retry-After`: defaults to 60s.
 - 429 with `Retry-After` exceeding 5-minute ceiling: treated as 5xx (consumes budget) — defensive cap.
 - Per-call dedup: stub proxy returns `[{name:'X',city:'Y'},{name:'x',city:'Y '},{name:'Z',city:'W'}]` → assert only 2 INSERTs (`X,Y` and `Z,W`) — case-insensitive name + trimmed city.
+
+**Component test (`app/_components/__tests__/ScreenshotThumbnail.test.tsx`):**
+
+- `ocr_status='pending'`, `extraction_status='pending'` → shimmer, no badge.
+- `ocr_status='done'`, `extraction_status='pending'` → shimmer, no badge (the merged condition).
+- `ocr_status='done'`, `extraction_status='done'`, `place_count=0` → no shimmer, **NoPlacesBadge** rendered.
+- `ocr_status='done'`, `extraction_status='done'`, `place_count=2` → no shimmer, **PinBadge** rendered.
+- `ocr_status='failed'`, `extraction_status='pending'` → no shimmer, no badge. Regression guard against a `failed` row shimmering forever.
+- `ocr_status='done'`, `extraction_status='failed'` → no shimmer, no badge. The 0-places "no places" badge does NOT render here — failure could be transient (recoverable on next launch).
+- Pin and NoPlaces badges are mutually exclusive — never both at once.
 - Queue dedup: two concurrent `enqueueExtraction(id)` → one proxy call.
 - Queue serialization: enqueue idA then idB with delayed proxy stub → idA completes before idB starts.
 - Soft-deleted mid-flight: `processOne` re-checks row, aborts if `deleted_at` set, no inserts.
@@ -713,13 +744,16 @@ Deferred to later specs:
 - `modules/apple-geocoder/index.ts` — TS wrapper around the native module (mirrors `modules/vision-ocr/`).
 - `modules/storage/migrations/0003_extraction.ts`.
 - `app/_components/CategoryIcon.tsx` — single-source-of-truth icon mapping for `place|food|activity`.
-- `app/_components/PinBadge.tsx` — pin overlay component.
+- `app/_components/PinBadge.tsx` — positive-state badge (place_count > 0).
+- `app/_components/NoPlacesBadge.tsx` — neutral-state badge (extraction done, 0 places). Two small focused components instead of one polymorphic one.
+- `app/_components/PlaceStatusAnnotation.tsx` — the "No places detected." text in the screenshot detail screen.
 - `app/_components/PlacesSection.tsx` — reusable places-list block (used in screenshot detail and trip detail places tab).
 
 **Modified:**
 
 - `modules/storage/migrations/index.ts` — register the new migration.
-- `modules/storage/screenshots.ts` — list / detail queries widen to include `place_count` via LEFT JOIN.
+- `modules/storage/screenshots.ts` — list / detail queries widen to include `extraction_status` and `place_count` (LEFT JOIN). Both fields drive the thumbnail's combined shimmer + pin-badge logic.
+- `app/_components/ScreenshotThumbnail.tsx` — extend the OCR shimmer condition to also fire on `extraction_status='pending'`. One-liner change to the existing component, but called out so the implementation plan owns it.
 - `modules/processing/processing.ts` — call `getExtractor()?.enqueueExtraction(id)` in OCR success path.
 - `app/_layout.tsx` — provision extractor; run startup recovery; add `runExtractionSweep` to the foreground-active effect.
 - `app.config.ts` — add `extra.extractionProxyUrl`.
