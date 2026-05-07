@@ -1,0 +1,20 @@
+{
+  "name": "@trip-pocket/extract-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stateless Cloudflare Worker that proxies a Gemini call for AI place extraction. Trip Pocket v0.2.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250115.0",
+    "wrangler": "^3.99.0"
+  }
+}

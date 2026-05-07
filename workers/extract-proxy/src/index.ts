@@ -1,0 +1,159 @@
+import {
+  extractionResponseSchema,
+  requestBodySchema,
+  type ExtractionResponse,
+} from './schema';
+import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
+
+export interface RateLimitBinding {
+  limit(args: { key: string }): Promise<{ success: boolean }>;
+}
+
+export interface Env {
+  GEMINI_API_KEY: string;
+  RATE_LIMIT: RateLimitBinding;
+}
+
+const JSON_HEADERS = { 'content-type': 'application/json' } as const;
+
+function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    ...init,
+    headers: { ...JSON_HEADERS, ...(init.headers ?? {}) },
+  });
+}
+
+function errorResponse(error: string, status: number, extraHeaders: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify({ error }), {
+    status,
+    headers: { ...JSON_HEADERS, ...extraHeaders },
+  });
+}
+
+export async function handleExtract(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return errorResponse('method-not-allowed', 405);
+  }
+
+  if (!env.GEMINI_API_KEY) {
+    // Misconfiguration is the operator's problem, not the client's. 500 so
+    // the client treats it as retryable; the operator sees the error class
+    // in Workers Logs.
+    console.error('extract-proxy: GEMINI_API_KEY missing');
+    return errorResponse('server-misconfigured', 500);
+  }
+
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    return errorResponse('content-type-must-be-json', 400);
+  }
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return errorResponse('invalid-json', 400);
+  }
+
+  const parsed = requestBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return errorResponse('invalid-request-body', 400);
+  }
+
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
+  if (!rateOk) {
+    return errorResponse('rate-limited', 429, { 'retry-after': '60' });
+  }
+
+  // Truncation defense: a pathological screenshot shouldn't blow the input
+  // budget. Realistic OCR is well below this; the cap exists so anything
+  // past it gets clipped, not rejected.
+  const ocrText = parsed.data.ocr_text.slice(0, 10000);
+
+  let geminiResp: Response;
+  try {
+    geminiResp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: ocrText }] }],
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: GEMINI_RESPONSE_SCHEMA,
+          },
+        }),
+      },
+    );
+  } catch (err) {
+    console.error('extract-proxy: gemini-network-error', String(err));
+    return errorResponse('upstream-network-error', 502);
+  }
+
+  if (geminiResp.status === 429) {
+    const retryAfter = geminiResp.headers.get('retry-after') ?? '60';
+    return errorResponse('upstream-rate-limited', 429, { 'retry-after': retryAfter });
+  }
+
+  if (!geminiResp.ok) {
+    console.error('extract-proxy: gemini-upstream-error', geminiResp.status);
+    return errorResponse('upstream-error', 502);
+  }
+
+  let geminiBody: unknown;
+  try {
+    geminiBody = await geminiResp.json();
+  } catch {
+    console.error('extract-proxy: gemini-non-json-body');
+    return errorResponse('upstream-non-json', 502);
+  }
+
+  const candidateText = extractCandidateText(geminiBody);
+  if (candidateText === null) {
+    console.error('extract-proxy: gemini-shape-unexpected');
+    return errorResponse('upstream-bad-shape', 502);
+  }
+
+  let inner: unknown;
+  try {
+    inner = JSON.parse(candidateText);
+  } catch {
+    console.error('extract-proxy: gemini-inner-parse-failed');
+    return errorResponse('upstream-malformed-inner-json', 502);
+  }
+
+  const validated = extractionResponseSchema.safeParse(inner);
+  if (!validated.success) {
+    console.error('extract-proxy: gemini-schema-violation');
+    return errorResponse('upstream-schema-violation', 502);
+  }
+
+  const response: ExtractionResponse & { model: string } = {
+    places: validated.data.places,
+    model: GEMINI_MODEL,
+  };
+  return jsonResponse(response, { status: 200 });
+}
+
+function extractCandidateText(geminiBody: unknown): string | null {
+  if (typeof geminiBody !== 'object' || geminiBody === null) return null;
+  const candidates = (geminiBody as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  const first = candidates[0];
+  if (typeof first !== 'object' || first === null) return null;
+  const content = (first as { content?: unknown }).content;
+  if (typeof content !== 'object' || content === null) return null;
+  const parts = (content as { parts?: unknown }).parts;
+  if (!Array.isArray(parts) || parts.length === 0) return null;
+  const text = (parts[0] as { text?: unknown }).text;
+  return typeof text === 'string' ? text : null;
+}
+
+export default {
+  fetch(request: Request, env: Env): Promise<Response> {
+    return handleExtract(request, env);
+  },
+};
