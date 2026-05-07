@@ -46,7 +46,7 @@ describe('importImage', () => {
       ownerId,
       capturedAt: '2026-05-04T10:00:00Z',
       transfer: 'copy',
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
 
@@ -71,7 +71,7 @@ describe('importImage', () => {
       ownerId,
       capturedAt: '2026-05-04T10:00:00Z',
       transfer: 'copy',
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
     expect(a.status).toBe('imported');
@@ -82,7 +82,7 @@ describe('importImage', () => {
       ownerId,
       capturedAt: '2026-05-04T10:00:01Z',
       transfer: 'copy',
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
     expect(b.status).toBe('duplicate');
@@ -106,7 +106,7 @@ describe('importImage', () => {
       ownerId,
       capturedAt: '2026-05-04T10:00:00Z',
       transfer: 'copy',
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
     if (first.status !== 'imported') throw new Error('expected imported');
@@ -118,7 +118,7 @@ describe('importImage', () => {
       ownerId,
       capturedAt: '2026-05-04T10:00:02Z',
       transfer: 'copy',
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
     expect(second.status).toBe('imported');
@@ -139,7 +139,7 @@ describe('importImage', () => {
       ownerId,
       capturedAt: '2026-05-04T10:00:00Z',
       transfer: 'move',
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
 
@@ -177,7 +177,7 @@ describe('importImage', () => {
         ownerId,
         capturedAt: '2026-05-04T10:00:00Z',
         transfer: 'copy',
-        sandboxDir: '/sandbox',
+        storageDir: '/sandbox',
         fs,
       }),
     ).rejects.toBeDefined();
@@ -225,7 +225,7 @@ describe('importImage', () => {
         ownerId,
         capturedAt: '2026-05-07T10:00:00Z',
         transfer: 'copy',
-        sandboxDir: '/sandbox',
+        storageDir: '/sandbox',
         fs,
       });
 
@@ -246,7 +246,7 @@ describe('importImage', () => {
         ownerId,
         capturedAt: '2026-05-07T10:00:00Z',
         transfer: 'copy',
-        sandboxDir: '/sandbox',
+        storageDir: '/sandbox',
         fs,
       });
 
@@ -258,7 +258,7 @@ describe('importImage', () => {
         ownerId,
         capturedAt: '2026-05-07T10:00:01Z',
         transfer: 'copy',
-        sandboxDir: '/sandbox',
+        storageDir: '/sandbox',
         fs,
       });
 
@@ -277,7 +277,7 @@ describe('importImage', () => {
           ownerId,
           capturedAt: '2026-05-07T10:00:00Z',
           transfer: 'copy',
-          sandboxDir: '/sandbox',
+          storageDir: '/sandbox',
           fs,
         }),
       ).resolves.toMatchObject({ status: 'imported' });
@@ -292,7 +292,7 @@ describe('importImage', () => {
         ownerId,
         capturedAt: '2026-05-07T10:00:00Z',
         transfer: 'copy',
-        sandboxDir: '/sandbox',
+        storageDir: '/sandbox',
         fs,
       });
       expect(result.status).toBe('imported');

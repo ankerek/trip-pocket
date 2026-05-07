@@ -13,8 +13,9 @@ import {
   ingestPendingImports,
   getOrCreateOwnerId,
   getAppGroupContainerUri,
-  getSandboxDirectory,
+  getStorageDirectory,
   createImportFs,
+  cleanupOrphanScreenshots,
 } from '@/modules/capture';
 import {
   createProcessor,
@@ -28,7 +29,7 @@ export default function RootLayout() {
   const [ctx, setCtx] = useState<{
     db: Database;
     ownerId: string;
-    sandboxDirUri: string;
+    storageDirUri: string;
     processor: Processor;
   } | null>(null);
   const ingesting = useRef(false);
@@ -49,9 +50,14 @@ export default function RootLayout() {
       provideProcessor(processor);
       await processor.runStartupRecovery();
 
-      const sandbox = getSandboxDirectory();
+      // Sweep rows whose image file is gone (typically: dev reinstall wiped
+      // the old private-sandbox path before screenshots were colocated into
+      // the App Group). Soft-delete keeps the schema invariant clean.
+      await cleanupOrphanScreenshots(db);
+
+      const storage = getStorageDirectory();
       const ownerId = getOrCreateOwnerId();
-      setCtx({ db, ownerId, sandboxDirUri: sandbox.uri, processor });
+      setCtx({ db, ownerId, storageDirUri: storage.uri, processor });
       setReady(true);
     })().catch((err) => {
       console.error('[RootLayout] init failed', err);
@@ -66,7 +72,7 @@ export default function RootLayout() {
       try {
         await ingestPendingImports(ctx.db, {
           ownerId: ctx.ownerId,
-          sandboxDir: ctx.sandboxDirUri,
+          storageDir: ctx.storageDirUri,
           fs: createImportFs(),
         });
         // Catch any 'pending' rows the share extension dropped while the

@@ -4,7 +4,7 @@ import { importImage, type ImportFs } from './importImage';
 
 export type IngestOptions = {
   ownerId: string;
-  sandboxDir: string;
+  storageDir: string;
   fs: ImportFs;
 };
 
@@ -45,7 +45,7 @@ export async function ingestPendingImports(
         capturedAt: p.created_at,
         suggestedTripId,
         transfer: 'move',
-        sandboxDir: opts.sandboxDir,
+        storageDir: opts.storageDir,
         fs: opts.fs,
       });
       // Both 'imported' and 'duplicate' are terminal: drain the pending row.

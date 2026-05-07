@@ -46,7 +46,7 @@ describe('ingestPendingImports', () => {
     const fs = makeFs();
     await ingestPendingImports(db, {
       ownerId,
-      sandboxDir: '/sandbox',
+      storageDir: '/sandbox',
       fs,
     });
 
@@ -71,7 +71,7 @@ describe('ingestPendingImports', () => {
     );
 
     const fs = makeFs();
-    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+    await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
     expect(fs.move).toHaveBeenCalledTimes(2);
     expect(fs.move.mock.calls[0]?.[0]).toBe('/appgroup/a.jpg');
@@ -96,7 +96,7 @@ describe('ingestPendingImports', () => {
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs: flaky });
+      await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs: flaky });
     } finally {
       warnSpy.mockRestore();
     }
@@ -123,7 +123,7 @@ describe('ingestPendingImports', () => {
     );
 
     const fs = makeFs();
-    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+    await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
     const inbox = await listScreenshots(db, { tripId: null });
     expect(inbox).toHaveLength(1);
@@ -140,7 +140,7 @@ describe('ingestPendingImports', () => {
     );
 
     const fs = makeFs();
-    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+    await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
     const inbox = await listScreenshots(db, { tripId: null });
     expect(inbox).toHaveLength(1);
@@ -160,7 +160,7 @@ describe('ingestPendingImports', () => {
     );
 
     const fs = makeFs();
-    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+    await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
     const onTrip = await listScreenshots(db, { tripId: 't-live' });
     expect(onTrip).toHaveLength(1);
@@ -186,7 +186,7 @@ describe('ingestPendingImports', () => {
     );
 
     const fs = makeFs();
-    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+    await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
     const rows = await listScreenshots(db, { tripId: null });
     expect(rows).toHaveLength(1); // still just 'seed', no second row

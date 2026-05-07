@@ -18,7 +18,7 @@ export type ImportImageInput = {
   capturedAt: string;
   suggestedTripId?: string | null;
   transfer: 'move' | 'copy';
-  sandboxDir: string;
+  storageDir: string;
   fs: ImportFs;
 };
 
@@ -43,7 +43,7 @@ export async function importImage(
   }
 
   const screenshotId = Crypto.randomUUID();
-  const targetUri = `${input.sandboxDir}/${screenshotId}.jpg`;
+  const targetUri = `${input.storageDir}/${screenshotId}.jpg`;
 
   if (input.transfer === 'move') {
     await input.fs.move(input.sourceUri, targetUri);
@@ -64,7 +64,7 @@ export async function importImage(
   } catch (err) {
     // Insert failed (e.g. unique-index race with a concurrent writer that landed
     // a row with the same hash between our pre-check and our insert). Unlink the
-    // file we just placed in the sandbox so we don't leave an orphan, then re-throw.
+    // file we just placed so we don't leave an orphan, then re-throw.
     try {
       await input.fs.unlink(targetUri);
     } catch {

@@ -8,7 +8,7 @@ import * as ImagePicker from 'expo-image-picker';
 import {
   createImportFs,
   getOrCreateOwnerId,
-  getSandboxDirectory,
+  getStorageDirectory,
   importImage,
 } from '@/modules/capture';
 import { useDatabase } from '@/components/useDatabase';
@@ -103,7 +103,7 @@ function HeaderPlusButton() {
     let imported = 0;
     let skipped = 0;
     let failed = 0;
-    const sandbox = getSandboxDirectory().uri;
+    const storage = getStorageDirectory().uri;
     const ownerId = getOrCreateOwnerId();
     const now = new Date().toISOString();
     const fs = createImportFs();
@@ -121,7 +121,7 @@ function HeaderPlusButton() {
             ownerId,
             capturedAt: now,
             transfer: 'copy',
-            sandboxDir: sandbox,
+            storageDir: storage,
             fs,
           });
           if (r.status === 'imported') imported += 1;
