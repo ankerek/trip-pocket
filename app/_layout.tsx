@@ -89,6 +89,7 @@ export default function RootLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="places/[id]" options={{ headerShown: true }} />
+      <Stack.Screen name="search" options={{ headerShown: true, presentation: 'modal' }} />
       <Stack.Screen name="trips/[id]" options={{ headerShown: true }} />
       <Stack.Screen
         name="trips/new"

@@ -11,6 +11,7 @@ import {
 } from '@/modules/storage';
 import { useDatabase } from '@/app/_components/useDatabase';
 import { PlaceGrid } from '@/app/_components/PlaceGrid';
+import { SearchButton } from '@/app/_components/SearchButton';
 
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -61,14 +62,17 @@ export default function TripDetail() {
         options={{
           title: trip.name,
           headerRight: () => (
-            <Pressable
-              onPress={() => router.push(`/trips/${trip.id}/edit`)}
-              className="px-3"
-              accessibilityRole="button"
-              accessibilityLabel="Edit trip"
-            >
-              <Text className="text-base text-slate-900">✏️</Text>
-            </Pressable>
+            <View className="flex-row items-center">
+              <SearchButton />
+              <Pressable
+                onPress={() => router.push(`/trips/${trip.id}/edit`)}
+                className="px-3"
+                accessibilityRole="button"
+                accessibilityLabel="Edit trip"
+              >
+                <Text className="text-base text-slate-900">✏️</Text>
+              </Pressable>
+            </View>
           ),
         }}
       />

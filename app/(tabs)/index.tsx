@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Tabs } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceGrid, type GridItem } from '@/app/_components/PlaceGrid';
+import { SearchButton } from '@/app/_components/SearchButton';
 import * as ImagePicker from 'expo-image-picker';
 import {
   createImportFs,
@@ -35,7 +36,12 @@ export default function Places() {
       <SafeAreaView className="flex-1 items-center justify-center bg-white">
         <Tabs.Screen
           options={{
-            headerRight: () => <HeaderPlusButton />,
+            headerRight: () => (
+            <View className="flex-row items-center">
+              <SearchButton />
+              <HeaderPlusButton />
+            </View>
+          ),
           }}
         />
         <Text className="px-8 text-center text-base text-slate-500">
@@ -55,7 +61,12 @@ export default function Places() {
     <SafeAreaView className="flex-1 bg-white">
       <Tabs.Screen
         options={{
-          headerRight: () => <HeaderPlusButton />,
+          headerRight: () => (
+            <View className="flex-row items-center">
+              <SearchButton />
+              <HeaderPlusButton />
+            </View>
+          ),
         }}
       />
       {/* SectionList provides outer vertical scroll + per-section headers; each
