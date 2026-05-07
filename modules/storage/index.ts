@@ -3,3 +3,13 @@ export type { Database } from './db';
 export { migrations } from './migrations';
 export { insertScreenshot, listScreenshots, type Screenshot } from './screenshots';
 export { provideDatabase, useLiveQuery, notifyChange } from './live-query';
+export {
+  createTrip,
+  listTrips,
+  getTrip,
+  renameTrip,
+  softDeleteTrip,
+  type Trip,
+  type InsertTripInput,
+  type UpdateTripNameInput,
+} from './trips';
