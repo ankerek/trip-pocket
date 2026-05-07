@@ -105,7 +105,9 @@ it('preserves suggested_trip_id when it points to an active trip', async () => {
 
 - [ ] **Step 2: Run the new tests to verify they fail**
 
-Run: `npx jest modules/capture/__tests__/ingest.test.ts -t "falls back to Inbox" -t "preserves suggested_trip_id"`
+Run: `npx jest modules/capture/__tests__/ingest.test.ts -t "falls back to Inbox|preserves suggested_trip_id"`
+
+Note: `-t` takes a single regex; passing it twice would only honor the last pattern (which already passes pre-guard) and give a false green. The combined regex above runs all three new tests.
 
 Expected: at least one of the new cases fails (the soft-deleted-trip case will currently insert with `trip_id = 't-gone'`, so `tripId` will not be `null`).
 
@@ -321,16 +323,17 @@ git commit -m "feat(share): TripPickerView — Inbox + alphabetical trips list"
 
 ---
 
-## Task 4: Switchover — extend `PendingImportWriter`, rewire `ShareViewController`, delete `SaveButtonView`
+## Task 4: Switchover — extend `PendingImportWriter`, rewire `ShareViewController`, delete `SaveButtonView`, update plugin source list
 
-**Why all in one commit:** these three changes are tightly coupled — extending the writer's signature breaks the call site, so the writer change and the call-site fix must land together. The `SaveButtonView` deletion piggybacks for the same reason (its absence would break `ShareViewController` if it still referenced it). One coherent commit; every commit on `main` compiles.
+**Why all in one commit:** these four changes are tightly coupled — extending the writer's signature breaks the call site, deleting `SaveButtonView.swift` while the config plugin still references it makes a clean prebuild fail at the Xcode source-resolution step, and adding `TripReader.swift` / `TripPickerView.swift` to the build phase before they're referenced is harmless but adding them at the same moment as the deletion keeps the source list and the on-disk file set in sync. One coherent commit; every commit on `main` is clean-prebuildable.
 
 **Files:**
 - Modify: `native/ShareExtension/PendingImportWriter.swift`
 - Modify: `native/ShareExtension/ShareViewController.swift`
 - Delete: `native/ShareExtension/SaveButtonView.swift`
+- Modify: `plugins/with-share-extension.js` (lines 30–39)
 
-**Note on testing:** Per the spec, the share extension has no Swift unit tests. Verification is "the file compiles and the new parameter binds correctly," covered end-to-end by the smoke test in Task 6. Don't add XCTest scaffolding.
+**Note on testing:** Per the spec, the share extension has no Swift unit tests. Verification is "the file compiles and the new parameter binds correctly," covered end-to-end by the smoke test in Task 5. Don't add XCTest scaffolding.
 
 - [ ] **Step 1: Update `PendingImportWriter.swift`**
 
@@ -503,31 +506,9 @@ class ShareViewController: UIViewController {
 git rm native/ShareExtension/SaveButtonView.swift
 ```
 
-- [ ] **Step 4: Commit all three changes together**
+- [ ] **Step 4: Update the Expo config plugin source list**
 
-```sh
-git add native/ShareExtension/PendingImportWriter.swift native/ShareExtension/ShareViewController.swift
-git commit -m "feat(share): trip picker switchover
-
-PendingImportWriter.write now takes suggestedTripId (binds NULL when
-nil); ShareViewController hosts TripPickerView and forwards the
-chosen trip id; SaveButtonView is removed. Bundled in one commit so
-every commit compiles — the writer signature change would otherwise
-break the call site mid-sequence."
-```
-
----
-
-## Task 5: Update the Expo config plugin source list
-
-**Why:** `plugins/with-share-extension.js` hard-codes the file list it adds to the share-extension target's `PBXSourcesBuildPhase`. The current list still names `SaveButtonView.swift` (deleted) and omits the two new files. Without this fix, the next `expo prebuild` / EAS build either fails (file not found) or silently omits `TripReader` / `TripPickerView` from the target.
-
-**Files:**
-- Modify: `plugins/with-share-extension.js` (lines 30–39)
-
-- [ ] **Step 1: Update the source list**
-
-Replace the `project.addBuildPhase([...], 'PBXSourcesBuildPhase', 'Sources', target.uuid)` call with this version. Only the array contents change.
+Replace the `project.addBuildPhase([...], 'PBXSourcesBuildPhase', 'Sources', target.uuid)` call in `plugins/with-share-extension.js` with the version below. Only the array contents change.
 
 ```javascript
 project.addBuildPhase(
@@ -543,26 +524,31 @@ project.addBuildPhase(
 );
 ```
 
-- [ ] **Step 2: Verify the plugin still loads cleanly**
+- [ ] **Step 5: Verify the plugin still loads cleanly**
 
 Run: `node -e "require('./plugins/with-share-extension.js')"`
 
 Expected: command exits 0 with no output.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 6: Commit all four changes together**
 
 ```sh
-git add plugins/with-share-extension.js
-git commit -m "build(ios): register TripPicker + TripReader, drop SaveButton
+git add native/ShareExtension/PendingImportWriter.swift native/ShareExtension/ShareViewController.swift plugins/with-share-extension.js
+git commit -m "feat(share): trip picker switchover
 
-Updates the share-extension config plugin's PBXSourcesBuildPhase to
-match the renamed file set. Without this, prebuild keeps compiling
-the deleted SaveButtonView.swift and omits the two new files."
+PendingImportWriter.write now takes suggestedTripId (binds NULL when
+nil); ShareViewController hosts TripPickerView and forwards the
+chosen trip id; SaveButtonView is removed; the config plugin's
+PBXSourcesBuildPhase is updated to drop SaveButtonView.swift and
+register TripPickerView.swift + TripReader.swift. Bundled in one
+commit so every commit on main is clean-prebuildable — splitting
+would leave a state where the source list and the on-disk files
+disagree."
 ```
 
 ---
 
-## Task 6: Build and on-device smoke test
+## Task 5: Build and on-device smoke test
 
 **Files:** none (verification only).
 
@@ -578,7 +564,7 @@ Verify: `ls ios/TripPocketShare/`
 
 - [ ] **Step 2: EAS dev build**
 
-Run: `eas build --profile development --platform ios`
+Run: `eas build --profile dev --platform ios`
 
 Expected: build succeeds. Budget one round-trip: if the build fails on the share-extension target compile step, inspect the EAS build log, fix the underlying Swift / plugin issue, and rebuild.
 
@@ -592,18 +578,9 @@ Install the resulting `.ipa` (or via the Expo dev client URL). Then run all six 
 4. **Cancel path** — share another screenshot, tap "Cancel" → extension dismisses. Open Trip Pocket → no new screenshot anywhere; nothing in Inbox.
 5. **Repeatability** — share three different screenshots in a row, all to "Japan". Open Trip Pocket → all three on Japan; no flakiness.
 
-- [ ] **Step 4: Manual stale-trip sanity check (optional, supplements the unit test)**
+The stale-trip race is fully covered by the unit tests in Task 1 — there's no reliable way to reproduce it manually because opening the app is also what triggers ingestion, so the trip can't be deleted "in between" without seeding the DB by hand. Don't try.
 
-The unit test from Task 1 covers this case fully; this step is a belt-and-suspenders manual check.
-
-1. Create a trip "Throwaway" in the app.
-2. Force-quit the app.
-3. Share a screenshot → tap "Throwaway" in the picker. Don't open the app yet.
-4. Open the app, immediately delete "Throwaway" (via trip edit modal). Then close the app *without* triggering ingestion of pending imports — easiest reliable way: relaunch the app cold and watch the screenshot appear in Inbox (because ingestion runs on the app's first foreground after the share).
-
-Note: timing this manually is fiddly because foreground triggers ingestion automatically. If reproducing the race manually is difficult, rely on the unit test — that's why it exists. Skip this step rather than spending more than ~10 minutes wrestling with timing.
-
-- [ ] **Step 5: No commit needed for verification**
+- [ ] **Step 4: No commit needed for verification**
 
 Smoke testing produces no code changes. If any test reveals a bug, fix it in a new task and re-run smoke tests.
 
@@ -613,6 +590,6 @@ Smoke testing produces no code changes. If any test reveals a bug, fix it in a n
 
 - All Jest tests pass: `npx jest`.
 - `npx expo prebuild --platform ios --clean` succeeds.
-- `eas build --profile development --platform ios` succeeds.
-- Smoke tests 1–5 in Task 6 all pass on a real iPhone.
-- `git log` shows five commits on top of `main` (one per Task 1–5); Task 6 has no commit.
+- `eas build --profile dev --platform ios` succeeds.
+- Smoke tests 1–5 in Task 5 all pass on a real iPhone.
+- `git log` shows four commits on top of `main` (one per Task 1–4); Task 5 has no commit.
