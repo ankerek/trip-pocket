@@ -12,9 +12,7 @@
       "icon": "./assets/AppIcon.icon",
       "supportsTablet": false,
       "entitlements": {
-        "com.apple.security.application-groups": [
-          "group.com.trippocket.shared"
-        ]
+        "com.apple.security.application-groups": ["group.com.trippocket.shared"]
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -29,10 +27,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.RECORD_AUDIO"
-      ],
+      "permissions": ["android.permission.RECORD_AUDIO", "android.permission.RECORD_AUDIO"],
       "package": "com.trippocket.app"
     },
     "plugins": [
@@ -68,7 +63,7 @@
     },
     "extra": {
       "router": {},
-      "extractionProxyUrl": "",
+      "extractionProxyUrl": "https://trip-pocket-extract-proxy.ankerek.workers.dev/extract",
       "eas": {
         "projectId": "2dee30ac-eb35-4cc6-80d7-4e6a664237b5",
         "build": {
@@ -79,9 +74,7 @@
                   "targetName": "TripPocketShare",
                   "bundleIdentifier": "com.trippocket.app.share",
                   "entitlements": {
-                    "com.apple.security.application-groups": [
-                      "group.com.trippocket.shared"
-                    ]
+                    "com.apple.security.application-groups": ["group.com.trippocket.shared"]
                   }
                 }
               ]
