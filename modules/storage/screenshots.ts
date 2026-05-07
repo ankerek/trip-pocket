@@ -1,4 +1,5 @@
 import type { Database } from './db';
+import { notifyChange } from './live-query';
 
 export type ScreenshotSource = 'share' | 'auto' | 'manual';
 
@@ -100,4 +101,99 @@ export async function listScreenshots(
     filter.tripId,
   );
   return rows.map(rowToScreenshot);
+}
+
+export async function getScreenshot(db: Database, id: string): Promise<Screenshot | null> {
+  const row = await db.getFirstAsync<Row>(
+    `SELECT id, trip_id, file_path, content_hash, source,
+            ocr_status, ocr_text, extraction_status, captured_at,
+            owner_id, created_at, updated_at
+       FROM screenshots
+      WHERE id = ? AND deleted_at IS NULL`,
+    id,
+  );
+  return row ? rowToScreenshot(row) : null;
+}
+
+export async function assignTrip(
+  db: Database,
+  screenshotId: string,
+  tripId: string | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE screenshots SET trip_id = ?, updated_at = ? WHERE id = ?`,
+    tripId,
+    now,
+    screenshotId,
+  );
+  notifyChange('screenshots');
+  notifyChange('trips');
+}
+
+export async function softDeleteScreenshot(db: Database, id: string): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE screenshots SET deleted_at = ?, updated_at = ? WHERE id = ?`,
+    now,
+    now,
+    id,
+  );
+  notifyChange('screenshots');
+  notifyChange('trips');
+}
+
+export async function listAllScreenshots(db: Database): Promise<Screenshot[]> {
+  const rows = await db.getAllAsync<Row>(
+    `SELECT id, trip_id, file_path, content_hash, source,
+            ocr_status, ocr_text, extraction_status, captured_at,
+            owner_id, created_at, updated_at
+       FROM screenshots
+      WHERE deleted_at IS NULL
+   ORDER BY captured_at DESC`,
+  );
+  return rows.map(rowToScreenshot);
+}
+
+export async function listInbox(db: Database): Promise<Screenshot[]> {
+  const rows = await db.getAllAsync<Row>(
+    `SELECT id, trip_id, file_path, content_hash, source,
+            ocr_status, ocr_text, extraction_status, captured_at,
+            owner_id, created_at, updated_at
+       FROM screenshots
+      WHERE deleted_at IS NULL AND trip_id IS NULL
+   ORDER BY captured_at DESC`,
+  );
+  return rows.map(rowToScreenshot);
+}
+
+export async function listScreenshotsByTrip(
+  db: Database,
+  tripId: string,
+  limit?: number,
+): Promise<Screenshot[]> {
+  const sql = `SELECT id, trip_id, file_path, content_hash, source,
+                      ocr_status, ocr_text, extraction_status, captured_at,
+                      owner_id, created_at, updated_at
+                 FROM screenshots
+                WHERE deleted_at IS NULL AND trip_id = ?
+             ORDER BY captured_at DESC
+             ${limit !== undefined ? 'LIMIT ?' : ''}`;
+  const rows =
+    limit !== undefined
+      ? await db.getAllAsync<Row>(sql, tripId, limit)
+      : await db.getAllAsync<Row>(sql, tripId);
+  return rows.map(rowToScreenshot);
+}
+
+export async function countByTrip(db: Database): Promise<Record<string, number>> {
+  const rows = await db.getAllAsync<{ trip_id: string; n: number }>(
+    `SELECT trip_id, COUNT(*) AS n
+       FROM screenshots
+      WHERE deleted_at IS NULL AND trip_id IS NOT NULL
+   GROUP BY trip_id`,
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.trip_id] = r.n;
+  return out;
 }
