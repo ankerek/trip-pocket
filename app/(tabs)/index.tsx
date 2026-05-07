@@ -1,8 +1,16 @@
-import { Pressable, SectionList, Text, View } from 'react-native';
+import { Alert, Pressable, SectionList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Tabs } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceGrid, type GridItem } from '@/app/_components/PlaceGrid';
+import * as ImagePicker from 'expo-image-picker';
+import {
+  createImportFs,
+  getOrCreateOwnerId,
+  getSandboxDirectory,
+  importImage,
+} from '@/modules/capture';
+import { useDatabase } from '@/app/_components/useDatabase';
 
 type Row = GridItem & { captured_at: string };
 
@@ -71,12 +79,63 @@ export default function Places() {
 }
 
 function HeaderPlusButton() {
+  const db = useDatabase();
+  const onPress = async () => {
+    if (!db) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: 20,
+    });
+    if (result.canceled) return;
+
+    let imported = 0;
+    let skipped = 0;
+    let failed = 0;
+    const sandbox = getSandboxDirectory().uri;
+    const ownerId = getOrCreateOwnerId();
+    const now = new Date().toISOString();
+    const fs = createImportFs();
+
+    // Concurrency cap of 4 — protects against pathological 20-image cases on slow devices.
+    const queue = [...result.assets];
+    const next = async () => {
+      while (queue.length > 0) {
+        const asset = queue.shift();
+        if (!asset) return;
+        try {
+          const r = await importImage(db, {
+            sourceUri: asset.uri,
+            source: 'manual',
+            ownerId,
+            capturedAt: now,
+            transfer: 'copy',
+            sandboxDir: sandbox,
+            fs,
+          });
+          if (r.status === 'imported') imported += 1;
+          else skipped += 1;
+        } catch (err) {
+          console.warn('[camera-roll] import failed', err);
+          failed += 1;
+        }
+      }
+    };
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < 4; i += 1) workers.push(next());
+    await Promise.all(workers);
+
+    const messageParts: string[] = [];
+    if (imported > 0) messageParts.push(`Imported ${imported}`);
+    if (skipped > 0) messageParts.push(`skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}`);
+    if (failed > 0) messageParts.push(`${failed} failed`);
+    const message = messageParts.join(' · ');
+    Alert.alert(message || 'Nothing to import');
+  };
+
   return (
     <Pressable
-      onPress={() => {
-        // Camera-roll import is wired in Task 11.
-        if (__DEV__) console.log('[places] + tapped — camera roll picker not yet wired');
-      }}
+      onPress={onPress}
       className="px-3"
       accessibilityRole="button"
       accessibilityLabel="Add screenshots from camera roll"

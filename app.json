@@ -48,6 +48,12 @@
         }
       ],
       "./plugins/with-share-extension",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Trip Pocket needs to read photos so you can add screenshots to your trips."
+        }
+      ],
       "expo-font",
       "expo-sqlite",
       "expo-web-browser"
