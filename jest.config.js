@@ -6,6 +6,7 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
     '^expo-sqlite$': '<rootDir>/__mocks__/expo-sqlite.ts',
+    '^expo-crypto$': '<rootDir>/__mocks__/expo-crypto.ts',
   },
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native|expo[^/]*|@expo|@expo/.*|nativewind|react-native-css-interop|uuid)/)',
