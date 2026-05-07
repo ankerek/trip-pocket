@@ -22,16 +22,9 @@ public class VisionOCRModule: Module {
   public func definition() -> ModuleDefinition {
     Name("VisionOCR")
 
-    AsyncFunction("recognizeText") { (imagePath: String, promise: Promise) in
-      self.queue.async {
-        do {
-          let text = try VisionOCRModule.recognize(imagePath: imagePath)
-          promise.resolve(text)
-        } catch {
-          promise.reject(error)
-        }
-      }
-    }
+    AsyncFunction("recognizeText") { (imagePath: String) -> String in
+      try VisionOCRModule.recognize(imagePath: imagePath)
+    }.runOnQueue(queue)
   }
 
   // MARK: - Internals

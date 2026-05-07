@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.license        = package['license']
   s.author         = 'Trip Pocket'
   s.homepage       = 'https://example.com/trip-pocket'
-  s.platforms      = { :ios => '15.1', :tvos => '15.1' }
+  s.platforms      = { :ios => '15.1' }
   s.swift_version  = '5.9'
   s.source         = { git: '' }
   s.static_framework = true
