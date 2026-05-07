@@ -283,8 +283,9 @@ export interface Extractor {
 1. Load row: `SELECT id, ocr_text FROM screenshots WHERE id = ? AND deleted_at IS NULL`. If gone (concurrent delete), abort — no write.
 2. **Empty / whitespace-only `ocr_text`** → short-circuit: `UPDATE screenshots SET extraction_status='done'`, no proxy call. This is the "noise" path: 0 places persisted, classifier signal recorded.
 3. Call `extract(ocr_text)` (the proxy). Bubble errors out for retry policy to catch.
-4. For each returned place, call `geocode(name, city)` sequentially. Geocoding failure (`null` or thrown) → still keep the place; lat/lng/address/mapsUrl stay NULL.
-5. Single transaction:
+4. **Dedup the model output.** Apply a per-call dedup on the returned places, keyed by `(LOWER(name), LOWER(trim(city)))`. LLMs occasionally repeat the same place even when the prompt asks for distinct results; dropping repeats here keeps `place_count` honest, prevents the screenshot detail from showing duplicate rows, and prevents the trip-Places `source_count` from over-counting a single screenshot.
+5. For each surviving place, call `geocode(name, city)` sequentially. Geocoding failure (`null` or thrown) → still keep the place; lat/lng/address/mapsUrl stay NULL.
+6. Single transaction:
    ```sql
    BEGIN;
    INSERT INTO extracted_places (id, screenshot_id, name, city, category,
@@ -295,20 +296,22 @@ export interface Extractor {
    UPDATE screenshots SET extraction_status='done', updated_at=? WHERE id=?;
    COMMIT;
    ```
-6. `notifyChange('extracted_places')`; `notifyChange('screenshots')` (so list queries with `place_count` re-fire).
+7. `notifyChange('extracted_places')`; `notifyChange('screenshots')` (so list queries with `place_count` re-fire).
 
 **Retry classification** (in the proxy adapter, not in `processOne`):
 
 | Proxy response | Treated as |
 |---|---|
 | 2xx | success |
-| 429 | retryable (counts toward 3-try budget; backoff 1s/4s/16s) |
-| 5xx | retryable |
-| 4xx (other) | permanent failure (counts as 3 immediately → `failed`) |
-| Network timeout (10s default) | retryable |
-| TLS / DNS error | retryable |
+| 429 | **deferred — does NOT consume 3-try budget.** Honor `Retry-After` header if present (clamped to a 5-minute ceiling); else default 60s. The row is re-enqueued at the back of the queue after the delay. The retry counter does not increment. |
+| 5xx | retryable (consumes 3-try budget; backoff 1s/4s/16s) |
+| 4xx (other) | permanent failure (immediate `failed`) |
+| Network timeout (10s default) | retryable (consumes budget) |
+| TLS / DNS error | retryable (consumes budget) |
 
-`processOne` just sees "throw → retry policy applies" or "success". The classifier of what's retryable lives in the adapter so it can be unit-tested in isolation.
+`processOne` sees three outcomes: "success", "deferred — re-enqueue after delay" (429), or "throw — retry policy applies" (5xx / timeout / 4xx). The classifier of what's retryable / deferred lives in the adapter so it can be unit-tested in isolation.
+
+**Why 429 is special.** Gemini free tier is 15 RPM. With the serial queue and a burst of 20 imports, the 16th request hits 429. A 1s/4s/16s backoff stays inside the same 60s window, so the row would otherwise be marked `failed` despite being recoverable seconds later. Treating 429 as a non-budget-consuming deferral keeps healthy rows from being permanently failed by transient flow control. The 5-minute ceiling on `Retry-After` is defensive — Gemini shouldn't send anything that long, but a misbehaving upstream shouldn't be able to wedge a row in `pending` indefinitely either; if `Retry-After` exceeds the ceiling, the adapter treats the response like a 5xx (retryable, budget-consuming) instead.
 
 **Confidence column.** The day-one schema has `extracted_places.confidence REAL` but Gemini doesn't return one and we don't synthesize one. Leave it NULL. The column stays in case a future model returns a value.
 
@@ -468,9 +471,10 @@ SELECT
   ep.name,
   ep.city,
   ep.category,
-  -- Pick any non-empty geocode tuple; if multiple sources, any is fine.
+  -- Within a group, all rows share the same maps_url (it's part of the key);
+  -- MAX picks the formatted_address from the same canonical row.
   MAX(ep.formatted_address) AS formatted_address,
-  MAX(ep.apple_maps_url)    AS apple_maps_url,
+  ep.apple_maps_url,
   COUNT(DISTINCT ep.screenshot_id) AS source_count,
   MAX(ep.created_at) AS last_seen
 FROM extracted_places ep
@@ -478,11 +482,13 @@ JOIN screenshots s ON s.id = ep.screenshot_id
 WHERE s.trip_id = ?
   AND s.deleted_at IS NULL
   AND ep.deleted_at IS NULL
-GROUP BY LOWER(ep.name), LOWER(ep.city)
+GROUP BY LOWER(ep.name), LOWER(TRIM(ep.city)), COALESCE(ep.apple_maps_url, '')
 ORDER BY last_seen DESC;
 ```
 
 Each row: category icon, name (primary text), city + "from N screenshots" (secondary text, only show count when >1). Tap → `Linking.openURL(apple_maps_url || queryFallback(name, city))`.
+
+**Why `apple_maps_url` is part of the GROUP BY key.** Without it, two distinct branches of the same chain in the same city collapse into one row (e.g. two different Starbucks in Tokyo become a single row with `source_count=2`, and tapping it opens an arbitrary one of the two — the other is lost). With `apple_maps_url` in the key, geocoded distinct branches stay distinct (their URLs differ), while non-geocoded duplicates of the same name+city still merge (both have NULL → `COALESCE → ''` → same group, which is the correct outcome when we have no location signal). `TRIM(city)` guards against whitespace drift in LLM output (`"Tokyo "` vs `"Tokyo"`).
 
 Empty state: "No places yet. Places extracted from your screenshots will appear here."
 
@@ -490,17 +496,25 @@ Empty state: "No places yet. Places extracted from your screenshots will appear 
 
 Single function that the extractor depends on as the `ExtractionRunner`. Reads the proxy URL from `Constants.expoConfig.extra.extractionProxyUrl`. Posts JSON, parses JSON, validates with Zod, returns `ExtractedPlace[]`.
 
-Error mapping in the adapter (so `processOne` only deals with throw-vs-success):
+Error mapping in the adapter (so `processOne` only deals with three outcomes: success, deferred-with-delay, or throw-and-apply-retry-policy):
 
 ```ts
+type ExtractionErrorKind =
+  | { kind: 'permanent' }                       // 4xx (non-429) — immediate `failed`
+  | { kind: 'retryable' }                       // 5xx, timeout, TLS — counts toward 3-try budget
+  | { kind: 'deferred'; retryAfterMs: number }; // 429 — re-enqueue, do NOT count
+
 class ExtractionError extends Error {
-  constructor(message: string, public readonly retryable: boolean) {
+  constructor(message: string, public readonly classification: ExtractionErrorKind) {
     super(message);
   }
 }
 ```
 
-The retry policy in `processOne` skips re-enqueue when `err instanceof ExtractionError && !err.retryable` (it goes straight to `failed`).
+`processOne`'s catch block branches on `err.classification.kind`:
+- `permanent` → mark `failed` immediately.
+- `retryable` → increment counter; re-enqueue if `<3`, else `failed`.
+- `deferred` → `setTimeout(() => enqueueExtraction(id), retryAfterMs)`. Counter untouched. The dedup set is freed when the timer fires (so a second enqueue from a foreground sweep during the wait window doesn't create a parallel timer).
 
 ## Data flow
 
@@ -554,7 +568,7 @@ The queue dedupes on `screenshotId`, so the OCR-success path and the sweep path 
 
 | State | Semantics | Transitions |
 |---|---|---|
-| `pending` | Not yet attempted, or attempt in flight, or just promoted from `failed` by startup recovery. | → `done` on success (incl. empty-OCR short-circuit). → `failed` after 3 in-memory retries within the current app session. |
+| `pending` | Not yet attempted, or attempt in flight, or deferred after a 429, or just promoted from `failed` by startup recovery. | → `done` on success (incl. empty-OCR short-circuit). → `failed` after 3 in-memory retries within the current app session (429 deferrals are NOT counted). |
 | `done` | Extraction complete. 0..N rows in `extracted_places`. The 0-row case IS the classifier's "noise" signal. | Terminal in v0.2 (no re-extraction). |
 | `failed` | 3 in-session retries exhausted. | → `pending` on next process start (via `runStartupRecovery`), once. Mid-session foreground sweeps **do not** re-pick `failed`. |
 
@@ -580,7 +594,7 @@ Extraction failures are silent (same posture as OCR failures, per ARCHITECTURE.m
 | Case | Behavior |
 |---|---|
 | Proxy 5xx | Retry per policy. After 3, `failed`. |
-| Proxy 429 | Retry with backoff (1s, 4s, 16s). Counts toward 3-try budget. |
+| Proxy 429 | Defer (re-enqueue at back of queue) after `Retry-After` (default 60s, max 5min). **Does not consume the 3-try budget** — flow control isn't a per-row failure. |
 | Proxy 4xx (other) | Mark `failed` immediately. No retry. |
 | Network timeout (10s default) | Retry per policy. |
 | Gemini returns malformed JSON | Worker returns 502. Client retries. (Should be ~impossible with `responseSchema`, but defended.) |
@@ -592,8 +606,8 @@ Extraction failures are silent (same posture as OCR failures, per ARCHITECTURE.m
 | Screenshot hard-deleted mid-extraction | INSERT fails on FK constraint. Caught and treated as a permanent failure (no retry). |
 | User force-quits the app during a Gemini call | The fetch is dropped; no DB write happens. Row stays `pending`. Next foreground sweep re-enqueues. |
 | Two extractions enqueued for same id | Dedup via in-memory `Set<string>`. One proxy call. |
-| Free-tier rate limit (15 RPM) hit | Proxy returns the upstream Gemini 429 (mapped to a 429 the client treats as retryable). Backoff naturally spaces out the burst. |
-| Worker hits Cloudflare's per-IP rate-limit binding | Proxy returns 429 directly. Same client behavior. |
+| Free-tier rate limit (15 RPM) hit | Proxy returns the upstream Gemini 429 with `Retry-After`. Client defers the row (no budget consumed) and re-enqueues after the delay. A burst of 20 imports drains in two waves ~60s apart. |
+| Worker hits Cloudflare's per-IP rate-limit binding | Proxy returns 429 with `Retry-After: 60`. Same deferred behavior. |
 
 ## Privacy / disclosure posture
 
@@ -616,7 +630,9 @@ Resolved:
 | Proxy host | Cloudflare Worker. Free at our scale. |
 | Proxy rate-limit | Cloudflare Rate Limiting binding (not KV). 100 req/min per IP. |
 | Proxy logging | Status + latency + error class. **Never** OCR text or response bodies. |
-| Retry policy | Mirrors OCR: 3 in-memory retries, `failed → pending` once per launch. |
+| Retry policy | Mirrors OCR for 5xx/timeout/network: 3 in-memory retries, `failed → pending` once per launch. **429 is deferred, not retried** — re-enqueued after `Retry-After` (default 60s, max 5min) without consuming the retry budget. |
+| Per-call dedup | Before the INSERT transaction, dedup model output on `(LOWER(name), LOWER(TRIM(city)))`. Defends against LLM list-mode repeating itself. |
+| Trip-Places dedup key | `GROUP BY LOWER(name), LOWER(TRIM(city)), COALESCE(apple_maps_url, '')`. Distinct branches with distinct geocoded URLs stay distinct; non-geocoded duplicates merge. |
 | Empty-OCR handling | Short-circuit to `extraction_status='done'` with 0 places. No proxy call. |
 | Classifier-driven hiding (Inbox) | **Not** in v0.2. Manual imports remain visible regardless of place count. Auto-detect (next spec) is the consumer of the 0-place signal. |
 | Places-tab dedup | `GROUP BY LOWER(name), LOWER(city)`. |
@@ -641,7 +657,10 @@ Deferred to later specs:
 - Empty OCR: `processOne` skips the proxy call entirely, writes `done` with 0 places, geocoder never called.
 - Proxy 5xx: stub throws retryable `ExtractionError(retryable=true)` 3× → assert 3rd flips to `failed`, in-memory counter at 3.
 - Proxy 4xx: stub throws `ExtractionError(retryable=false)` → immediate `failed`, no retries.
-- Proxy 429: same shape as 5xx with backoff (assert via fake timers).
+- Proxy 429 deferral: stub throws `ExtractionError(deferred=true, retryAfterMs=60000)` → assert row stays `pending`, retry counter does NOT increment, re-enqueue scheduled at the back of the queue after `retryAfterMs`. Even after 5 such deferrals, status stays `pending` (regression guard for the codex-flagged 429-burst bug).
+- 429 with missing `Retry-After`: defaults to 60s.
+- 429 with `Retry-After` exceeding 5-minute ceiling: treated as 5xx (consumes budget) — defensive cap.
+- Per-call dedup: stub proxy returns `[{name:'X',city:'Y'},{name:'x',city:'Y '},{name:'Z',city:'W'}]` → assert only 2 INSERTs (`X,Y` and `Z,W`) — case-insensitive name + trimmed city.
 - Queue dedup: two concurrent `enqueueExtraction(id)` → one proxy call.
 - Queue serialization: enqueue idA then idB with delayed proxy stub → idA completes before idB starts.
 - Soft-deleted mid-flight: `processOne` re-checks row, aborts if `deleted_at` set, no inserts.
@@ -653,7 +672,9 @@ Deferred to later specs:
 - 200 with valid body → returns parsed places.
 - 200 with malformed body (Zod fail) → throws `ExtractionError(retryable=true)`.
 - 4xx (non-429) → throws `ExtractionError(retryable=false)`.
-- 429 → throws `ExtractionError(retryable=true)`.
+- 429 with `Retry-After: 30` → throws `ExtractionError(deferred=true, retryAfterMs=30000)`.
+- 429 with no `Retry-After` → throws `ExtractionError(deferred=true, retryAfterMs=60000)` (default).
+- 429 with `Retry-After: 600` (>5min) → throws `ExtractionError(retryable=true)` (treated like 5xx).
 - 5xx → throws `ExtractionError(retryable=true)`.
 - Network timeout (mocked AbortError) → throws `ExtractionError(retryable=true)`.
 
