@@ -110,6 +110,63 @@ describe('ingestPendingImports', () => {
     expect(remaining.map((r) => r.id)).toEqual(['p1']);
   });
 
+  it('falls back to Inbox when suggested_trip_id points to a soft-deleted trip', async () => {
+    const db = await freshDb();
+    await db.runAsync(
+      `INSERT INTO trips (id, name, owner_id, created_at, updated_at, deleted_at)
+       VALUES ('t-gone', 'Old Trip', ?, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-06T00:00:00Z')`,
+      ownerId,
+    );
+    await db.runAsync(
+      `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
+       VALUES ('p1', '/appgroup/img1.jpg', 't-gone', '2026-05-07T10:00:00Z')`,
+    );
+
+    const fs = makeFs();
+    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+
+    const inbox = await listScreenshots(db, { tripId: null });
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]?.tripId).toBeNull();
+
+    expect(await db.getAllAsync('SELECT * FROM pending_imports')).toEqual([]);
+  });
+
+  it('falls back to Inbox when suggested_trip_id refers to a missing trip row', async () => {
+    const db = await freshDb();
+    await db.runAsync(
+      `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
+       VALUES ('p1', '/appgroup/img1.jpg', 't-missing', '2026-05-07T10:00:00Z')`,
+    );
+
+    const fs = makeFs();
+    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+
+    const inbox = await listScreenshots(db, { tripId: null });
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]?.tripId).toBeNull();
+  });
+
+  it('preserves suggested_trip_id when it points to an active trip', async () => {
+    const db = await freshDb();
+    await db.runAsync(
+      `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+       VALUES ('t-live', 'Japan', ?, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')`,
+      ownerId,
+    );
+    await db.runAsync(
+      `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
+       VALUES ('p1', '/appgroup/img1.jpg', 't-live', '2026-05-07T10:00:00Z')`,
+    );
+
+    const fs = makeFs();
+    await ingestPendingImports(db, { ownerId, sandboxDir: '/sandbox', fs });
+
+    const onTrip = await listScreenshots(db, { tripId: 't-live' });
+    expect(onTrip).toHaveLength(1);
+    expect(onTrip[0]?.tripId).toBe('t-live');
+  });
+
   it('treats a duplicate hash as success (consumes pending row, does not insert twice)', async () => {
     const db = await freshDb();
     // Pre-existing active screenshot with the hash importImage will compute.
