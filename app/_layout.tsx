@@ -16,7 +16,6 @@ import {
   getSandboxDirectory,
   createImportFs,
 } from '@/modules/capture';
-import { setDatabaseForHooks } from '@/app/_components/_databaseAccessor';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
@@ -34,7 +33,6 @@ export default function RootLayout() {
       const db = await openDatabase('trip-pocket.db', getAppGroupContainerUri());
       await runMigrations(db, migrations);
       provideDatabase(db);
-      setDatabaseForHooks(db);
 
       const sandbox = getSandboxDirectory();
       const ownerId = getOrCreateOwnerId();

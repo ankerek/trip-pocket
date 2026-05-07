@@ -9,6 +9,10 @@ export function provideDatabase(db: Database): void {
   database = db;
 }
 
+export function getDatabaseHandle(): Database | null {
+  return database;
+}
+
 function getDatabase(): Database {
   if (!database) throw new Error('Database not provided. Call provideDatabase() at app boot.');
   return database;

@@ -1,10 +1,9 @@
-import type { Database } from '@/modules/storage';
+import { getDatabaseHandle, type Database } from '@/modules/storage';
 
-// live-query.ts owns the singleton database and exposes notifyChange + useLiveQuery,
-// but does not export the raw handle. We re-read it via a tiny module-private getter
-// to keep the singleton location DRY.
-import { __getDatabaseForHooks } from './_databaseAccessor';
-
+// `live-query.ts` owns the singleton database (populated by `provideDatabase()` at app boot).
+// This hook re-reads it via the public getter so we don't duplicate state.
+// The hook is not reactive — populate the singleton before mounting any consumer
+// (the RootLayout `if (!ready) return null;` guard ensures this in practice).
 export function useDatabase(): Database | null {
-  return __getDatabaseForHooks();
+  return getDatabaseHandle();
 }

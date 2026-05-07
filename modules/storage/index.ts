@@ -13,7 +13,7 @@ export {
   countByTrip,
   type Screenshot,
 } from './screenshots';
-export { provideDatabase, useLiveQuery, notifyChange } from './live-query';
+export { provideDatabase, useLiveQuery, notifyChange, getDatabaseHandle } from './live-query';
 export {
   createTrip,
   listTrips,
