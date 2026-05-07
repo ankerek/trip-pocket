@@ -28,7 +28,7 @@ The DB schema already has all the columns we need:
 
 - `screenshots.ocr_status` — `pending | done | failed`, default `pending`.
 - `screenshots.ocr_text` — nullable text.
-- `screenshots_fts` — FTS5 virtual table with `screenshot_id UNINDEXED`, `content`, `tokenize = 'porter unicode61'`. Currently empty (nothing writes to it yet).
+- `screenshots_fts` — FTS5 virtual table with `screenshot_id UNINDEXED`, `content`. Currently empty (nothing writes to it yet). The day-one migration created it with `tokenize = 'porter unicode61'`, but that tokenizer can't match a CJK substring in the middle of a Japanese/Chinese token (e.g. `MATCH '定食*'` against indexed `とんかつ定食` returns nothing). This spec replaces the tokenizer — see "FTS table rebuild" below.
 
 What's missing:
 
@@ -70,10 +70,13 @@ A few smaller fix-ups land alongside:
      SET ocr_text=?,             │
          ocr_status='done'       └──▶ ocr_status='failed'
                 │                          │
-                │ trigger fires            │ next foreground sweep re-pulls
-                ▼                          │ (counter resets per app launch)
+                │ trigger fires            │ stays 'failed' for the rest of this process
+                ▼                          │
        screenshots_fts updated             ▼
-                                       back to pending
+                                  next process start:
+                                  runStartupRecovery flips
+                                  'failed' → 'pending' once,
+                                  giving it a fresh 3-try budget
 ```
 
 ```
@@ -124,21 +127,37 @@ Public surface:
 ```ts
 export function enqueueOcr(screenshotId: string): void;
 export function runOcrSweep(db: Database): Promise<void>;
+export function runStartupRecovery(db: Database): Promise<void>;
 ```
 
 Internals:
 
 - A module-level singleton serial queue: `let chain: Promise<void> = Promise.resolve();` plus a `Set<string>` of in-flight / queued IDs to dedupe. `enqueueOcr(id)` is a no-op if `id` is already in the set; otherwise it appends `() => processOne(id).finally(() => set.delete(id))` to the chain.
 - `processOne(id)`: loads the row, calls `VisionOCR.recognizeText(file_path)`, and on success runs a single `UPDATE screenshots SET ocr_text = ?, ocr_status = 'done', updated_at = ?` then calls `notifyChange('screenshots')`.
-- Retry counter: a `Map<string, number>` in-memory. On Vision failure, increment; if `< 3` re-enqueue (stays `pending` in DB); if `>= 3` `UPDATE screenshots SET ocr_status = 'failed'`. Counter resets when the app process dies, which means after a relaunch every `failed` row gets 3 fresh tries before being shelved again — the cheap retry-on-restart we want.
-- `runOcrSweep(db)` queries `SELECT id FROM screenshots WHERE ocr_status IN ('pending', 'failed') AND deleted_at IS NULL ORDER BY captured_at ASC` and calls `enqueueOcr` for each. Both `pending` and `failed` are picked up — `failed` rows are flipped back to `pending` implicitly by the next `processOne` run (we just re-enter the lifecycle); we don't write `pending` proactively to avoid an extra round-trip.
+- Retry counter: a `Map<string, number>` in-memory. On Vision failure, increment; if `< 3` re-enqueue (stays `pending` in DB); if `>= 3` `UPDATE screenshots SET ocr_status = 'failed'`. Counter resets when the app process dies, so a fresh process gets a new 3-try budget per row.
+- `runOcrSweep(db)` queries **`SELECT id FROM screenshots WHERE ocr_status = 'pending' AND deleted_at IS NULL ORDER BY captured_at ASC`** and calls `enqueueOcr` for each. Once a row is marked `failed`, mid-session sweeps no longer pick it up — which means a corrupted file does **not** keep burning Vision calls on every foreground. The retry-on-relaunch story is handled separately by `runStartupRecovery`, below.
+- `runStartupRecovery(db)` runs once at app boot, before the AppState listener attaches: `UPDATE screenshots SET ocr_status = 'pending' WHERE ocr_status = 'failed' AND deleted_at IS NULL`. This is what "fresh tries on relaunch" means — `failed` rows roll back to `pending` for one more pass with a fresh in-memory counter. If they fail their new 3-try budget, they re-enter `failed` and stay there until the next process start.
 - The module never holds the DB connection across an OCR call; it grabs `db` per write so a long Vision call can't block other writers.
 
 Roughly 150–200 lines of TS, plus `__tests__/processing.test.ts` (see Testing).
 
-### FTS triggers — new migration `0002_ocr_fts.ts`
+### FTS table rebuild + triggers — new migration `0002_ocr_fts.ts`
+
+This migration does two things: (a) drops and recreates `screenshots_fts` with the `trigram` tokenizer, and (b) attaches the keep-in-sync triggers.
+
+The day-one migration shipped `screenshots_fts` with `tokenize = 'porter unicode61'`, which doesn't satisfy this spec's substring-search promise — `unicode61` only does prefix matching within a token, so for indexed `とんかつ定食` the query `MATCH '定食*'` returns nothing. The `trigram` tokenizer (built into FTS5 since SQLite 3.34) indexes every 3-character substring of the document, so `MATCH '定食'` matches whether or not it sits at a token boundary. Tradeoff: minimum query length is 3 characters (typing 1 or 2 characters returns nothing — UI accommodates this), and the index is roughly 3× the size of the indexed text. For our dataset (a few thousand screenshots × a few hundred OCR characters each) that's negligible.
+
+Because the existing `screenshots_fts` is empty (nothing has written to it yet), the rebuild is destructive but lossless.
 
 ```sql
+DROP TABLE IF EXISTS screenshots_fts;
+
+CREATE VIRTUAL TABLE screenshots_fts USING fts5(
+  screenshot_id UNINDEXED,
+  content,
+  tokenize = 'trigram'
+);
+
 CREATE TRIGGER IF NOT EXISTS screenshots_fts_ai AFTER INSERT ON screenshots
   WHEN NEW.deleted_at IS NULL AND NEW.ocr_text IS NOT NULL
   BEGIN
@@ -162,10 +181,10 @@ CREATE TRIGGER IF NOT EXISTS screenshots_fts_ad AFTER DELETE ON screenshots
 
 Notes:
 
-- `IF NOT EXISTS` so the migration is safe to re-apply.
+- `IF NOT EXISTS` on the triggers so the migration is safe to re-apply.
 - The `AFTER UPDATE OF ocr_text, deleted_at` clause means trip-reassignment, file-path changes, etc. do **not** rewrite the FTS row. Cheap.
 - Soft-delete (`deleted_at` set) removes the row from the index. Restore would re-insert via the same trigger.
-- v0.2 indexes `ocr_text` only. When tags / extracted places ship, this trigger is replaced by a wider one that builds the document from joins; that migration is part of *those* specs, not this one.
+- v0.2 indexes `ocr_text` only. When tags / extracted places ship, the migration that introduces them rebuilds the document via joins.
 
 ### `app/search.tsx` — new search screen
 
@@ -185,7 +204,8 @@ Layout (top to bottom):
 Behavior:
 
 - Input is debounced 200ms before issuing the query.
-- Each non-empty input is normalized (trim, collapse whitespace) and tokenized on whitespace. Tokens are escaped (FTS5 special characters quoted) and joined with spaces; the **last** token gets a trailing `*` for prefix matching while typing. Example: typing `tonk` issues `MATCH 'tonk*'`; typing `maru tonk` issues `MATCH 'maru tonk*'`.
+- **Minimum query length: 3 characters.** Inputs shorter than 3 characters render the empty-state hint instead of running a query — the trigram tokenizer can't return anything meaningful for 1–2-char inputs. (16-bit codepoints like `定` count as one character; the limit is on user-perceived characters, not bytes.)
+- Each non-empty input is normalized (trim, collapse whitespace) and split on whitespace into tokens. Each token is wrapped in FTS5 double-quoted form so any special character (apostrophe, hyphen, parens, `*`, etc.) is treated as a literal substring. Tokens are joined with spaces, which FTS5 interprets as AND. With the `trigram` tokenizer, each token already matches anywhere in the document — no `*` suffix needed. Example: typing `tonk` issues `MATCH '"tonk"'` and matches "Maru Tonkatsu, Shibuya"; typing `定食` issues `MATCH '"定食"'` and matches `とんかつ定食`.
 - The FTS query uses the `snippet()` function to extract a 16-token excerpt with match markers:
 
   ```sql
@@ -256,17 +276,19 @@ import (any source) ──▶ row inserted, ocr_status='pending'
                                         └─ retryCount >= 3 → UPDATE ocr_status = 'failed'
                                                                   │
                                                                   ▼
-                                                       picked up by next foreground sweep
-                                                       (in-memory counter has reset on relaunch)
+                                                stays 'failed' for the rest of this process;
+                                                runStartupRecovery on next launch flips it
+                                                back to 'pending' for one more 3-try budget
 ```
 
 ### Triggers vs. paths in the queue
 
 - **Import-time path.** New row inserted (share, manual, future auto). `importImage` enqueues. The thumbnail in Inbox starts shimmering immediately.
+- **Startup recovery.** `app/_layout.tsx` calls `processing.runStartupRecovery(db)` once during init, immediately after migrations and before attaching the AppState listener. This is the only place in the app that promotes `failed` rows back to `pending`.
 - **Foreground sweep path.** `app/_layout.tsx`'s existing AppState `'active'` listener (today calling `ingestPendingImports`) gets a sibling call to `processing.runOcrSweep(db)`. This catches:
   - Items inserted by the share extension while the app was closed (the share extension never runs OCR; iOS extensions have ~120 MB and a few seconds — not enough).
   - Items left `pending` because the app crashed mid-OCR.
-  - Items left `failed` from prior sessions that we want to retry once more.
+  - Items just promoted from `failed` to `pending` by the startup-recovery pass earlier in the same launch.
 
 Both paths feed the same module-level queue, and the queue dedupes on `screenshotId`. So even if import-time enqueue and a sweep both target the same id (they generally won't — the row from a sweep is older than any newly imported row by definition), only one OCR call runs.
 
@@ -276,9 +298,9 @@ Both paths feed the same module-level queue, and the queue dedupes on `screensho
 |---|---|---|
 | `pending` | OCR not yet attempted (or attempt in flight). | → `done` on success. → `failed` after 3 in-memory retries within the current app session. |
 | `done` | `ocr_text` populated, FTS row exists. | → `pending` only via `ocr_text = NULL` (we don't do this in v0.2). |
-| `failed` | 3 in-session retries exhausted. | → re-tried on next foreground sweep with a fresh in-memory counter; if it succeeds, flips to `done`; if it fails 3× again, returns to `failed`. |
+| `failed` | 3 in-session retries exhausted. | → `pending` on next process start (via `runStartupRecovery`), once. Mid-session foreground sweeps **do not** re-pick `failed` rows. |
 
-3 in-memory retries comes from ARCHITECTURE.md's open question ("start at 3"). Re-trying `failed` rows on every relaunch is intentional: a screenshot that genuinely can't be OCR'd (corrupted file, unsupported format) will cycle silently and never reach the user. A transient fault (low memory, file not yet on disk) self-heals on the next launch.
+3 in-memory retries comes from ARCHITECTURE.md's open question ("start at 3"). Once-per-launch retry of `failed` rows is intentional: a screenshot that genuinely can't be OCR'd (corrupted file, unsupported format) cycles silently after each cold start and never burns CPU/battery on every foreground in between. A transient fault (low memory, file not yet on disk) self-heals on the next launch.
 
 ## UI states
 
@@ -311,7 +333,7 @@ Implication: search returns nothing on first launch and gradually populates as t
 | App killed mid-OCR. | Row stays `pending`. Next foreground sweep re-queues it. No persisted in-flight state. |
 | Two captures arrive within milliseconds (e.g. a shared item ingested at the same time as a manual import). | Both get enqueued. Queue is serial — one waits. No race. |
 | FTS row inserted twice (defensive trigger fires unexpectedly). | The triggers always `DELETE` before `INSERT`, so duplicates are impossible. |
-| User searches a query like `"O'Brien"` containing an FTS5 special character (apostrophe). | The token escaper wraps each token in `"…"` if it contains punctuation, falling back to a literal MATCH. Worst case: zero results, which is the FTS5 default for unparseable queries. |
+| User searches a query like `O'Brien` containing punctuation. | All tokens are unconditionally double-quoted by the escaper, so `MATCH '"O''Brien"'` is well-formed and the trigram tokenizer treats the apostrophe as a literal character. Match success depends on whether the OCR text contains the same literal apostrophe. |
 | User types a query, then immediately taps Cancel before the 200ms debounce fires. | The pending query is cancelled by `useLiveQuery`'s teardown when the screen unmounts. |
 
 ## Open questions / decisions made
@@ -325,8 +347,9 @@ Resolved (recorded here so the implementation plan doesn't reopen them):
 | UI feedback while pending (Q3) | List shimmer on the thumbnail. No detail-view pill. |
 | Spec scope (Q4) | OCR plumbing + full search UX (highlighting + trip filter chip). |
 | Search nav placement (Q5) | Magnifier in Inbox + Trip detail headers → dedicated `search` screen. |
-| Retry count | 3 in-memory, resets per app launch. |
+| Retry count | 3 in-memory, resets per app launch. `failed` rows promoted back to `pending` once per launch via `runStartupRecovery`; mid-session sweeps don't re-process them. |
 | FTS document content | `ocr_text` only. Trip name reached via `JOIN trips`. Tags / extracted places folded in by their own specs. |
+| FTS tokenizer | `trigram` (replaces day-one `porter unicode61`, which couldn't substring-match CJK). 3-character minimum query length. |
 | Result list cap | 50, no pagination. |
 | Snippet length | 16 tokens, ellipsis-trimmed. |
 
@@ -348,22 +371,27 @@ Deferred to later specs:
 - Retry resets across "relaunch" by re-importing the module (or exposing a test-only reset).
 - Queue dedup: two concurrent `enqueueOcr(id)` calls only invoke Vision once.
 - Queue serialization: two `enqueueOcr(idA)` + `enqueueOcr(idB)` with a Vision stub that delays should observe `idA` complete before `idB` starts.
-- `runOcrSweep` picks up both `pending` and `failed` rows ordered by `captured_at ASC`.
+- `runOcrSweep` picks up only `pending` rows (not `failed`), ordered by `captured_at ASC`.
+- `runStartupRecovery` flips all `failed` rows back to `pending` and returns; subsequent calls in the same process are a no-op (no `failed` rows left).
+- After `runOcrSweep` runs and a row is marked `failed` mid-session, a follow-up `runOcrSweep` does **not** re-process it (regression test for the codex-flagged bug).
 
 **Unit tests (Jest, in `modules/storage/__tests__/`):**
 
-- New migration applies cleanly on a fresh DB and on a pre-existing v0.1 DB.
+- New migration applies cleanly on a fresh DB and on a pre-existing v0.1 DB. The post-migration `screenshots_fts` is configured with the `trigram` tokenizer (verified via `PRAGMA table_xinfo` or by inserting and querying a CJK substring).
 - After inserting a `screenshots` row with `ocr_text`, the FTS row exists.
 - After updating `ocr_text` on an existing row, the FTS row reflects the new content (not duplicated).
 - After soft-deleting a screenshot, the FTS row is gone.
-- A search query (`screenshots_fts MATCH 'hello'`) returns the right row.
+- A search query (`screenshots_fts MATCH '"hello"'`) returns the right row.
+- A CJK-substring query (e.g. `MATCH '"定食"'` against a row whose `ocr_text` contains `とんかつ定食`) returns the row — the trigram-tokenizer regression test.
 
 **Search query unit tests** (`app/__tests__/searchQuery.test.ts` or co-located with the helper):
 
 - Empty/whitespace input → no query issued.
-- Single token → `'tok*'`.
-- Multiple tokens → `'foo bar baz*'` (last gets `*`).
-- Special characters (apostrophe, quote) → wrapped in double quotes, no SQL injection.
+- 1- or 2-character input → no query issued (below trigram minimum).
+- Single token → `'"tok"'` (FTS5-quoted, no `*` suffix).
+- Multiple tokens → `'"foo" "bar" "baz"'` (each token quoted, AND-joined by spaces).
+- Special characters (apostrophe, quote, parens, `*`, hyphen) → wrapped in double quotes; embedded `"` is doubled per FTS5 string-literal escape rules. No SQL injection (the whole MATCH string is bound as a parameter).
+- CJK input (e.g. `定食`) is treated identically to ASCII — no special handling needed beyond the 3-character minimum check (CJK still counts as 1 character per codepoint).
 - Trip filter id is bound as a parameter (no string-concat).
 
 **Native module — manual smoke test on device:**
@@ -390,7 +418,7 @@ Deferred to later specs:
 - `modules/capture/importImage.ts` — widen `source` type; call `processing.enqueueOcr` after a successful insert (only on `imported`, not `duplicate`).
 - `modules/storage/migrations/index.ts` — register the new migration.
 - `modules/storage/screenshots.ts` — list / detail queries widen to include `ocr_status` so the shimmer can render.
-- `app/_layout.tsx` — add `processing.runOcrSweep(ctx.db)` to the same foreground effect that runs `ingestPendingImports`.
+- `app/_layout.tsx` — call `processing.runStartupRecovery(ctx.db)` once during init (after migrations, before the AppState listener). Add `processing.runOcrSweep(ctx.db)` to the same foreground effect that runs `ingestPendingImports`.
 - `app/(tabs)/index.tsx` — add header magnifier; ensure thumbnail rows render the shimmer when `ocr_status='pending'`.
 - `app/trips/[id].tsx` — add header magnifier; same shimmer treatment in the grid.
 - `app/_components/` — extract or update `ScreenshotThumbnail` to encapsulate the pending shimmer.
@@ -399,12 +427,12 @@ Deferred to later specs:
 
 ## Implementation order suggestion (for the plan)
 
-1. Migration + storage tests (FTS triggers) — pure SQL, smallest blast radius, lets later steps assume FTS works.
+1. Migration + storage tests (FTS table rebuild + triggers, including the trigram-substring regression test) — pure SQL, smallest blast radius, lets later steps assume FTS works.
 2. Native VisionOCR module (skeleton + smoke test on device).
-3. `modules/processing` with the serial queue and retry, against a JS stub of VisionOCR — unit-tested before any device wiring.
-4. Wire processing into `importImage` + `app/_layout.tsx`. Smoke on device.
+3. `modules/processing` with the serial queue, retry, sweep, and `runStartupRecovery`, against a JS stub of VisionOCR — unit-tested before any device wiring. Includes the regression test that mid-session sweeps don't re-process `failed` rows.
+4. Wire processing into `importImage` + `app/_layout.tsx` (startup recovery first, then sweep on foreground). Smoke on device.
 5. Thumbnail shimmer.
-6. Search screen — query helper first (unit-tested), then UI.
+6. Search screen — query helper first (unit-tested, including the 3-char minimum and CJK substring case), then UI.
 7. Magnifier entry points.
 
 ## Sequencing note
