@@ -59,15 +59,17 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 **Definition of done:** every "at launch" bullet from PRODUCT.md works end-to-end, capture-to-saved-in-trip is under ~5 seconds, and AI extraction reliably produces a tappable place for the obvious cases (single restaurant or POI in a screenshot).
 
 **Scope:**
-- Auto-detect new screenshots in background; surface a review queue on app open.
 - On-device OCR (Apple Vision via native module if needed).
+- AI extraction pipeline: thin server-side proxy to an LLM, called from the app per screenshot, results stored locally in `extracted_places`. The same call doubles as a "is this travel?" classifier — an empty result means the screenshot is noise, not content.
+- Auto-detect new screenshots in background, **gated by the AI classifier**: only screenshots that yield ≥1 extracted place surface in Inbox; the rest are recorded for dedup but stay hidden. Raw auto-detect (every screenshot into Inbox) was rejected — without the classifier, Inbox becomes a junk drawer, not an inbox.
 - Search across OCR text + trip names + tags + extracted place names.
 - Manual tagging: place / food / activity.
 - Trip detail view with grouping/filtering by tag.
-- AI extraction pipeline: thin server-side proxy to an LLM, called from the app per screenshot, results stored locally in `extracted_places`.
 - Per-screenshot "place detected" badge; tap → opens Google or Apple Maps.
 - Per-trip "Places" tab listing distinct extracted names.
 - Performance pass: list scrolling, image loading.
+
+**Sequencing inside v0.2:** OCR ships first (also unlocks search). Then AI extraction (also unlocks the Places tab and per-screenshot badge). Then auto-detect, which is gated by extraction. The remaining items — manual tagging, trip-detail filtering, performance pass — are independent and slot in alongside whenever convenient.
 
 **Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall).
 
