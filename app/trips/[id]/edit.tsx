@@ -81,7 +81,7 @@ export default function EditTrip() {
     if (!db || !id) return;
     Alert.alert(
       `Delete '${trip.name}'?`,
-      `Its ${count} place${count === 1 ? '' : 's'} return to Inbox.`,
+      `Its ${count} place${count === 1 ? '' : 's'} return${count === 1 ? 's' : ''} to Inbox.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -90,7 +90,10 @@ export default function EditTrip() {
           onPress: async () => {
             try {
               await softDeleteTrip(db, id);
-              // Pop twice: first this modal, then the trip detail screen below.
+              // Pop twice: first this modal, then the trip detail screen behind it.
+              // Assumes we were opened from /trips/[id] (the only entry path in v0.1).
+              // If a future deep link opens this modal directly, the second back() will
+              // pop to whatever was below — usually still acceptable, but worth revisiting.
               router.back();
               setTimeout(() => router.back(), 0);
             } catch (err) {
