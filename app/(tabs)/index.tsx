@@ -8,7 +8,7 @@ type Row = {
   captured_at: string;
 };
 
-export default function Index() {
+export default function Places() {
   const rows = useLiveQuery<Row>(
     `SELECT id, file_path, captured_at
        FROM screenshots

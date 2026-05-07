@@ -66,5 +66,19 @@ export default function RootLayout() {
   }, [ctx]);
 
   if (!ready) return null;
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="places/[id]" options={{ headerShown: true }} />
+      <Stack.Screen name="trips/[id]" options={{ headerShown: true }} />
+      <Stack.Screen
+        name="trips/new"
+        options={{ headerShown: true, presentation: 'modal', title: 'New trip' }}
+      />
+      <Stack.Screen
+        name="trips/[id]/edit"
+        options={{ headerShown: true, presentation: 'modal', title: 'Edit trip' }}
+      />
+    </Stack>
+  );
 }
