@@ -6,6 +6,7 @@ import {
   Platform,
   Pressable,
   Text,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,11 +18,14 @@ import {
   type Screenshot,
 } from '@/modules/storage';
 import { useDatabase } from '@/app/_components/useDatabase';
+import { TripPicker, type TripPickerMode } from '@/app/_components/TripPicker';
 
 export default function PlaceDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [pickerMode, setPickerMode] = useState<TripPickerMode>('assign');
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'loaded'; screenshot: Screenshot | null }>({ kind: 'loading' });
 
   useEffect(() => {
@@ -70,12 +74,13 @@ export default function PlaceDetail() {
       (idx) => {
         const choice = options[idx];
         if (choice === 'Add to trip' || choice === 'Move to trip') {
-          // Picker is mounted by Task 10 — for now, log.
-          if (__DEV__) console.log('[place-detail] open picker', { id, mode: inTrip ? 'move' : 'assign' });
+          setPickerMode(inTrip ? 'move' : 'assign');
+          setPickerVisible(true);
         } else if (choice === 'Remove from trip' && db) {
           assignTrip(db, screenshot.id, null)
             .then(() => {
               setState({ kind: 'loaded', screenshot: { ...screenshot, tripId: null } });
+              toast('Returned to Inbox');
             })
             .catch((err) => {
               console.error('[place-detail] assignTrip failed', err);
@@ -136,6 +141,30 @@ export default function PlaceDetail() {
           accessibilityLabel="Screenshot"
         />
       </View>
+      <TripPicker
+        visible={pickerVisible}
+        screenshotId={screenshot.id}
+        mode={pickerMode}
+        onClose={async (result) => {
+          setPickerVisible(false);
+          if (!result) return;
+          // Refresh local state so the menu reflects the new trip.
+          if (db) {
+            const fresh = await getScreenshot(db, screenshot.id);
+            if (fresh) setState({ kind: 'loaded', screenshot: fresh });
+          }
+          toast(pickerMode === 'assign' ? `Added to ${result.tripName}` : `Moved to ${result.tripName}`);
+        }}
+      />
     </SafeAreaView>
   );
+}
+
+function toast(message: string) {
+  if (Platform.OS === 'android') {
+    ToastAndroid.show(message, ToastAndroid.SHORT);
+  } else {
+    // iOS lacks a native toast; a quick alert is acceptable for v0.1.
+    Alert.alert(message);
+  }
 }
