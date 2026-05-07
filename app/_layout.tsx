@@ -190,6 +190,16 @@ export default function RootLayout() {
             title: 'OCR debug',
           }}
         />
+        <Stack.Screen
+          name="places/[id]/places-found"
+          options={{
+            headerShown: true,
+            presentation: 'formSheet',
+            sheetGrabberVisible: true,
+            sheetAllowedDetents: [0.5, 1.0],
+            title: 'Places',
+          }}
+        />
       </Stack>
     </ThemeProvider>
   );

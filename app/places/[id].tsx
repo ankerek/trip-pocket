@@ -29,8 +29,22 @@ export default function PlaceDetail() {
     { kind: 'loading' } | { kind: 'loaded'; screenshot: Screenshot | null }
   >({ kind: 'loading' });
 
-  // Refresh when OCR completes in the background.
-  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['screenshots']);
+  // Refresh when OCR or extraction completes in the background.
+  const tick = useLiveQuery<{ v: number }>(
+    `SELECT 0 AS v`,
+    [],
+    ['screenshots', 'extracted_places'],
+  );
+
+  // Live place count drives the toolbar icon (mappin.circle.fill vs
+  // mappin.slash) so the button flips state the moment extraction commits.
+  const placeCounts = useLiveQuery<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM extracted_places
+      WHERE screenshot_id = ? AND deleted_at IS NULL`,
+    id ? [id] : [],
+    ['extracted_places'],
+  );
+  const placeCount = placeCounts?.[0]?.n ?? 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +133,20 @@ export default function PlaceDetail() {
       </View>
       {process.env.EXPO_OS === 'ios' ? (
         <Stack.Toolbar placement="right">
+          {/*
+            Places button. Hidden while extraction is pending or failed
+            (no information to show yet). When extraction is done, the
+            icon flips: filled-pin when we found places (positive), slash
+            when we processed and found nothing (so the user can pop the
+            sheet, confirm "no places detected", and delete confidently).
+          */}
+          {screenshot.extractionStatus === 'done' ? (
+            <Stack.Toolbar.Button
+              icon={placeCount > 0 ? 'mappin.circle.fill' : 'mappin.slash'}
+              tintColor={placeCount > 0 ? '#60a5fa' : '#94a3b8'}
+              onPress={() => router.push(`/places/${screenshot.id}/places-found`)}
+            />
+          ) : null}
           <Stack.Toolbar.Button
             icon="info.circle"
             tintColor="#fff"
