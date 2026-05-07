@@ -43,7 +43,11 @@ export default function PlacesFoundSheet() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-white" contentContainerClassName="py-2">
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      className="flex-1 bg-white"
+      contentContainerClassName="py-2"
+    >
       {places.map((p) => (
         <PlaceRow key={p.id} place={p} />
       ))}

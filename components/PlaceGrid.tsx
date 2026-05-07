@@ -87,9 +87,16 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
                   }
                 />
                 {badge === 'shimmer' ? (
+                  // The background color goes through `style`, not className.
+                  // Tailwind v4's default palette compiles to `oklch()`, which
+                  // react-native-css can't interpolate during animate-pulse —
+                  // it produced "#NaNNaNNaN1a" (NaN RGB, valid alpha 1a/10%)
+                  // and Reanimated bailed. Inline rgba sidesteps the whole
+                  // color pipeline; only opacity animates.
                   <View
                     pointerEvents="none"
-                    className="absolute inset-0 animate-pulse bg-black/10"
+                    style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)' }}
+                    className="absolute inset-0 animate-pulse"
                   />
                 ) : null}
                 {badge === 'pin' ? <PinBadge /> : null}
