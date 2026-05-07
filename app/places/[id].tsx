@@ -3,8 +3,10 @@ import {
   ActionSheetIOS,
   Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   ToastAndroid,
   View,
@@ -15,6 +17,7 @@ import {
   getScreenshot,
   softDeleteScreenshot,
   assignTrip,
+  useLiveQuery,
   type Screenshot,
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
@@ -26,7 +29,13 @@ export default function PlaceDetail() {
   const db = useDatabase();
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerMode, setPickerMode] = useState<TripPickerMode>('assign');
+  const [debugVisible, setDebugVisible] = useState(false);
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'loaded'; screenshot: Screenshot | null }>({ kind: 'loading' });
+
+  // Tick so the row reloads when OCR completes in the background — without
+  // this the debug panel would keep showing 'pending' until the screen is
+  // re-opened.
+  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['screenshots']);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,7 +46,7 @@ export default function PlaceDetail() {
     return () => {
       cancelled = true;
     };
-  }, [db, id]);
+  }, [db, id, tick]);
 
   if (state.kind === 'loading') {
     return (
@@ -120,17 +129,28 @@ export default function PlaceDetail() {
           title: '',
           headerStyle: { backgroundColor: '#000' },
           headerTintColor: '#fff',
-          headerRight: () =>
-            Platform.OS === 'ios' ? (
+          headerRight: () => (
+            <View className="flex-row items-center">
               <Pressable
-                onPress={openMenu}
+                onPress={() => setDebugVisible(true)}
                 className="px-3"
                 accessibilityRole="button"
-                accessibilityLabel="More actions"
+                accessibilityLabel="Show OCR text"
               >
-                <Text className="text-2xl text-white">···</Text>
+                <Text className="text-base text-white">ⓘ</Text>
               </Pressable>
-            ) : null,
+              {Platform.OS === 'ios' ? (
+                <Pressable
+                  onPress={openMenu}
+                  className="px-3"
+                  accessibilityRole="button"
+                  accessibilityLabel="More actions"
+                >
+                  <Text className="text-2xl text-white">···</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ),
         }}
       />
       <View className="flex-1 items-center justify-center">
@@ -156,7 +176,106 @@ export default function PlaceDetail() {
           toast(pickerMode === 'assign' ? `Added to ${result.tripName}` : `Moved to ${result.tripName}`);
         }}
       />
+      <DebugInfoModal
+        visible={debugVisible}
+        screenshot={screenshot}
+        onClose={() => setDebugVisible(false)}
+      />
     </SafeAreaView>
+  );
+}
+
+function DebugInfoModal({
+  visible,
+  screenshot,
+  onClose,
+}: {
+  visible: boolean;
+  screenshot: Screenshot;
+  onClose: () => void;
+}) {
+  const ocr = screenshot.ocrText ?? '';
+  const charCount = [...ocr].length;
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView className="flex-1 bg-white">
+        <View className="flex-row items-center justify-between border-b border-slate-200 px-4 py-3">
+          <Text className="text-lg font-semibold text-slate-900">OCR debug</Text>
+          <Pressable
+            onPress={onClose}
+            className="px-2"
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Text className="text-base text-slate-700">Done</Text>
+          </Pressable>
+        </View>
+        <ScrollView contentContainerClassName="px-4 py-3 gap-3">
+          <Field label="ID" value={screenshot.id} mono />
+          <Field label="Source" value={screenshot.source} />
+          <Field label="Captured" value={screenshot.capturedAt} />
+          <Field label="OCR status" value={screenshot.ocrStatus} />
+          <View className="gap-1">
+            <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              OCR text · {charCount} chars
+            </Text>
+            {screenshot.ocrStatus === 'pending' ? (
+              <Text className="text-sm italic text-slate-500">
+                OCR pending — re-open this screen after a few seconds.
+              </Text>
+            ) : screenshot.ocrStatus === 'failed' ? (
+              <Text className="text-sm italic text-red-600">
+                OCR failed (3 retries exhausted).
+              </Text>
+            ) : ocr.length === 0 ? (
+              <Text className="text-sm italic text-slate-500">
+                (no text recognized)
+              </Text>
+            ) : (
+              <Text selectable className="text-sm leading-5 text-slate-900">
+                {ocr}
+              </Text>
+            )}
+          </View>
+          <Field label="File path" value={screenshot.filePath} mono small />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function Field({
+  label,
+  value,
+  mono,
+  small,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <View className="gap-0.5">
+      <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </Text>
+      <Text
+        selectable
+        className={[
+          small ? 'text-xs' : 'text-sm',
+          mono ? 'font-mono' : '',
+          'text-slate-900',
+        ].join(' ')}
+      >
+        {value}
+      </Text>
+    </View>
   );
 }
 
