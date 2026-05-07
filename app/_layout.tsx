@@ -68,7 +68,7 @@ export default function RootLayout() {
   if (!ready) return null;
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="places/[id]" options={{ headerShown: true }} />
       <Stack.Screen name="trips/[id]" options={{ headerShown: true }} />
       <Stack.Screen
