@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react';
 import {
   ActionSheetIOS,
   Alert,
-  Image,
   Modal,
   Platform,
+  ToastAndroid,
+} from 'react-native';
+import {
+  Image,
   Pressable,
+  SafeAreaView,
   ScrollView,
   Text,
-  ToastAndroid,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+} from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   getScreenshot,

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FlatList, Image, Pressable, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlatList, Image, Pressable, SafeAreaView, Text, View } from '@/tw';
 import { Tabs, useRouter } from 'expo-router';
 import {
   countByTrip,

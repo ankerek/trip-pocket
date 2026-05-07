@@ -1,4 +1,4 @@
-import { Image, Pressable, View } from 'react-native';
+import { Image, Pressable, View } from '@/tw';
 import { useRouter } from 'expo-router';
 
 export type GridItem = {

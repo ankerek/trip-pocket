@@ -1,14 +1,6 @@
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  Modal,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, Modal } from 'react-native';
+import { FlatList, Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import * as Crypto from 'expo-crypto';
 import {
   assignTrip,

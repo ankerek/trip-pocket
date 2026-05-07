@@ -1,4 +1,4 @@
-import { Text } from 'react-native';
+import { Text } from '@/tw';
 
 const STX = '';
 const ETX = '';

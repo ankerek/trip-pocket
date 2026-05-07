@@ -1,6 +1,5 @@
 import Constants from 'expo-constants';
-import { Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, Text, View } from '@/tw';
 
 export default function Settings() {
   return (

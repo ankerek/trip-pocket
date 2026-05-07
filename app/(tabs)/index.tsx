@@ -1,5 +1,5 @@
-import { Alert, Pressable, SectionList, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert } from 'react-native';
+import { Pressable, SafeAreaView, SectionList, Text, View } from '@/tw';
 import { Tabs } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';

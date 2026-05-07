@@ -3,12 +3,12 @@ import {
   FlatList,
   Image,
   Pressable,
+  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+} from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { buildFtsMatch } from '@/modules/search';

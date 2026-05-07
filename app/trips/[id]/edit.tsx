@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert } from 'react-native';
+import { Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   countByTrip,

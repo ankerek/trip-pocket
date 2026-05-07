@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Alert, Pressable, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert } from 'react-native';
+import { Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { createTrip } from '@/modules/storage';
