@@ -66,7 +66,24 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "2dee30ac-eb35-4cc6-80d7-4e6a664237b5"
+        "projectId": "2dee30ac-eb35-4cc6-80d7-4e6a664237b5",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "TripPocketShare",
+                  "bundleIdentifier": "com.trippocket.app.share",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.trippocket.shared"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
       }
     },
     "owner": "ankerek"
