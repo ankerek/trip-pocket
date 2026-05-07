@@ -1,4 +1,4 @@
-name = "extract-proxy"
+name = "trip-pocket-extract-proxy"
 main = "src/index.ts"
 compatibility_date = "2025-01-15"
 
