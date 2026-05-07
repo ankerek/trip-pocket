@@ -17,19 +17,39 @@ import { useDatabase } from '@/components/useDatabase';
 
 type Row = GridItem & { captured_at: string };
 
-const INBOX_SQL = `SELECT id, file_path, ocr_status, captured_at
-                     FROM screenshots
-                    WHERE deleted_at IS NULL AND trip_id IS NULL
-                 ORDER BY captured_at DESC`;
+// LEFT JOIN against the per-screenshot place count so the thumbnail can
+// render a pin / no-places badge in addition to the existing shimmer.
+// Returning COALESCE(p.place_count, 0) keeps the type number-not-null,
+// which is what thumbnailBadge expects.
+const INBOX_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
+                          COALESCE(p.place_count, 0) AS place_count,
+                          s.captured_at
+                     FROM screenshots s
+                LEFT JOIN (
+                       SELECT screenshot_id, COUNT(*) AS place_count
+                         FROM extracted_places
+                        WHERE deleted_at IS NULL
+                     GROUP BY screenshot_id
+                     ) p ON p.screenshot_id = s.id
+                    WHERE s.deleted_at IS NULL AND s.trip_id IS NULL
+                 ORDER BY s.captured_at DESC`;
 
-const ALL_SQL = `SELECT id, file_path, ocr_status, captured_at
-                   FROM screenshots
-                  WHERE deleted_at IS NULL
-               ORDER BY captured_at DESC`;
+const ALL_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
+                        COALESCE(p.place_count, 0) AS place_count,
+                        s.captured_at
+                   FROM screenshots s
+              LEFT JOIN (
+                     SELECT screenshot_id, COUNT(*) AS place_count
+                       FROM extracted_places
+                      WHERE deleted_at IS NULL
+                   GROUP BY screenshot_id
+                   ) p ON p.screenshot_id = s.id
+                  WHERE s.deleted_at IS NULL
+               ORDER BY s.captured_at DESC`;
 
 export default function Places() {
-  const inbox = useLiveQuery<Row>(INBOX_SQL, [], ['screenshots']);
-  const all = useLiveQuery<Row>(ALL_SQL, [], ['screenshots']);
+  const inbox = useLiveQuery<Row>(INBOX_SQL, [], ['screenshots', 'extracted_places']);
+  const all = useLiveQuery<Row>(ALL_SQL, [], ['screenshots', 'extracted_places']);
 
   const headerRight = () => (
     <View className="flex-row items-center">

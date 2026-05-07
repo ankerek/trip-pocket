@@ -1,31 +1,39 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import {
-  getTrip,
-  listScreenshotsByTrip,
-  useLiveQuery,
-  type Screenshot,
-  type Trip,
-} from '@/modules/storage';
+import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
-import { PlaceGrid } from '@/components/PlaceGrid';
+import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { SearchButton } from '@/components/SearchButton';
 import { Icon } from '@/components/Icon';
+
+type GridRow = GridItem;
+
+const TRIP_GRID_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
+                              COALESCE(p.place_count, 0) AS place_count
+                         FROM screenshots s
+                    LEFT JOIN (
+                           SELECT screenshot_id, COUNT(*) AS place_count
+                             FROM extracted_places
+                            WHERE deleted_at IS NULL
+                         GROUP BY screenshot_id
+                         ) p ON p.screenshot_id = s.id
+                        WHERE s.deleted_at IS NULL AND s.trip_id = ?
+                     ORDER BY s.captured_at DESC`;
 
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
-  const [state, setState] = useState<
-    | { kind: 'loading' }
-    | { kind: 'loaded'; trip: Trip | null; screenshots: Screenshot[] }
-  >({ kind: 'loading' });
+  const [trip, setTrip] = useState<Trip | null | 'loading'>('loading');
 
-  const tick = useLiveQuery<{ v: number }>(
-    `SELECT 0 AS v`,
-    [],
-    ['trips', 'screenshots'],
+  // The screenshot grid is reactive: places committed by extraction
+  // notifyChange('extracted_places'), which re-fires this query so the
+  // pin badge appears live when extraction finishes.
+  const screenshots = useLiveQuery<GridRow>(
+    TRIP_GRID_SQL,
+    id ? [id] : [],
+    ['screenshots', 'extracted_places'],
   );
 
   useEffect(() => {
@@ -33,18 +41,17 @@ export default function TripDetail() {
     if (!db || !id) return;
     (async () => {
       const t = await getTrip(db, id);
-      const ss = await listScreenshotsByTrip(db, id);
       if (cancelled) return;
-      setState({ kind: 'loaded', trip: t, screenshots: ss });
+      setTrip(t);
     })();
     return () => {
       cancelled = true;
     };
-  }, [db, id, tick]);
+  }, [db, id]);
 
-  if (state.kind === 'loading') return null;
+  if (trip === 'loading' || screenshots === null) return null;
 
-  if (state.trip === null) {
+  if (trip === null) {
     return (
       <>
         <Stack.Screen options={{ title: '' }} />
@@ -54,9 +61,6 @@ export default function TripDetail() {
       </>
     );
   }
-
-  const trip = state.trip;
-  const screenshots = state.screenshots;
 
   return (
     <>
@@ -94,13 +98,7 @@ export default function TripDetail() {
           contentInsetAdjustmentBehavior="automatic"
           className="flex-1 bg-white"
         >
-          <PlaceGrid
-            data={screenshots.map((s) => ({
-              id: s.id,
-              file_path: s.filePath,
-              ocr_status: s.ocrStatus,
-            }))}
-          />
+          <PlaceGrid data={screenshots} />
         </ScrollView>
       )}
     </>

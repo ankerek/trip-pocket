@@ -4,16 +4,24 @@ import { Link, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { softDeleteScreenshot } from '@/modules/storage';
 import { useDatabase } from './useDatabase';
+import { thumbnailBadge } from './thumbnailBadge';
+import { PinBadge } from './PinBadge';
+import { NoPlacesBadge } from './NoPlacesBadge';
 
 export type GridItem = {
   id: string;
   file_path: string;
   /**
-   * If present and equal to 'pending', the thumbnail renders a subtle shimmer
-   * overlay while OCR is in flight. 'done' and 'failed' look the same — failed
-   * is silent in UI by design (logged elsewhere when telemetry lands).
+   * Drives the merged background-pipeline shimmer (OCR + extraction) and
+   * the pin / no-places badge. See `thumbnailBadge` for the decision rules.
+   * Optional so legacy callers that haven't widened their query yet still
+   * compile; defaults treat the row as fully-processed with 0 places (no
+   * shimmer, no badges) which is wrong for actual pending rows but the
+   * right "do nothing" stance until the call site is widened.
    */
   ocr_status?: 'pending' | 'done' | 'failed';
+  extraction_status?: 'pending' | 'done' | 'failed';
+  place_count?: number;
 };
 
 /**
@@ -50,7 +58,13 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
 
   return (
     <View className="flex-row flex-wrap p-2">
-      {data.map((item) => (
+      {data.map((item) => {
+        const badge = thumbnailBadge({
+          ocr_status: item.ocr_status ?? 'done',
+          extraction_status: item.extraction_status ?? 'done',
+          place_count: item.place_count ?? 0,
+        });
+        return (
         <Link key={item.id} href={`/places/${item.id}`} asChild>
           <Link.Trigger>
             <Pressable
@@ -72,12 +86,14 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
                     )
                   }
                 />
-                {item.ocr_status === 'pending' ? (
+                {badge === 'shimmer' ? (
                   <View
                     pointerEvents="none"
                     className="absolute inset-0 animate-pulse bg-black/10"
                   />
                 ) : null}
+                {badge === 'pin' ? <PinBadge /> : null}
+                {badge === 'no-places' ? <NoPlacesBadge /> : null}
               </View>
             </Pressable>
           </Link.Trigger>
@@ -96,7 +112,8 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
             />
           </Link.Menu>
         </Link>
-      ))}
+        );
+      })}
     </View>
   );
 }
