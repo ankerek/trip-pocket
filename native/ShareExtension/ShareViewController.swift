@@ -5,11 +5,14 @@ import UniformTypeIdentifiers
 class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
-        let host = UIHostingController(rootView: SaveButtonView(onSave: { [weak self] in
-            self?.handleSave()
-        }, onCancel: { [weak self] in
-            self?.cancel()
-        }))
+        let host = UIHostingController(rootView: TripPickerView(
+            onSave: { [weak self] tripId in
+                self?.handleSave(tripId: tripId)
+            },
+            onCancel: { [weak self] in
+                self?.cancel()
+            }
+        ))
         addChild(host)
         view.addSubview(host.view)
         host.view.translatesAutoresizingMaskIntoConstraints = false
@@ -22,7 +25,7 @@ class ShareViewController: UIViewController {
         host.didMove(toParent: self)
     }
 
-    private func handleSave() {
+    private func handleSave(tripId: String?) {
         guard let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
               let provider = item.attachments?.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) })
         else {
@@ -31,9 +34,14 @@ class ShareViewController: UIViewController {
         }
         provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
             guard let self else { return }
-            guard let url = self.materializeImage(data) else { self.cancel(); return }
+            guard let url = self.materializeImage(data) else {
+                // loadItem's completion block runs on an arbitrary queue;
+                // cancelRequest must be called on the main thread.
+                DispatchQueue.main.async { self.cancel() }
+                return
+            }
             do {
-                try PendingImportWriter().write(imageAt: url)
+                try PendingImportWriter().write(imageAt: url, suggestedTripId: tripId)
                 DispatchQueue.main.async {
                     self.extensionContext?.completeRequest(returningItems: nil)
                 }

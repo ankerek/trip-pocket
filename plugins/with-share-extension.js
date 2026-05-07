@@ -30,7 +30,8 @@ function withExtensionTarget(config) {
     project.addBuildPhase(
       [
         `${TARGET_NAME}/ShareViewController.swift`,
-        `${TARGET_NAME}/SaveButtonView.swift`,
+        `${TARGET_NAME}/TripPickerView.swift`,
+        `${TARGET_NAME}/TripReader.swift`,
         `${TARGET_NAME}/PendingImportWriter.swift`,
       ],
       'PBXSourcesBuildPhase',

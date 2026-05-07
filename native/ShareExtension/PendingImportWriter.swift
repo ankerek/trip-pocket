@@ -10,7 +10,7 @@ enum PendingImportError: Error {
 struct PendingImportWriter {
     let appGroupId = "group.com.trippocket.shared"
 
-    func write(imageAt sourceURL: URL) throws {
+    func write(imageAt sourceURL: URL, suggestedTripId: String?) throws {
         guard let groupURL = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
             throw PendingImportError.noAppGroup
@@ -55,7 +55,7 @@ struct PendingImportWriter {
 
         let insert = """
             INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
-            VALUES (?, ?, NULL, ?);
+            VALUES (?, ?, ?, ?);
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insert, -1, &stmt, nil) == SQLITE_OK else {
@@ -72,7 +72,12 @@ struct PendingImportWriter {
         // can construct a File directly from app_group_path without inferring scheme.
         sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 3, createdAt, -1, SQLITE_TRANSIENT)
+        if let tripId = suggestedTripId {
+            sqlite3_bind_text(stmt, 3, tripId, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 3)
+        }
+        sqlite3_bind_text(stmt, 4, createdAt, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw PendingImportError.dbFailed
