@@ -11,6 +11,9 @@ export interface RateLimitBinding {
 
 export interface Env {
   GEMINI_API_KEY: string;
+  CF_ACCOUNT_ID: string;
+  AI_GATEWAY_NAME: string;
+  CF_AIG_TOKEN: string;
   RATE_LIMIT: RateLimitBinding;
 }
 
@@ -35,11 +38,23 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
     return errorResponse('method-not-allowed', 405);
   }
 
+  // Misconfiguration is the operator's problem, not the client's. 500 so
+  // the client treats it as retryable; the operator sees the error class
+  // in Workers Logs.
   if (!env.GEMINI_API_KEY) {
-    // Misconfiguration is the operator's problem, not the client's. 500 so
-    // the client treats it as retryable; the operator sees the error class
-    // in Workers Logs.
     console.error('extract-proxy: GEMINI_API_KEY missing');
+    return errorResponse('server-misconfigured', 500);
+  }
+  if (!env.CF_ACCOUNT_ID) {
+    console.error('extract-proxy: CF_ACCOUNT_ID missing');
+    return errorResponse('server-misconfigured', 500);
+  }
+  if (!env.AI_GATEWAY_NAME) {
+    console.error('extract-proxy: AI_GATEWAY_NAME missing');
+    return errorResponse('server-misconfigured', 500);
+  }
+  if (!env.CF_AIG_TOKEN) {
+    console.error('extract-proxy: CF_AIG_TOKEN missing');
     return errorResponse('server-misconfigured', 500);
   }
 
@@ -71,23 +86,31 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
   // past it gets clipped, not rejected.
   const ocrText = parsed.data.ocr_text.slice(0, 10000);
 
+  // Route through Cloudflare AI Gateway so we get caching, analytics, and
+  // a single chokepoint for upstream provider swaps. The `?key=` is forwarded
+  // to Google AI Studio; `cf-aig-authorization` authenticates us to the
+  // gateway itself (Authenticated Gateways feature).
+  const gatewayUrl =
+    `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.AI_GATEWAY_NAME}` +
+    `/google-ai-studio/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
+
   let geminiResp: Response;
   try {
-    geminiResp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: ocrText }] }],
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: GEMINI_RESPONSE_SCHEMA,
-          },
-        }),
+    geminiResp = await fetch(gatewayUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
       },
-    );
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: ocrText }] }],
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: GEMINI_RESPONSE_SCHEMA,
+        },
+      }),
+    });
   } catch (err) {
     console.error('extract-proxy: gemini-network-error', String(err));
     return errorResponse('upstream-network-error', 502);

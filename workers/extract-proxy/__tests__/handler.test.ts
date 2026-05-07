@@ -28,6 +28,9 @@ function geminiOkResponse(places: Array<{ name: string; city: string; category: 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     GEMINI_API_KEY: 'test-key',
+    CF_ACCOUNT_ID: 'test-account',
+    AI_GATEWAY_NAME: 'default',
+    CF_AIG_TOKEN: 'test-aig-token',
     RATE_LIMIT: rateLimit(true) as unknown as Env['RATE_LIMIT'],
     ...overrides,
   };
@@ -185,5 +188,69 @@ describe('handleExtract', () => {
     globalThis.fetch = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
     await handleExtract(postJson({ ocr_text: 'hi' }), env);
     expect(limiter.limit).toHaveBeenCalledWith({ key: '1.2.3.4' });
+  });
+
+  describe('AI Gateway integration', () => {
+    it('targets the AI Gateway URL (account / gateway / google-ai-studio / generateContent)', async () => {
+      const fetchSpy = jest.fn(async () =>
+        geminiOkResponse([]),
+      ) as unknown as typeof fetch;
+      globalThis.fetch = fetchSpy;
+
+      const env = makeEnv({
+        CF_ACCOUNT_ID: 'acct-abc123',
+        AI_GATEWAY_NAME: 'trip-pocket',
+      });
+      await handleExtract(postJson({ ocr_text: 'hello' }), env);
+
+      const url = (fetchSpy as unknown as jest.Mock).mock.calls[0][0] as string;
+      expect(url).toContain('https://gateway.ai.cloudflare.com/v1/acct-abc123/trip-pocket/google-ai-studio/');
+      expect(url).toContain('models/gemini-2.5-flash-lite:generateContent');
+    });
+
+    it('sends cf-aig-authorization Bearer header', async () => {
+      const fetchSpy = jest.fn(async () =>
+        geminiOkResponse([]),
+      ) as unknown as typeof fetch;
+      globalThis.fetch = fetchSpy;
+
+      const env = makeEnv({ CF_AIG_TOKEN: 'tok-xyz' });
+      await handleExtract(postJson({ ocr_text: 'hello' }), env);
+
+      const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
+      const headers = new Headers(init.headers);
+      expect(headers.get('cf-aig-authorization')).toBe('Bearer tok-xyz');
+    });
+
+    it('still passes the Gemini API key to the upstream provider', async () => {
+      const fetchSpy = jest.fn(async () =>
+        geminiOkResponse([]),
+      ) as unknown as typeof fetch;
+      globalThis.fetch = fetchSpy;
+
+      const env = makeEnv({ GEMINI_API_KEY: 'gemini-secret' });
+      await handleExtract(postJson({ ocr_text: 'hello' }), env);
+
+      const url = (fetchSpy as unknown as jest.Mock).mock.calls[0][0] as string;
+      expect(url).toContain('?key=gemini-secret');
+    });
+
+    it('returns 500 when CF_AIG_TOKEN is missing', async () => {
+      const env = makeEnv({ CF_AIG_TOKEN: '' });
+      const res = await handleExtract(postJson({ ocr_text: 'hello' }), env);
+      expect(res.status).toBe(500);
+    });
+
+    it('returns 500 when CF_ACCOUNT_ID is missing', async () => {
+      const env = makeEnv({ CF_ACCOUNT_ID: '' });
+      const res = await handleExtract(postJson({ ocr_text: 'hello' }), env);
+      expect(res.status).toBe(500);
+    });
+
+    it('returns 500 when AI_GATEWAY_NAME is missing', async () => {
+      const env = makeEnv({ AI_GATEWAY_NAME: '' });
+      const res = await handleExtract(postJson({ ocr_text: 'hello' }), env);
+      expect(res.status).toBe(500);
+    });
   });
 });
