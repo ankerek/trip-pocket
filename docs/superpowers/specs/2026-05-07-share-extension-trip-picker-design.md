@@ -119,7 +119,7 @@ This change adds a **read** of `trips` from the extension. The extension previou
 
 ## Verification plan
 
-Manual smoke test on a real iPhone after a fresh EAS dev build. Setting up Swift XCTest under EAS for a single read function is more scaffolding than the tests would catch. JS side gets one new test for the stale-trip ingest guard (cheap and isolated); the rest is on-device.
+Manual smoke test on a real iPhone after a fresh EAS dev build. Setting up Swift XCTest under EAS for a single read function is more scaffolding than the tests would catch. JS side gets unit-test coverage for the stale-trip ingest guard's three branches (stale id, missing id, live id); the rest is on-device.
 
 **Important:** the share extension cannot programmatically open the host app, and we don't try to. After tapping a trip, the extension dismisses. To verify the screenshot landed correctly, the user manually opens Trip Pocket — the foreground triggers `ingestPendingImports`.
 
@@ -130,7 +130,7 @@ Manual smoke test on a real iPhone after a fresh EAS dev build. Setting up Swift
 5. **Repeatability** — repeat #2 three times in a row → same trip every time, no flakiness.
 6. **Stale trip (one-off, optional but worth doing once)** — share a screenshot to trip "X". *Before* opening the app, delete trip "X" via in-app trip delete… well, the app must be open to delete. Practical version: jest-test the ingest guard directly. The unit test creates a pending row with a `suggested_trip_id` pointing at a soft-deleted trip and asserts the resulting screenshot has `trip_id = null`.
 
-**One JS test added** (`modules/capture/__tests__/ingest.test.ts`): the stale-trip guard. No other JS test surface changes.
+**Three JS tests added** (`modules/capture/__tests__/ingest.test.ts`), one per branch of the new guard: stale (soft-deleted) trip falls back to Inbox, missing-id trip falls back to Inbox, live-trip id passes through unchanged. The live-trip case is a regression guard against accidentally falling back when the trip is healthy.
 
 ## Out of scope (deferred)
 
@@ -144,5 +144,5 @@ Manual smoke test on a real iPhone after a fresh EAS dev build. Setting up Swift
 - Two existing Swift files modified.
 - One file deleted.
 - One config plugin updated (`plugins/with-share-extension.js` source list).
-- One small JS guard added to `ingestPendingImports`, with one new unit test.
+- One small JS guard added to `ingestPendingImports`, with three new unit tests (one per branch).
 - One EAS dev build round-trip (budget one round of "build fails, debug, rebuild" per Phase 1's risk note).

@@ -225,12 +225,21 @@ struct TripReader {
         defer { sqlite3_finalize(stmt) }
 
         var results: [Trip] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        // Track the last status so SQLITE_BUSY / SQLITE_ERROR mid-iteration
+        // returns Inbox-only (per the spec's failure-mode contract) instead
+        // of a partially-populated list.
+        var lastStatus: Int32 = SQLITE_OK
+        while true {
+            lastStatus = sqlite3_step(stmt)
+            if lastStatus != SQLITE_ROW { break }
             guard let idCStr = sqlite3_column_text(stmt, 0),
                   let nameCStr = sqlite3_column_text(stmt, 1) else { continue }
             let id = String(cString: idCStr)
             let name = String(cString: nameCStr)
             results.append(Trip(id: id, name: name))
+        }
+        guard lastStatus == SQLITE_DONE else {
+            return []
         }
         return results
     }
@@ -303,6 +312,10 @@ struct TripPickerView: View {
                 }
             }
         }
+        // The share-extension target supports iPhone + iPad (TARGETED_DEVICE_FAMILY="1,2"),
+        // and NavigationView defaults to a split style on iPad — force single-column.
+        // (NavigationStack is iOS 16+; deployment target is 15.1, so NavigationView stays.)
+        .navigationViewStyle(.stack)
         .onAppear {
             // Load once; re-appear (e.g. from background) shouldn't re-query
             // and risk flicker. The extension is short-lived anyway.
@@ -325,7 +338,9 @@ git commit -m "feat(share): TripPickerView — Inbox + alphabetical trips list"
 
 ## Task 4: Switchover — extend `PendingImportWriter`, rewire `ShareViewController`, delete `SaveButtonView`, update plugin source list
 
-**Why all in one commit:** these four changes are tightly coupled — extending the writer's signature breaks the call site, deleting `SaveButtonView.swift` while the config plugin still references it makes a clean prebuild fail at the Xcode source-resolution step, and adding `TripReader.swift` / `TripPickerView.swift` to the build phase before they're referenced is harmless but adding them at the same moment as the deletion keeps the source list and the on-disk file set in sync. One coherent commit; every commit on `main` is clean-prebuildable.
+**Why all in one commit:** these four changes are tightly coupled — extending the writer's signature breaks the JS-side / Swift call site, and the on-disk Swift files (copied by the plugin's readdir loop) must match the plugin's hard-coded `PBXSourcesBuildPhase` list, otherwise the next `xcodebuild` run fails resolving a stale source ref. Bundling them into one commit keeps the source list and the on-disk file set in sync at every commit on `main`.
+
+**Plugin idempotence caveat:** `plugins/with-share-extension.js` early-returns when the share-extension target already exists (`if (project.pbxTargetByName(TARGET_NAME)) return cfg;`). That means an in-place edit of the source-list array is a no-op against an already-generated `ios/` project — the change only takes effect when the iOS project is regenerated from scratch. The plan handles this by running `expo prebuild --platform ios --clean` in Task 5 before the EAS build. Future plugin edits will need the same workflow until the plugin is rewritten to reconcile existing targets — out of scope for this plan.
 
 **Files:**
 - Modify: `native/ShareExtension/PendingImportWriter.swift`
@@ -459,7 +474,12 @@ class ShareViewController: UIViewController {
         }
         provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
             guard let self else { return }
-            guard let url = self.materializeImage(data) else { self.cancel(); return }
+            guard let url = self.materializeImage(data) else {
+                // loadItem's completion block runs on an arbitrary queue;
+                // cancelRequest must be called on the main thread.
+                DispatchQueue.main.async { self.cancel() }
+                return
+            }
             do {
                 try PendingImportWriter().write(imageAt: url, suggestedTripId: tripId)
                 DispatchQueue.main.async {
