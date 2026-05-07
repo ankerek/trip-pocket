@@ -16,6 +16,12 @@ import {
   getSandboxDirectory,
   createImportFs,
 } from '@/modules/capture';
+import {
+  createProcessor,
+  provideProcessor,
+  type Processor,
+} from '@/modules/processing';
+import { recognizeText } from '@/modules/vision-ocr';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
@@ -23,6 +29,7 @@ export default function RootLayout() {
     db: Database;
     ownerId: string;
     sandboxDirUri: string;
+    processor: Processor;
   } | null>(null);
   const ingesting = useRef(false);
 
@@ -34,9 +41,17 @@ export default function RootLayout() {
       await runMigrations(db, migrations);
       provideDatabase(db);
 
+      // OCR pipeline. createProcessor + provideProcessor wires up the
+      // singleton importImage talks to. runStartupRecovery is the
+      // once-per-process retry promotion: 'failed' rows roll back to
+      // 'pending' so they get one more 3-try budget this session.
+      const processor = createProcessor({ db, ocr: recognizeText });
+      provideProcessor(processor);
+      await processor.runStartupRecovery();
+
       const sandbox = getSandboxDirectory();
       const ownerId = getOrCreateOwnerId();
-      setCtx({ db, ownerId, sandboxDirUri: sandbox.uri });
+      setCtx({ db, ownerId, sandboxDirUri: sandbox.uri, processor });
       setReady(true);
     })().catch((err) => {
       console.error('[RootLayout] init failed', err);
@@ -54,6 +69,10 @@ export default function RootLayout() {
           sandboxDir: ctx.sandboxDirUri,
           fs: createImportFs(),
         });
+        // Catch any 'pending' rows the share extension dropped while the
+        // app was closed, plus anything left mid-OCR by the previous
+        // session. Mid-session sweeps deliberately skip 'failed'.
+        await ctx.processor.runOcrSweep();
       } finally {
         ingesting.current = false;
       }

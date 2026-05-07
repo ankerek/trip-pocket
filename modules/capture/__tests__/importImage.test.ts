@@ -1,6 +1,11 @@
 import { openDatabase, runMigrations, type Database } from '@/modules/storage/db';
 import { migrations } from '@/modules/storage/migrations';
 import { listScreenshots, softDeleteScreenshot } from '@/modules/storage/screenshots';
+import {
+  provideProcessor,
+  _resetProcessorForTests,
+  type Processor,
+} from '@/modules/processing';
 import { importImage, type ImportFs } from '../importImage';
 
 const ownerId = '00000000-0000-0000-0000-000000000001';
@@ -187,5 +192,113 @@ describe('importImage', () => {
     // No orphan row beyond the racer:
     const ids = await db.getAllAsync<{ id: string }>('SELECT id FROM screenshots');
     expect(ids.map((r) => r.id)).toEqual(['racer']);
+  });
+
+  describe('processor hook', () => {
+    afterEach(() => {
+      _resetProcessorForTests();
+    });
+
+    function makeFakeProcessor(): {
+      processor: Processor;
+      enqueueOcr: jest.Mock<void, [string]>;
+    } {
+      const enqueueOcr = jest.fn<void, [string]>();
+      const processor: Processor = {
+        enqueueOcr,
+        runOcrSweep: jest.fn().mockResolvedValue(undefined),
+        runStartupRecovery: jest.fn().mockResolvedValue(undefined),
+        _awaitIdle: jest.fn().mockResolvedValue(undefined),
+      };
+      return { processor, enqueueOcr };
+    }
+
+    it('calls processor.enqueueOcr(id) after a successful import', async () => {
+      const db = await freshDb();
+      const fs = makeFs();
+      const { processor, enqueueOcr } = makeFakeProcessor();
+      provideProcessor(processor);
+
+      const result = await importImage(db, {
+        sourceUri: '/picker/img1.jpg',
+        source: 'manual',
+        ownerId,
+        capturedAt: '2026-05-07T10:00:00Z',
+        transfer: 'copy',
+        sandboxDir: '/sandbox',
+        fs,
+      });
+
+      if (result.status !== 'imported') throw new Error('expected imported');
+      expect(enqueueOcr).toHaveBeenCalledTimes(1);
+      expect(enqueueOcr).toHaveBeenCalledWith(result.screenshotId);
+    });
+
+    it('does NOT enqueueOcr when the import is a duplicate (existing row already has its own lifecycle)', async () => {
+      const db = await freshDb();
+      const fs = makeFs();
+      const { processor, enqueueOcr } = makeFakeProcessor();
+
+      // First import: no processor yet — exercises the no-op branch too.
+      await importImage(db, {
+        sourceUri: '/picker/img1.jpg',
+        source: 'manual',
+        ownerId,
+        capturedAt: '2026-05-07T10:00:00Z',
+        transfer: 'copy',
+        sandboxDir: '/sandbox',
+        fs,
+      });
+
+      // Now provision and run a duplicate import:
+      provideProcessor(processor);
+      const second = await importImage(db, {
+        sourceUri: '/picker/img1.jpg',
+        source: 'manual',
+        ownerId,
+        capturedAt: '2026-05-07T10:00:01Z',
+        transfer: 'copy',
+        sandboxDir: '/sandbox',
+        fs,
+      });
+
+      expect(second.status).toBe('duplicate');
+      expect(enqueueOcr).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op when no processor is provisioned', async () => {
+      const db = await freshDb();
+      const fs = makeFs();
+      // No provideProcessor call — this should not throw.
+      await expect(
+        importImage(db, {
+          sourceUri: '/picker/img1.jpg',
+          source: 'manual',
+          ownerId,
+          capturedAt: '2026-05-07T10:00:00Z',
+          transfer: 'copy',
+          sandboxDir: '/sandbox',
+          fs,
+        }),
+      ).resolves.toMatchObject({ status: 'imported' });
+    });
+
+    it('accepts source = auto', async () => {
+      const db = await freshDb();
+      const fs = makeFs();
+      const result = await importImage(db, {
+        sourceUri: '/auto/img1.jpg',
+        source: 'auto',
+        ownerId,
+        capturedAt: '2026-05-07T10:00:00Z',
+        transfer: 'copy',
+        sandboxDir: '/sandbox',
+        fs,
+      });
+      expect(result.status).toBe('imported');
+      const rows = await listScreenshots(db, { tripId: null });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.source).toBe('auto');
+    });
   });
 });

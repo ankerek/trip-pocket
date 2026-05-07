@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import type { Database } from '@/modules/storage/db';
 import { insertScreenshot } from '@/modules/storage/screenshots';
 import { notifyChange } from '@/modules/storage/live-query';
+import { getProcessor } from '@/modules/processing';
 
 export type ImportFs = {
   sha256: (uri: string) => Promise<string>;
@@ -12,7 +13,7 @@ export type ImportFs = {
 
 export type ImportImageInput = {
   sourceUri: string;
-  source: 'share' | 'manual';
+  source: 'share' | 'manual' | 'auto';
   ownerId: string;
   capturedAt: string;
   suggestedTripId?: string | null;
@@ -74,6 +75,11 @@ export async function importImage(
 
   notifyChange('screenshots');
   if (input.suggestedTripId) notifyChange('trips');
+
+  // Kick off OCR for the freshly inserted row. Non-blocking; the import
+  // call resolves immediately and the OCR worker picks it up in the
+  // background. No-op when no processor has been provisioned (Jest, etc.).
+  getProcessor()?.enqueueOcr(screenshotId);
 
   return { status: 'imported', screenshotId };
 }
