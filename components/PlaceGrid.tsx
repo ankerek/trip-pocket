@@ -1,4 +1,4 @@
-import { FlatList, Image, Pressable, View } from 'react-native';
+import { Image, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 export type GridItem = {
@@ -12,24 +12,24 @@ export type GridItem = {
   ocr_status?: 'pending' | 'done' | 'failed';
 };
 
+/**
+ * Two-column grid of screenshot thumbnails. Plain flex-wrap rather than a
+ * FlatList so the grid can render reliably inside SectionList.renderSectionHeader
+ * (where a virtualized list collapses to 0 height because it has no scroll
+ * viewport to anchor layout to). Outer scrolling lives in the parent.
+ */
 export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
   const router = useRouter();
   return (
-    <FlatList
-      data={data}
-      keyExtractor={(item) => item.id}
-      numColumns={2}
-      scrollEnabled={false}
-      contentContainerClassName="p-2"
-      renderItem={({ item }) => (
+    <View className="flex-row flex-wrap p-2">
+      {data.map((item) => (
         <Pressable
+          key={item.id}
           className="w-1/2 p-1"
           onPress={() => router.push(`/places/${item.id}`)}
           accessibilityRole="button"
           accessibilityLabel="Screenshot"
         >
-          {/* aspect-ratio + bg lives on the wrapper so the slot keeps its
-              dimensions even when Image fails to load (no intrinsic size). */}
           <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-slate-100">
             <Image
               source={{ uri: item.file_path }}
@@ -52,7 +52,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
             ) : null}
           </View>
         </Pressable>
-      )}
-    />
+      ))}
+    </View>
   );
 }

@@ -71,7 +71,7 @@ export default function Places() {
       />
       {/* SectionList provides outer vertical scroll + per-section headers; each
           section's `data: []` is intentional — the grid lives inside renderSectionHeader
-          so PlaceGrid (a non-scrolling FlatList) can own its own layout. */}
+          so PlaceGrid renders inline as a flex-wrap block under the heading. */}
       <SectionList
         sections={sections}
         keyExtractor={(_, idx) => `slot-${idx}`}
