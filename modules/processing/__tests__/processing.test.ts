@@ -8,6 +8,11 @@ import {
 import { migrations } from '@/modules/storage/migrations';
 import * as liveQuery from '@/modules/storage/live-query';
 import { createProcessor, type OcrRunner, type Processor } from '../processing';
+import {
+  provideExtractor,
+  _resetExtractorForTests,
+  type Extractor,
+} from '@/modules/extraction';
 
 async function freshDb(): Promise<Database> {
   const db = await openDatabase(':memory:');
@@ -295,6 +300,69 @@ describe('createProcessor', () => {
         `SELECT ocr_status FROM screenshots WHERE id = ?`, 'f1',
       );
       expect(row?.ocr_status).toBe('failed');
+    });
+  });
+
+  describe('chains into extractor on success', () => {
+    afterEach(() => {
+      _resetExtractorForTests();
+    });
+
+    it('calls extractor.enqueueExtraction(id) after writing ocr_text=done', async () => {
+      const db = await freshDb();
+      await seedScreenshot(db, 's1');
+      const enqueueExtraction = jest.fn();
+      const fakeExtractor: Extractor = {
+        enqueueExtraction,
+        runExtractionSweep: jest.fn().mockResolvedValue(undefined),
+        runStartupRecovery: jest.fn().mockResolvedValue(undefined),
+        _awaitIdle: jest.fn().mockResolvedValue(undefined),
+      };
+      provideExtractor(fakeExtractor);
+
+      const ocr: OcrRunner = jest.fn().mockResolvedValue('Maru Tonkatsu');
+      const p = createProcessor({ db, ocr });
+      p.enqueueOcr('s1');
+      await drain(p);
+
+      expect(enqueueExtraction).toHaveBeenCalledWith('s1');
+      expect(enqueueExtraction).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT call extractor when OCR fails out (status=failed)', async () => {
+      const db = await freshDb();
+      await seedScreenshot(db, 's1');
+      const enqueueExtraction = jest.fn();
+      const fakeExtractor: Extractor = {
+        enqueueExtraction,
+        runExtractionSweep: jest.fn().mockResolvedValue(undefined),
+        runStartupRecovery: jest.fn().mockResolvedValue(undefined),
+        _awaitIdle: jest.fn().mockResolvedValue(undefined),
+      };
+      provideExtractor(fakeExtractor);
+
+      const ocr: OcrRunner = jest.fn().mockRejectedValue(new Error('decode failed'));
+      const p = createProcessor({ db, ocr, maxRetries: 3 });
+      p.enqueueOcr('s1');
+      await drain(p);
+
+      expect(enqueueExtraction).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op when no extractor has been provided', async () => {
+      // Default state — provideExtractor was never called this run.
+      const db = await freshDb();
+      await seedScreenshot(db, 's1');
+      const ocr: OcrRunner = jest.fn().mockResolvedValue('hi');
+      const p = createProcessor({ db, ocr });
+
+      // No throw is the assertion. The OCR write should still complete.
+      p.enqueueOcr('s1');
+      await drain(p);
+      const row = await db.getFirstAsync<{ ocr_status: string }>(
+        `SELECT ocr_status FROM screenshots WHERE id = 's1'`,
+      );
+      expect(row?.ocr_status).toBe('done');
     });
   });
 });

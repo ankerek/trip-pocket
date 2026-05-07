@@ -27,7 +27,16 @@ import {
   provideProcessor,
   type Processor,
 } from '@/modules/processing';
+import {
+  createExtractor,
+  extractFromProxy,
+  provideExtractor,
+  type Extractor,
+} from '@/modules/extraction';
+import { geocodePlace } from '@/modules/apple-geocoder';
 import { recognizeText } from '@/modules/vision-ocr';
+import * as Crypto from 'expo-crypto';
+import Constants from 'expo-constants';
 
 const SHARED_HEADER_OPTIONS = {
   headerTransparent: true,
@@ -45,6 +54,7 @@ export default function RootLayout() {
     ownerId: string;
     storageDirUri: string;
     processor: Processor;
+    extractor: Extractor;
   } | null>(null);
   const ingesting = useRef(false);
   const colorScheme = useColorScheme();
@@ -72,7 +82,30 @@ export default function RootLayout() {
 
       const storage = getStorageDirectory();
       const ownerId = getOrCreateOwnerId();
-      setCtx({ db, ownerId, storageDirUri: storage.uri, processor });
+
+      // AI extraction pipeline. Same lifecycle as OCR: provision the
+      // singleton, run startup recovery, run sweep on every foreground.
+      // The OCR success path chains here via getExtractor()?.enqueueExtraction.
+      const proxyUrl = Constants.expoConfig?.extra?.extractionProxyUrl as string | undefined;
+      const extractor = createExtractor({
+        db,
+        extract: (ocrText) =>
+          extractFromProxy(
+            ocrText,
+            // Empty string at runtime is intentional and visible: extract()
+            // hits the URL and gets a network error, which the adapter
+            // classifies as retryable. The first extraction attempt fails
+            // loudly, the dev fixes app.config.ts, no silent breakage.
+            proxyUrl ?? '',
+          ),
+        geocode: geocodePlace,
+        ownerId,
+        uuid: Crypto.randomUUID,
+      });
+      provideExtractor(extractor);
+      await extractor.runStartupRecovery();
+
+      setCtx({ db, ownerId, storageDirUri: storage.uri, processor, extractor });
       setReady(true);
     })().catch((err) => {
       console.error('[RootLayout] init failed', err);
@@ -94,6 +127,9 @@ export default function RootLayout() {
         // app was closed, plus anything left mid-OCR by the previous
         // session. Mid-session sweeps deliberately skip 'failed'.
         await ctx.processor.runOcrSweep();
+        // Same posture for extraction: catch rows whose OCR finished in
+        // a prior session but whose extraction never landed.
+        await ctx.extractor.runExtractionSweep();
       } finally {
         ingesting.current = false;
       }

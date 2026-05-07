@@ -68,6 +68,7 @@
     },
     "extra": {
       "router": {},
+      "extractionProxyUrl": "",
       "eas": {
         "projectId": "2dee30ac-eb35-4cc6-80d7-4e6a664237b5",
         "build": {

@@ -1,5 +1,6 @@
 import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
+import { getExtractor } from '@/modules/extraction';
 
 export type OcrRunner = (imagePath: string) => Promise<string>;
 
@@ -68,6 +69,10 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
         id,
       );
       notifyChange('screenshots');
+      // Chain into AI extraction. Non-blocking; the extraction queue runs
+      // in its own Promise chain. No-op when no extractor is provisioned
+      // (Jest, share extension, web).
+      getExtractor()?.enqueueExtraction(id);
       return { retry: false };
     } catch {
       const next = (retryCount.get(id) ?? 0) + 1;
