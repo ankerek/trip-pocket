@@ -21,23 +21,26 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 
 **Definition of done:** I'm using it on my own phone every day for a week without going back to Photos for the same task.
 
+**Status (2026-05-07):** code-complete except for empty-state polish. The whole capture loop — share-sheet (with trip picker), camera-roll import, list/grid, detail, trip CRUD, delete — works on device. Day-of-use validation is the remaining gate.
+
 ### Now
-- Expo project set up, dev build running on iPhone, repo bootstrapped.
-- Share-sheet target that accepts an image and saves it to app storage.
-- Local persistence of saved screenshots (image + minimal metadata).
-- Simple list/grid view of saved screenshots.
-- One hard-coded "trip" — no trip creation UI yet.
+- [x] Expo project set up, dev build running on iPhone, repo bootstrapped.
+- [x] Share-sheet target that accepts an image and saves it to app storage.
+- [x] Local persistence of saved screenshots (image + minimal metadata).
+- [x] Simple list/grid view of saved screenshots.
+- [x] ~~One hard-coded "trip"~~ → superseded by full trip support below.
 
 ### Next (this milestone)
-- Trip creation + manual assign-to-trip.
-- "Add from camera roll" flow inside the app.
-- Tap-to-view full screenshot.
-- Delete a screenshot.
+- [x] Trip creation + manual assign-to-trip.
+- [x] "Add from camera roll" flow inside the app.
+- [x] Tap-to-view full screenshot.
+- [x] Delete a screenshot.
+- [x] **Beyond original scope:** trip picker inside the share extension itself (was deferred from Phase 1 to Phase 2; shipped 2026-05-07). Capture-to-trip is now one tap from Photos.
 
 ### Later (this milestone)
-- Empty state copy.
-- Trip rename / delete.
-- Basic settings screen (version, about).
+- [ ] Empty state copy. (Some surfaces have it; needs an audit pass.)
+- [x] Trip rename / delete.
+- [x] Basic settings screen (version, about). (Version shown; "about" copy minimal.)
 
 ### Explicit non-goals for v0.1
 - Auto-detect of new screenshots — deferred to v0.2.
