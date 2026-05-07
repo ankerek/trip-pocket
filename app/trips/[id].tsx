@@ -81,7 +81,11 @@ export default function TripDetail() {
       ) : (
         <ScrollView className="flex-1">
           <PlaceGrid
-            data={screenshots.map((s) => ({ id: s.id, file_path: s.filePath }))}
+            data={screenshots.map((s) => ({
+              id: s.id,
+              file_path: s.filePath,
+              ocr_status: s.ocrStatus,
+            }))}
           />
         </ScrollView>
       )}

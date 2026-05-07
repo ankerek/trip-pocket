@@ -1,0 +1,1 @@
+export { buildFtsMatch } from './buildFtsMatch';

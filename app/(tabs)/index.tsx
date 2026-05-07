@@ -14,12 +14,12 @@ import { useDatabase } from '@/app/_components/useDatabase';
 
 type Row = GridItem & { captured_at: string };
 
-const INBOX_SQL = `SELECT id, file_path, captured_at
+const INBOX_SQL = `SELECT id, file_path, ocr_status, captured_at
                      FROM screenshots
                     WHERE deleted_at IS NULL AND trip_id IS NULL
                  ORDER BY captured_at DESC`;
 
-const ALL_SQL = `SELECT id, file_path, captured_at
+const ALL_SQL = `SELECT id, file_path, ocr_status, captured_at
                    FROM screenshots
                   WHERE deleted_at IS NULL
                ORDER BY captured_at DESC`;
