@@ -7,3 +7,4 @@ export {
   type ImportImageInput,
   type ImportImageResult,
 } from './importImage';
+export { createImportFs, sha256OfBytes } from './importFsRuntime';

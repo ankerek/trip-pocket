@@ -1,7 +1,22 @@
-import { randomUUID as nodeRandomUUID } from 'crypto';
+import { randomUUID as nodeRandomUUID, createHash } from 'crypto';
 
 export function randomUUID(): string {
   return nodeRandomUUID();
+}
+
+export async function digest(
+  algorithm: string,
+  data: Uint8Array | ArrayBuffer | ArrayBufferView,
+): Promise<ArrayBuffer> {
+  // Expo uses 'SHA-256'; Node uses 'sha256'.
+  const nodeAlg = algorithm.toLowerCase().replace(/-/g, '');
+  const buf = data instanceof Uint8Array
+    ? data
+    : new Uint8Array(data instanceof ArrayBuffer ? data : data.buffer);
+  const h = createHash(nodeAlg);
+  h.update(Buffer.from(buf));
+  const out = h.digest();
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
 }
 
 export async function digestStringAsync(

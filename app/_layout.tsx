@@ -2,7 +2,6 @@ import '../global.css';
 import { Stack } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
-import { File } from 'expo-file-system';
 import {
   openDatabase,
   runMigrations,
@@ -15,6 +14,7 @@ import {
   getOrCreateOwnerId,
   getAppGroupContainerUri,
   getSandboxDirectory,
+  createImportFs,
 } from '@/modules/capture';
 
 export default function RootLayout() {
@@ -52,13 +52,7 @@ export default function RootLayout() {
         await ingestPendingImports(ctx.db, {
           ownerId: ctx.ownerId,
           sandboxDir: ctx.sandboxDirUri,
-          fs: {
-            moveFile: async (from, to) => {
-              const src = new File(from);
-              const dst = new File(to);
-              src.move(dst);
-            },
-          },
+          fs: createImportFs(),
         });
       } finally {
         ingesting.current = false;
