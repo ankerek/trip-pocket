@@ -16,7 +16,7 @@ type InboxBannerProps = {
  */
 export function InboxBanner({ count, onPress }: InboxBannerProps) {
   if (count === 0) return null;
-  const label = `${count} new screenshot${count === 1 ? '' : 's'} to triage`;
+  const label = `${count} new source${count === 1 ? '' : 's'} to triage`;
   return (
     <Pressable
       onPress={onPress}
@@ -40,7 +40,7 @@ export function InboxBanner({ count, onPress }: InboxBannerProps) {
       </View>
       <View className="flex-1">
         <Text className="text-[15px] font-semibold" style={{ color: '#115e59' }}>
-          New screenshots
+          New sources
         </Text>
         <Text className="text-xs" style={{ color: '#0f766e' }}>
           Tap to triage
