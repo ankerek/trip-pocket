@@ -20,3 +20,44 @@
     --font-rounded: ui-rounded;
   }
 }
+
+/*
+ * Trip Pocket design tokens — source of truth in
+ * docs/superpowers/specs/2026-05-08-app-redesign-design.md §6.1.
+ * Tailwind v4 generates utility classes (bg-bg, text-text, …) only
+ * for tokens declared inside an @theme block. The TS mirror in
+ * tw/theme.ts must stay in sync.
+ */
+@theme {
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  --color-text: #0c4a6e;
+  --color-text-muted: #64748b;
+  --color-accent: #14b8a6;
+  --color-accent-strong: #0f9c8b;
+  --color-info-bg: #ccfbf1;
+  --color-info-text: #115e59;
+  --color-hairline: rgba(15, 23, 42, 0.06);
+  --color-overlay-strong: rgba(0, 0, 0, 0.55);
+
+  --radius-tile: 12px;
+  --radius-sheet: 20px;
+  --radius-pill: 9999px;
+
+  --shadow-elevated: 0 6px 16px rgba(15, 23, 42, 0.10);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #020617;
+    --color-surface: #0f172a;
+    --color-text: #e2e8f0;
+    --color-text-muted: #94a3b8;
+    --color-accent: #2dd4bf;
+    --color-accent-strong: #14b8a6;
+    --color-info-bg: #134e4a;
+    --color-info-text: #5eead4;
+    --color-hairline: rgba(255, 255, 255, 0.08);
+    --color-overlay-strong: rgba(0, 0, 0, 0.55);
+  }
+}
