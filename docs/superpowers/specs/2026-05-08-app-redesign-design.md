@@ -108,7 +108,7 @@ Opens from the Inbox banner or after a manual capture.
 
 | Interaction              | Motion                                                                                  |
 | ------------------------ | --------------------------------------------------------------------------------------- |
-| Tile → Place detail      | Shared-element morph of the photo (trip chip cross-fades, does not morph). Surrounding tiles fall away (-8px Y, 0.94 scale, 0 opacity), 380ms spring. **Implementation path is decided by the Phase 4 spike (see §11)**, not assumed in this spec. |
+| Tile → Place detail      | Native iOS stack push (per spike outcome). Both screens render the same hero photo URL, so the visual continuity comes from `expo-image`'s memory-disk cache + a 150ms transition prop on both ends. No bespoke morph in v1. |
 | Place detail close       | Reverse of the above. Pinch-to-zoom-out also dismisses.                                 |
 | Inbox banner             | Half-speed parallax until it pins; on pin, swaps to blurred-chip variant in the header. |
 | Triage save              | Current card -y 30px + fade out; next card slides in from x: +24px, spring.              |
@@ -121,7 +121,7 @@ Opens from the Inbox banner or after a manual capture.
 2. JS-driven snapshot transition: measure source tile, render an absolutely-positioned `<Animated.Image>` overlay above the navigator, animate position/size to the destination frame, then swap to the real Place detail. Implemented with Reanimated 4 + `measure()`.
 3. Fallback to a polished native push with photo cross-fade only (no morph).
 
-The spike's chosen outcome becomes binding for the rest of the implementation; it is recorded as a short note in this spec under §11.
+**Spike outcome (recorded 2026-05-08).** Option 1 ruled out without a build attempt — Reanimated 4 docs gate `sharedTransitionTag` to Paper, and this project ships on Fabric (RN 0.83 / new architecture). Option 2 is technically achievable but has a high implementation/maintenance cost (overlay coordinator, frame measurement coordination, list virtualization edge cases) that does not pay back inside this redesign's scope. **Selected outcome: Option 3 — native iOS stack push with a polished hero photo cross-fade.** Reanimated motion is reserved for in-screen elements (FAB press, sheet rise, parallax). A future enhancement may upgrade to Option 2 once the rest of the redesign is shipped; this is tracked in the post-redesign roadmap, not in this spec.
 
 Web View Transitions API is **not** in scope for this redesign — web shipping is deferred (see §10).
 

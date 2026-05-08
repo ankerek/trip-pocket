@@ -42,12 +42,7 @@ export default function PlaceDetail() {
     { kind: 'loading' } | { kind: 'loaded'; place: Place | null }
   >({ kind: 'loading' });
 
-  // Re-read when this place changes (enrichment lands, trip moves).
-  const tick = useLiveQuery<{ v: number }>(
-    `SELECT 0 AS v`,
-    [],
-    ['places'],
-  );
+  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['places']);
 
   const sources = useLiveQuery<SourceStripItem>(
     `SELECT ps.source_id, s.file_path, s.trip_id, t.name AS trip_name
@@ -72,8 +67,6 @@ export default function PlaceDetail() {
     };
   }, [db, id, tick]);
 
-  // Trigger /enrich on first paint when status warrants it. The enricher
-  // dedups internally, so it's safe to fire from every visit.
   useEffect(() => {
     if (state.kind !== 'loaded' || !state.place) return;
     const status = state.place.enrichmentStatus;
@@ -84,7 +77,7 @@ export default function PlaceDetail() {
 
   if (state.kind === 'loading') {
     return (
-      <View className="flex-1 bg-white">
+      <View className="flex-1 bg-bg">
         <Stack.Screen options={HEADER_OPTIONS} />
       </View>
     );
@@ -92,9 +85,9 @@ export default function PlaceDetail() {
 
   if (state.place === null) {
     return (
-      <View className="flex-1 items-center justify-center bg-white">
+      <View className="flex-1 items-center justify-center bg-bg">
         <Stack.Screen options={HEADER_OPTIONS} />
-        <Text className="text-base text-slate-500">Place not found.</Text>
+        <Text className="text-base text-text-muted">Place not found.</Text>
       </View>
     );
   }
@@ -147,6 +140,9 @@ export default function PlaceDetail() {
   };
 
   const onOpenInMaps = () => {
+    if (process.env.EXPO_OS === 'ios') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
     openInMaps(toMapTarget(place)).catch((err) =>
       console.warn('[place-detail] open Maps failed', err),
     );
@@ -156,77 +152,104 @@ export default function PlaceDetail() {
     <>
       <Stack.Screen options={HEADER_OPTIONS} />
       <ScrollView
-        className="flex-1 bg-white"
+        className="flex-1 bg-bg"
         contentInsetAdjustmentBehavior="automatic"
       >
-        {/* Hero photo (or category-tinted placeholder pre-enrichment). */}
+        {/* Hero photo. Continuity with the grid tile comes from the
+            expo-image memory-disk cache + the 150ms transition on both
+            ends — see spec §5 spike outcome. */}
         {photoUrl ? (
           <Image
             source={{ uri: photoUrl }}
-            className="aspect-[4/3] w-full bg-slate-100"
+            className="aspect-[4/3] w-full"
+            style={{ backgroundColor: '#e2e8f0' }}
             contentFit="cover"
+            cachePolicy="memory-disk"
             transition={150}
           />
         ) : (
-          <View className="aspect-[4/3] w-full items-center justify-center bg-slate-100">
+          <View
+            className="aspect-[4/3] w-full items-center justify-center"
+            style={{ backgroundColor: '#e2e8f0' }}
+          >
             <Icon name="mappin.circle" size={48} tintColor="#94a3b8" />
           </View>
         )}
 
-        <View className="px-4 pt-4 pb-1">
-          <Text className="text-2xl font-semibold text-slate-900">{place.name}</Text>
+        {/* Title block — spec §4.3. */}
+        <View className="px-4 pb-2 pt-5">
+          <Text
+            className="text-text"
+            style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4 }}
+          >
+            {place.name}
+          </Text>
           {place.city ? (
-            <Text className="mt-0.5 text-base text-slate-500">{place.city}</Text>
+            <Text className="mt-1 text-base text-text-muted">{place.city}</Text>
           ) : null}
-          {place.category ? <CategoryChip category={place.category} /> : null}
-          {place.rating !== null ? (
-            <Text className="mt-1 text-sm text-slate-500">
-              ★ {place.rating.toFixed(1)}
-              {place.priceLevel !== null && place.priceLevel > 0
-                ? ' · '.concat('$'.repeat(place.priceLevel))
-                : ''}
-            </Text>
-          ) : null}
+
+          <View className="mt-3 flex-row flex-wrap items-center gap-2">
+            {place.rating !== null ? <Stat label={`★ ${place.rating.toFixed(1)}`} /> : null}
+            {place.priceLevel !== null && place.priceLevel > 0 ? (
+              <Stat label={'$'.repeat(place.priceLevel)} />
+            ) : null}
+            {place.category ? <CategoryChip category={place.category} /> : null}
+          </View>
         </View>
 
-        <View className="flex-row gap-2 px-4 py-3">
+        {/* Primary CTA — Teal, full-width per spec §4.3. */}
+        <View className="px-4 pb-3 pt-1">
           <Pressable
             onPress={onOpenInMaps}
-            className="flex-row items-center gap-1 rounded-md bg-blue-600 px-4 py-2"
             accessibilityRole="button"
             accessibilityLabel="Open in Maps"
+            className="flex-row items-center justify-center gap-2 rounded-2xl py-3.5"
+            style={{ backgroundColor: '#14b8a6' }}
           >
-            <Icon name="map" size={18} tintColor="#ffffff" />
-            <Text className="text-sm font-semibold text-white">Open in Maps</Text>
+            <Icon name="map.fill" size={18} tintColor="#ffffff" />
+            <Text
+              style={{ fontSize: 15, fontWeight: '600', color: '#ffffff', letterSpacing: -0.2 }}
+            >
+              Open in Maps
+            </Text>
           </Pressable>
           <Pressable
             onPress={() => onAssignTrip(inTrip ? 'move' : 'assign')}
-            className="flex-row items-center gap-1 rounded-md border border-slate-300 px-4 py-2"
             accessibilityRole="button"
             accessibilityLabel={inTrip ? 'Move to trip' : 'Add to trip'}
+            className="mt-2 flex-row items-center justify-center gap-2 rounded-2xl py-3"
+            style={{
+              backgroundColor: 'rgba(15,23,42,0.04)',
+              borderWidth: 1,
+              borderColor: 'rgba(15,23,42,0.06)',
+            }}
           >
-            <Icon name="folder" size={18} tintColor="#0f172a" />
-            <Text className="text-sm font-medium text-slate-900">
-              {inTrip ? 'Move' : 'Add to trip'}
+            <Icon name="folder" size={16} tintColor="#0c4a6e" />
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#0c4a6e' }}>
+              {inTrip ? 'Move to another trip' : 'Add to a trip'}
             </Text>
           </Pressable>
         </View>
 
         {place.description ? (
-          <View className="px-4 pb-3">
-            <Text className="text-sm leading-5 text-slate-700">{place.description}</Text>
+          <View className="px-4 pb-4 pt-2">
+            <Text className="text-[15px] leading-5 text-text">{place.description}</Text>
           </View>
         ) : null}
 
-        {/* Metadata block — stays terse; details users may not care about
-            keep their own row, the way Apple Maps surfaces them. */}
-        <View className="border-y border-slate-100">
+        {/* Metadata block. */}
+        <View
+          className="mx-4 mt-2 overflow-hidden rounded-2xl"
+          style={{
+            backgroundColor: 'rgba(15,23,42,0.025)',
+            borderWidth: 1,
+            borderColor: 'rgba(15,23,42,0.06)',
+          }}
+        >
           {place.formattedAddress ? (
             <MetaRow icon="mappin" text={place.formattedAddress} />
           ) : null}
-          {place.externalUrl ? (
-            <MetaRow icon="link" text={place.externalUrl} />
-          ) : null}
+          {place.externalUrl ? <MetaRow icon="link" text={place.externalUrl} /> : null}
           <MetaRow
             icon="info.circle"
             text={enrichmentLabel(place.enrichmentStatus)}
@@ -234,65 +257,102 @@ export default function PlaceDetail() {
           />
         </View>
 
-        {/* Sources strip — every screenshot/URL that produced this place. */}
-        <View className="px-4 pt-4 pb-2">
-          <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Sources · {sources?.length ?? 0}
+        {/* Sources strip. */}
+        <View className="px-4 pb-2 pt-6">
+          <Text
+            className="text-text-muted"
+            style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.6, textTransform: 'uppercase' }}
+          >
+            Found in {sources?.length ?? 0} screenshot{(sources?.length ?? 0) === 1 ? '' : 's'}
           </Text>
         </View>
-        <View className="flex-row flex-wrap gap-2 px-4 pb-6">
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerClassName="px-4 pb-6 gap-2"
+        >
           {(sources ?? []).map((src) => (
             <Pressable
               key={src.source_id}
               onPress={() => router.push(`/sources/${src.source_id}`)}
-              className="overflow-hidden rounded-md bg-slate-100"
+              className="overflow-hidden rounded-xl"
+              style={{
+                width: 88,
+                height: 110,
+                backgroundColor: '#e2e8f0',
+              }}
               accessibilityRole="button"
-              accessibilityLabel="Open source"
-              style={{ width: 88, height: 110 }}
+              accessibilityLabel="Open source screenshot"
             >
               {src.file_path ? (
                 <Image
                   source={src.file_path}
                   className="h-full w-full"
                   contentFit="cover"
+                  cachePolicy="memory-disk"
                 />
               ) : (
                 <View className="h-full w-full items-center justify-center">
-                  <Icon name="link" size={20} tintColor="#64748b" />
+                  <Icon name="link" size={20} tintColor="#94a3b8" />
                 </View>
               )}
               {src.trip_id !== place.tripId && src.trip_name ? (
-                <View className="absolute inset-x-0 bottom-0 bg-slate-900/60 px-1 py-0.5">
-                  <Text className="text-[10px] text-white" numberOfLines={1}>
+                <View
+                  className="absolute inset-x-0 bottom-0 px-1.5 py-0.5"
+                  style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+                >
+                  <Text
+                    className="text-[10px] text-white"
+                    numberOfLines={1}
+                    style={{ fontWeight: '500' }}
+                  >
                     from {src.trip_name}
                   </Text>
                 </View>
               ) : null}
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
 
-        {/* Footer actions: destructive separated from the primary toolbar. */}
-        <View className="px-4 pb-10">
+        {/* Footer destructive actions, separated. */}
+        <View className="px-4 pb-12 pt-4">
           {inTrip ? (
             <Pressable
               onPress={onUnassign}
-              className="mb-2 rounded-md border border-slate-200 px-4 py-3"
+              className="mb-2 rounded-2xl py-3"
               accessibilityRole="button"
               accessibilityLabel="Remove from trip"
+              style={{
+                backgroundColor: 'rgba(15,23,42,0.04)',
+                borderWidth: 1,
+                borderColor: 'rgba(15,23,42,0.06)',
+              }}
             >
-              <Text className="text-center text-sm font-medium text-slate-700">
+              <Text
+                className="text-center text-text"
+                style={{ fontSize: 14, fontWeight: '500' }}
+              >
                 Remove from trip
               </Text>
             </Pressable>
           ) : null}
           <Pressable
             onPress={confirmDelete}
-            className="rounded-md border border-red-300 px-4 py-3"
+            className="rounded-2xl py-3"
             accessibilityRole="button"
             accessibilityLabel="Delete place"
+            style={{
+              borderWidth: 1,
+              borderColor: 'rgba(220,38,38,0.30)',
+              backgroundColor: 'rgba(254,242,242,0.6)',
+            }}
           >
-            <Text className="text-center text-sm font-semibold text-red-600">Delete place</Text>
+            <Text
+              className="text-center"
+              style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}
+            >
+              Delete place
+            </Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -319,8 +379,6 @@ export default function PlaceDetail() {
   );
 }
 
-// Keyed off the LLM categories the extractor writes today. DB column is a
-// plain string, so unrecognised values render no chip — defensive.
 const CATEGORY_META: Record<string, { icon: string; label: string }> = {
   food: { icon: 'fork.knife', label: 'Food' },
   activity: { icon: 'figure.walk', label: 'Activity' },
@@ -331,9 +389,32 @@ function CategoryChip({ category }: { category: string }) {
   const meta = CATEGORY_META[category];
   if (!meta) return null;
   return (
-    <View className="mt-2 flex-row items-center gap-1 self-start rounded-full bg-slate-100 px-2.5 py-1">
+    <View
+      className="flex-row items-center gap-1 rounded-full px-2.5 py-1"
+      style={{ backgroundColor: 'rgba(15,23,42,0.06)' }}
+    >
       <Icon name={meta.icon} size={12} tintColor="#475569" />
-      <Text className="text-xs font-medium text-slate-700">{meta.label}</Text>
+      <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>{meta.label}</Text>
+    </View>
+  );
+}
+
+function Stat({ label }: { label: string }) {
+  return (
+    <View
+      className="rounded-full px-2.5 py-1"
+      style={{ backgroundColor: 'rgba(15,23,42,0.06)' }}
+    >
+      <Text
+        style={{
+          fontSize: 12,
+          fontWeight: '600',
+          color: '#475569',
+          fontVariant: ['tabular-nums'],
+        }}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -348,11 +429,15 @@ function MetaRow({
   muted?: boolean;
 }) {
   return (
-    <View className="flex-row items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0">
-      <Icon name={icon} size={18} tintColor={muted ? '#94a3b8' : '#0f172a'} />
+    <View
+      className="flex-row items-center gap-3 px-4 py-3"
+      style={{ borderBottomWidth: 1, borderBottomColor: 'rgba(15,23,42,0.06)' }}
+    >
+      <Icon name={icon} size={16} tintColor={muted ? '#94a3b8' : '#0c4a6e'} />
       <Text
-        className={muted ? 'flex-1 text-sm text-slate-500' : 'flex-1 text-sm text-slate-900'}
+        className="flex-1"
         numberOfLines={2}
+        style={{ fontSize: 14, color: muted ? '#94a3b8' : '#0c4a6e' }}
       >
         {text}
       </Text>
