@@ -1,8 +1,10 @@
 import { Pressable } from 'react-native';
 import Animated, {
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { Icon } from '@/components/Icon';
@@ -14,9 +16,11 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 // Center capture button that lives in the new tab bar.
 // Spec §4.6 + §5: scale 0.92 on press-in, spring back on release.
+// Reduced-motion fallback (spec §9.4): linear timing, no overshoot.
 export function CaptureFAB() {
   const db = useDatabase();
   const scale = useSharedValue(1);
+  const reducedMotion = useReducedMotion();
 
   const style = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -25,10 +29,14 @@ export function CaptureFAB() {
   return (
     <AnimatedPressable
       onPressIn={() => {
-        scale.value = withSpring(0.92, springs.default);
+        scale.value = reducedMotion
+          ? withTiming(0.96, { duration: 120 })
+          : withSpring(0.92, springs.default);
       }}
       onPressOut={() => {
-        scale.value = withSpring(1, springs.overshoot);
+        scale.value = reducedMotion
+          ? withTiming(1, { duration: 120 })
+          : withSpring(1, springs.overshoot);
       }}
       onPress={() => {
         if (!db) return;
