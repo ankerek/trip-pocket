@@ -145,6 +145,7 @@ export default function Pocket() {
         ItemSeparatorComponent={GridGap}
         ListHeaderComponent={
           <View>
+            <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
             {/* Banner only on the Untriaged filter — keeps the All
                 feed visually quiet for users who already have a queue
                 they're ignoring. */}
@@ -154,7 +155,6 @@ export default function Pocket() {
                 onPress={() => router.push('/triage' as never)}
               />
             ) : null}
-            <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
           </View>
         }
         ListEmptyComponent={
