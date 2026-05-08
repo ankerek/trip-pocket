@@ -109,7 +109,11 @@ All copy uses redesign typography tokens (`text-base text-text-muted` for hints)
 Before merging, verify in a dev build (Sim or device) that `places_fts` actually contains rows with the expected content. The plan should include a one-time debug step:
 
 1. Boot the app with at least one trip, one screenshot, OCR done, place extracted.
-2. Run `SELECT count(*), substr(content, 1, 80) FROM places_fts LIMIT 5;` via a temporary log (or expo-sqlite SQL inspector). Expect: count > 0, content contains place name and OCR fragment.
+2. Via a temporary log (or expo-sqlite SQL inspector) run, in order:
+   - `SELECT count(*) FROM places_fts;` — expect > 0.
+   - `SELECT substr(content, 1, 80) FROM places_fts LIMIT 5;` — expect place name and OCR fragment in each sampled row.
+
+   Run as two queries — combining them as `SELECT count(*), substr(content, 1, 80) FROM places_fts LIMIT 5` returns a single aggregate row with an undefined `content` value, not five samples.
 3. If empty, the bug is upstream — extraction isn't reaching the `place_sources` insert (which is what fires the rebuild trigger that adds `raw_text` to the FTS doc). That would be a separate spec/fix; flag it in the implementation plan rather than swallowing it here.
 
 If `places_fts` is populated but the screen still returns nothing, the bug is in the query or in `useLiveQuery`'s change-deps. The new query above plus the new deps (`['places', 'trips', 'place_sources']`) should resolve it; if not, add a temporary direct `db.getAllAsync` log path to compare.
@@ -148,9 +152,17 @@ export function SearchButton({ tripId }: { tripId?: string }) {
 
 Pocket home (`app/(tabs)/(places)/index.tsx`) renders `<SearchButton />` (unchanged). Trip detail (`app/trips/[id].tsx`) renders `<SearchButton tripId={trip.id} />`.
 
+### `components/TripChip.tsx` — new (extract)
+
+A trip-name pill currently inlined in two places: `components/PlaceTile.tsx:79-92` (white-translucent variant overlaid on the photo) and `app/search.tsx`'s local `Chip` (slate-on-slate variant in the filter row). The new component takes a `name` and a `variant: 'overlay' | 'inline'`, encapsulating both treatments. Both existing call sites move to use it. The search result row uses `variant='inline'`.
+
+### `components/CategoryChip.tsx` — new (extract)
+
+`app/places/[id].tsx:388` declares `CategoryChip` as a private function inside the screen. Move it to `components/`, export it, and replace the inline reference with an import. The search result row imports from the same location.
+
 ### `components/SearchResultRow.tsx` — new
 
-Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Renders the option-A row. Reuses `TripChip` and `CategoryChip` (both already exist and are used on `app/places/[id].tsx`).
+Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Renders the option-A row. Composes `TripChip` (with `'Inbox'` text when `trip_id IS NULL`) and `CategoryChip` from the two extractions above.
 
 ### Removals
 
@@ -180,11 +192,15 @@ Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Rend
 ## File-change inventory
 
 **Modified:**
-- `app/search.tsx` — rewritten per Components above.
+- `app/search.tsx` — rewritten per Components above. Drops its local `Chip` in favor of `<TripChip variant="inline">`.
 - `components/SearchButton.tsx` — accept `tripId` prop, push with param.
+- `components/PlaceTile.tsx` — replace inlined trip chip (lines 79–92) with `<TripChip variant="overlay" name={place.trip_name} />`.
+- `app/places/[id].tsx` — replace local `CategoryChip` definition + reference with an import from `components/CategoryChip`.
 - `app/trips/[id].tsx` — pass `tripId` to `<SearchButton>`.
 
 **New:**
+- `components/TripChip.tsx` — extracted from `PlaceTile` and `search.tsx`, with `variant: 'overlay' | 'inline'`.
+- `components/CategoryChip.tsx` — extracted from the private function in `app/places/[id].tsx`.
 - `components/SearchResultRow.tsx` — pulled-out row component.
 
 **Deleted:**
@@ -248,10 +264,12 @@ Deferred:
 ## Implementation order (for the plan)
 
 1. Verify `places_fts` is populated on a real dev DB (the "doesn't work" debugging step above). If empty, file separate fix and stop.
-2. Extend integration test in `modules/search/__tests__/search-integration.test.ts` for places-first queries (red).
-3. Rewrite `SEARCH_SQL` + `ResultRow` + `useLiveQuery` deps in `app/search.tsx` (green).
-4. Add `tripId` param to `SearchButton` + read `params.trip` in search screen.
-5. Pull `SearchResultRow` out, plug in `TripChip` + `CategoryChip`.
-6. Migrate styling to redesign tokens. Verify in light + dark mode.
-7. Delete `components/SearchSnippet.tsx` if unused.
-8. Manual smoke on device per Testing.
+2. Extract `components/TripChip.tsx` (with `variant`) and migrate `PlaceTile` + `search.tsx`'s local `Chip` to use it. No behavior change.
+3. Extract `components/CategoryChip.tsx` from `app/places/[id].tsx` and migrate the call site to import. No behavior change.
+4. Extend integration test in `modules/search/__tests__/search-integration.test.ts` for places-first queries (red).
+5. Rewrite `SEARCH_SQL` + `ResultRow` + `useLiveQuery` deps in `app/search.tsx` (green).
+6. Add `tripId` param to `SearchButton` + read `params.trip` in search screen.
+7. Pull `SearchResultRow` out, composing the new `TripChip` + `CategoryChip`.
+8. Migrate styling to redesign tokens. Verify in light + dark mode.
+9. Delete `components/SearchSnippet.tsx` if unused.
+10. Manual smoke on device per Testing.
