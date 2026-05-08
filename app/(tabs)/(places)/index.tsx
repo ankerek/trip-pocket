@@ -1,8 +1,9 @@
 import { Alert } from 'react-native';
-import { Pressable, SectionList, Text, View } from '@/tw';
+import { Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
+import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { SearchButton } from '@/components/SearchButton';
 import { Icon } from '@/components/Icon';
 import * as ImagePicker from 'expo-image-picker';
@@ -15,41 +16,37 @@ import {
 } from '@/modules/capture';
 import { useDatabase } from '@/components/useDatabase';
 
-type Row = GridItem & { captured_at: string };
+// Global places feed: every live place, regardless of trip. Tiles render
+// photo + name overlay (PlaceTile). Untriaged places live alongside trip
+// places — the trip-detail screen filters by trip_id.
+const PLACES_SQL = `SELECT id, name, city, category, photo_name,
+                           rating, price_level,
+                           external_place_id, enrichment_status,
+                           latitude, longitude, formatted_address
+                      FROM places
+                     WHERE deleted_at IS NULL
+                  ORDER BY enriched_at DESC NULLS LAST, created_at DESC`;
 
-// LEFT JOIN against the per-screenshot place count so the thumbnail can
-// render a pin / no-places badge in addition to the existing shimmer.
-// Returning COALESCE(p.place_count, 0) keeps the type number-not-null,
-// which is what thumbnailBadge expects.
+// Inbox: sources with no trip and not yet attached to any place. These are
+// the "no-place yet" tiles — manual sources the user chose, plus
+// in-flight pipeline rows. Slice 1 keeps them in a separate Inbox section
+// to match the share-flow expectation; slice 2 blends them into the main
+// feed with a "no-place" visual treatment.
 const INBOX_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
-                          COALESCE(p.place_count, 0) AS place_count,
-                          s.captured_at
-                     FROM screenshots s
+                          COALESCE(p.place_count, 0) AS place_count
+                     FROM sources s
                 LEFT JOIN (
-                       SELECT screenshot_id, COUNT(*) AS place_count
-                         FROM extracted_places
-                        WHERE deleted_at IS NULL
-                     GROUP BY screenshot_id
-                     ) p ON p.screenshot_id = s.id
+                       SELECT ps.source_id, COUNT(*) AS place_count
+                         FROM place_sources ps
+                        WHERE ps.deleted_at IS NULL
+                     GROUP BY ps.source_id
+                     ) p ON p.source_id = s.id
                     WHERE s.deleted_at IS NULL AND s.trip_id IS NULL
                  ORDER BY s.captured_at DESC`;
 
-const ALL_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
-                        COALESCE(p.place_count, 0) AS place_count,
-                        s.captured_at
-                   FROM screenshots s
-              LEFT JOIN (
-                     SELECT screenshot_id, COUNT(*) AS place_count
-                       FROM extracted_places
-                      WHERE deleted_at IS NULL
-                   GROUP BY screenshot_id
-                   ) p ON p.screenshot_id = s.id
-                  WHERE s.deleted_at IS NULL
-               ORDER BY s.captured_at DESC`;
-
 export default function Places() {
-  const inbox = useLiveQuery<Row>(INBOX_SQL, [], ['screenshots', 'extracted_places']);
-  const all = useLiveQuery<Row>(ALL_SQL, [], ['screenshots', 'extracted_places']);
+  const places = useLiveQuery<PlaceTileData>(PLACES_SQL, [], ['places']);
+  const inbox = useLiveQuery<GridItem>(INBOX_SQL, [], ['sources', 'place_sources']);
 
   const headerRight = () => (
     <View className="flex-row items-center">
@@ -58,48 +55,51 @@ export default function Places() {
     </View>
   );
 
-  if (inbox === null || all === null) return null;
+  if (places === null || inbox === null) return null;
 
-  if (inbox.length === 0 && all.length === 0) {
+  if (places.length === 0 && inbox.length === 0) {
     return (
       <>
         <Stack.Screen options={{ headerRight }} />
         <View className="flex-1 items-center justify-center bg-white">
           <Text className="px-8 text-center text-base text-slate-500">
-            No screenshots yet — share one from Photos.
+            No places yet — share a screenshot from Photos.
           </Text>
         </View>
       </>
     );
   }
 
-  const sections: Array<{ key: string; title: string; data: Row[] }> = [];
-  if (inbox.length > 0) {
-    sections.push({ key: 'inbox', title: `Inbox · ${inbox.length}`, data: [] });
-  }
-  sections.push({ key: 'all', title: 'All', data: [] });
-
   return (
     <>
       <Stack.Screen options={{ headerRight }} />
-      {/* SectionList provides outer vertical scroll + per-section headers; each
-          section's `data: []` is intentional — the grid lives inside renderSectionHeader
-          so PlaceGrid renders inline as a flex-wrap block under the heading. */}
-      <SectionList
+      <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         className="bg-white"
-        sections={sections}
-        keyExtractor={(_, idx) => `slot-${idx}`}
-        renderItem={() => null}
-        renderSectionHeader={({ section }) => (
-          <View className="bg-white">
+      >
+        {inbox.length > 0 ? (
+          <View>
             <Text className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {section.title}
+              Inbox · {inbox.length}
             </Text>
-            <PlaceGrid data={section.key === 'inbox' ? inbox : all} />
+            <PlaceGrid data={inbox} />
           </View>
-        )}
-      />
+        ) : null}
+        {places.length > 0 ? (
+          <View>
+            <Text className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Places · {places.length}
+            </Text>
+            <View className="flex-row flex-wrap p-2">
+              {places.map((p) => (
+                <View key={p.id} className="w-1/2 p-1">
+                  <PlaceTile place={p} />
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+      </ScrollView>
     </>
   );
 }
@@ -123,7 +123,6 @@ function HeaderPlusButton() {
     const now = new Date().toISOString();
     const fs = createImportFs();
 
-    // Concurrency cap of 4 — protects against pathological 20-image cases on slow devices.
     const queue = [...result.assets];
     const next = async () => {
       while (queue.length > 0) {
@@ -132,7 +131,7 @@ function HeaderPlusButton() {
         try {
           const r = await importImage(db, {
             sourceUri: asset.uri,
-            source: 'manual',
+            origin: 'manual',
             ownerId,
             capturedAt: now,
             transfer: 'copy',

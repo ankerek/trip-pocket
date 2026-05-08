@@ -3,30 +3,44 @@ import { FlatList, Image, Pressable, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
 import {
-  countByTrip,
-  listScreenshotsByTrip,
   listTrips,
   useLiveQuery,
-  type Screenshot,
   type Trip,
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 
+type TripPreviewPlace = {
+  id: string;
+  name: string;
+  photo_name: string | null;
+  external_place_id: string | null;
+};
+
 type TripRowData = {
   trip: Trip;
   count: number;
-  previews: Screenshot[];
+  previews: TripPreviewPlace[];
 };
+
+const COUNT_SQL = `SELECT trip_id, COUNT(*) AS n
+                     FROM places
+                    WHERE trip_id IS NOT NULL AND deleted_at IS NULL
+                 GROUP BY trip_id`;
+
+const PREVIEWS_SQL = `SELECT id, name, photo_name, external_place_id
+                        FROM places
+                       WHERE trip_id = ? AND deleted_at IS NULL
+                    ORDER BY enriched_at DESC NULLS LAST, created_at DESC
+                       LIMIT 5`;
 
 export default function Trips() {
   const router = useRouter();
   const db = useDatabase();
 
-  // Live-trigger that refreshes when trips OR screenshots change.
   const tick = useLiveQuery<{ v: number }>(
     `SELECT 0 AS v`,
     [],
-    ['trips', 'screenshots'],
+    ['trips', 'places'],
   );
 
   const [rows, setRows] = useState<TripRowData[] | null>(null);
@@ -36,11 +50,14 @@ export default function Trips() {
     if (!db) return;
     (async () => {
       const trips = await listTrips(db);
-      const counts = await countByTrip(db);
-      const previewsByTrip: Record<string, Screenshot[]> = {};
+      const countRows = await db.getAllAsync<{ trip_id: string; n: number }>(COUNT_SQL);
+      const counts: Record<string, number> = {};
+      for (const r of countRows) counts[r.trip_id] = r.n;
+
+      const previewsByTrip: Record<string, TripPreviewPlace[]> = {};
       await Promise.all(
         trips.map(async (t) => {
-          previewsByTrip[t.id] = await listScreenshotsByTrip(db, t.id, 5);
+          previewsByTrip[t.id] = await db.getAllAsync<TripPreviewPlace>(PREVIEWS_SQL, t.id);
         }),
       );
       if (cancelled) return;
@@ -111,13 +128,9 @@ export default function Trips() {
                   onPress={() => router.push(`/places/${p.id}`)}
                   className="mr-2"
                   accessibilityRole="button"
-                  accessibilityLabel="Screenshot"
+                  accessibilityLabel={p.name}
                 >
-                  <Image
-                    source={p.filePath}
-                    className="h-20 w-16 rounded-md bg-slate-200"
-                    contentFit="cover"
-                  />
+                  <PreviewThumb place={p} />
                 </Pressable>
               )}
               ListEmptyComponent={
@@ -129,6 +142,37 @@ export default function Trips() {
       />
     </>
   );
+}
+
+function PreviewThumb({ place }: { place: TripPreviewPlace }) {
+  // Built lazily so we can fall back gracefully when photo_name is null
+  // (pre-enrichment) — show a soft tile with the place initial.
+  const photoUri = buildPhotoUri(place.photo_name);
+  if (photoUri) {
+    return (
+      <Image
+        source={{ uri: photoUri }}
+        className="h-20 w-16 rounded-md bg-slate-200"
+        contentFit="cover"
+      />
+    );
+  }
+  return (
+    <View className="h-20 w-16 items-center justify-center rounded-md bg-slate-200">
+      <Text className="text-base font-semibold text-slate-500">
+        {place.name?.charAt(0)?.toUpperCase() ?? '?'}
+      </Text>
+    </View>
+  );
+}
+
+function buildPhotoUri(photoName: string | null): string | null {
+  if (!photoName) return null;
+  // Lazy require keeps this file zero-cost on platforms without expo-constants.
+  const Constants = require('expo-constants').default;
+  const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
+  if (!base) return null;
+  return `${base.replace(/\/$/, '')}/${photoName}?w=128&h=160`;
 }
 
 function HeaderPlusButton() {

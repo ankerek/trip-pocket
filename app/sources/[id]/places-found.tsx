@@ -3,18 +3,19 @@ import { useLocalSearchParams } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceRow, type PlaceRowData } from '@/components/PlaceRow';
 
-const PLACES_SQL = `SELECT ep.id, ep.name, ep.city, ep.address, ep.category,
-                           ep.external_place_id, ep.enrichment_status,
-                           pe.formatted_address, pe.latitude, pe.longitude,
-                           pe.photo_name, pe.description, pe.rating,
-                           pe.price_level, pe.external_url
-                      FROM extracted_places ep
-                 LEFT JOIN place_enrichments pe
-                           ON pe.external_place_id = ep.external_place_id
-                     WHERE ep.screenshot_id = ? AND ep.deleted_at IS NULL
-                  ORDER BY ep.created_at ASC`;
+const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category,
+                           ps.extracted_address AS address,
+                           p.external_place_id, p.enrichment_status,
+                           p.formatted_address, p.latitude, p.longitude,
+                           p.photo_name, p.description, p.rating,
+                           p.price_level, p.external_url
+                      FROM place_sources ps
+                      JOIN places p ON p.id = ps.place_id
+                     WHERE ps.source_id = ? AND ps.deleted_at IS NULL
+                       AND p.deleted_at IS NULL
+                  ORDER BY ps.extracted_at ASC`;
 
-const STATUS_SQL = `SELECT extraction_status FROM screenshots
+const STATUS_SQL = `SELECT extraction_status FROM sources
                      WHERE id = ? AND deleted_at IS NULL`;
 
 type StatusRow = { extraction_status: 'pending' | 'done' | 'failed' };
@@ -24,12 +25,12 @@ export default function PlacesFoundSheet() {
   const places = useLiveQuery<PlaceRowData>(
     PLACES_SQL,
     id ? [id] : [],
-    ['extracted_places'],
+    ['place_sources', 'places'],
   );
   const statusRows = useLiveQuery<StatusRow>(
     STATUS_SQL,
     id ? [id] : [],
-    ['screenshots'],
+    ['sources'],
   );
 
   if (places === null || statusRows === null) return null;

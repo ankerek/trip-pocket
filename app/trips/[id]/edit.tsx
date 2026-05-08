@@ -4,7 +4,6 @@ import { Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
-  countByTrip,
   getTrip,
   renameTrip,
   softDeleteTrip,
@@ -28,9 +27,12 @@ export default function EditTrip() {
     if (!db || !id) return;
     (async () => {
       const t = await getTrip(db, id);
-      const counts = await countByTrip(db);
+      const countRow = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM places WHERE trip_id = ? AND deleted_at IS NULL`,
+        id,
+      );
       if (cancelled) return;
-      setLoad({ kind: 'loaded', trip: t, count: t ? counts[id] ?? 0 : 0 });
+      setLoad({ kind: 'loaded', trip: t, count: t ? countRow?.n ?? 0 : 0 });
       if (t) setName(t.name);
     })();
     return () => {
