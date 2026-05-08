@@ -17,8 +17,11 @@ CF_ACCOUNT_ID = "cbe6c750b30fa9390489224a1e0aa3e0"
 AI_GATEWAY_NAME = "default"
 
 # Secrets (set via `wrangler secret put`, never committed):
-#   GEMINI_API_KEY  — Google AI Studio API key, forwarded as ?key= to upstream
-#   CF_AIG_TOKEN    — Cloudflare AI Gateway Authenticated Gateways bearer token
+#   GEMINI_API_KEY         — Google AI Studio API key (Gemini), forwarded as ?key=
+#   GOOGLE_PLACES_API_KEY  — Google Maps Platform key, Places API enabled,
+#                            restricted to Cloudflare Worker egress IPs (used by
+#                            /enrich and /photo)
+#   CF_AIG_TOKEN           — Cloudflare AI Gateway Authenticated Gateways bearer token
 
 # Logs include status, latency, and error class only — never OCR text.
 [observability]

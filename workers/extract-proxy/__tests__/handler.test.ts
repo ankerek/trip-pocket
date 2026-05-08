@@ -31,6 +31,7 @@ function geminiOkResponse(
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     GEMINI_API_KEY: 'test-key',
+    GOOGLE_PLACES_API_KEY: 'test-places-key',
     CF_ACCOUNT_ID: 'test-account',
     AI_GATEWAY_NAME: 'default',
     CF_AIG_TOKEN: 'test-aig-token',
