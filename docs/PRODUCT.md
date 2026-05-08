@@ -60,6 +60,7 @@ The first user is anyone with a camera roll full of screenshots they meant to do
 
 **Later:**
 
+- Rich place cards — a real photo of the venue, a 1–2 sentence summary of what it is, and metadata like rating and hours, fetched on demand the first time you open a place. The screenshot you saved three months ago becomes "oh right, that's the cozy bakery I wanted to try" without re-opening the original.
 - Smart suggestions ("Looks like a café in Tokyo")
 - An in-app map view of saved places
 - Itinerary generation from saved ideas
