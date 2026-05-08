@@ -33,9 +33,16 @@ import {
   provideExtractor,
   type Extractor,
 } from '@/modules/extraction';
+import {
+  createEnricher,
+  enrichFromProxy,
+  provideEnricher,
+  type Enricher,
+} from '@/modules/enrichment';
 import { recognizeText } from '@/modules/vision-ocr';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
+import { warmMapAppDetection } from '@/lib/openInMaps';
 
 const SHARED_HEADER_OPTIONS = {
   headerTransparent: true,
@@ -54,6 +61,7 @@ export default function RootLayout() {
     storageDirUri: string;
     processor: Processor;
     extractor: Extractor;
+    enricher: Enricher;
   } | null>(null);
   const ingesting = useRef(false);
   const colorScheme = useColorScheme();
@@ -103,7 +111,26 @@ export default function RootLayout() {
       provideExtractor(extractor);
       await extractor.runStartupRecovery();
 
-      setCtx({ db, ownerId, storageDirUri: storage.uri, processor, extractor });
+      // Place enrichment runner. On-demand: triggered when the user opens
+      // a place card whose status is 'pending' or 'failed'. No sweep, no
+      // startup recovery — the user re-opening the card is the retry signal.
+      const enrichProxyUrl = Constants.expoConfig?.extra?.enrichmentProxyUrl as
+        | string
+        | undefined;
+      const enricher = createEnricher({
+        db,
+        // Empty-string fallback mirrors the extractor: missing config fails
+        // loudly on first call, no silent breakage.
+        enrich: (payload) => enrichFromProxy(payload, enrichProxyUrl ?? ''),
+      });
+      provideEnricher(enricher);
+
+      // Detect installed map apps once per process; lib/openInMaps caches
+      // the result. Fire-and-forget — buildMapUrl falls back to Apple
+      // Maps until detection completes, which is the safe default.
+      void warmMapAppDetection();
+
+      setCtx({ db, ownerId, storageDirUri: storage.uri, processor, extractor, enricher });
       setReady(true);
     })().catch((err) => {
       console.error('[RootLayout] init failed', err);
