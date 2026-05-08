@@ -32,8 +32,23 @@ const CATEGORY_ICON: Record<PlaceRowData['category'], string> = {
  * address when present, the city otherwise. Apple Maps' consumer app
  * resolves the search server-side and pins correctly.
  */
+// Inputs to the Maps URL builder. Narrow subset of PlaceRowData so debug
+// surfaces (OCR debug sheet) can compute the same URL without faking the
+// rest of the row shape.
+export type MapsUrlInput = Pick<PlaceRowData, 'name' | 'city' | 'address' | 'apple_maps_url'>;
+
+/**
+ * Resolves the Apple Maps deep link for a place. Prefers `apple_maps_url`
+ * when populated (will be the case post-v1.x enrichment with proper
+ * `?ll=` pin coords); otherwise builds a search URL from name + the most
+ * precise location signal we have.
+ */
+export function getMapsUrl(place: MapsUrlInput): string {
+  return place.apple_maps_url || buildSearchUrl(place);
+}
+
 export function PlaceRow({ place }: { place: PlaceRowData }) {
-  const url = place.apple_maps_url || buildSearchUrl(place);
+  const url = getMapsUrl(place);
   const subtitle = buildSubtitle(place);
 
   return (
@@ -63,7 +78,7 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
   );
 }
 
-function buildSearchUrl(place: PlaceRowData): string {
+function buildSearchUrl(place: MapsUrlInput): string {
   const locationHint = place.address?.trim() || place.city;
   const query = [place.name, locationHint].filter(Boolean).join(', ');
   return `https://maps.apple.com/?q=${encodeURIComponent(query)}`;

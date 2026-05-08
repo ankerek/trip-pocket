@@ -7,6 +7,20 @@ import {
   type Screenshot,
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
+import { getMapsUrl } from '@/components/PlaceRow';
+
+type DebugPlace = {
+  id: string;
+  name: string;
+  city: string;
+  address: string | null;
+  apple_maps_url: string | null;
+};
+
+const DEBUG_PLACES_SQL = `SELECT id, name, city, address, apple_maps_url
+                            FROM extracted_places
+                           WHERE screenshot_id = ? AND deleted_at IS NULL
+                        ORDER BY created_at ASC`;
 
 export default function OcrDebugSheet() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -15,6 +29,11 @@ export default function OcrDebugSheet() {
 
   // Re-read when OCR completes in the background.
   const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['screenshots']);
+  const places = useLiveQuery<DebugPlace>(
+    DEBUG_PLACES_SQL,
+    id ? [id] : [],
+    ['extracted_places'],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +83,43 @@ export default function OcrDebugSheet() {
         )}
       </View>
       <Field label="File path" value={screenshot.filePath} mono small />
+      <ExtractedPlacesSection places={places} />
     </ScrollView>
+  );
+}
+
+function ExtractedPlacesSection({ places }: { places: DebugPlace[] | null }) {
+  if (places === null) return null;
+  return (
+    <View className="gap-2">
+      <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        Extracted places · {places.length}
+      </Text>
+      {places.length === 0 ? (
+        <Text className="text-sm italic text-slate-500">
+          (none extracted yet)
+        </Text>
+      ) : (
+        places.map((p) => (
+          <View
+            key={p.id}
+            className="gap-1 rounded-md border border-slate-200 px-3 py-2"
+          >
+            <Text selectable className="text-sm font-semibold text-slate-900">
+              {p.name}
+            </Text>
+            <Text selectable className="text-xs text-slate-500">
+              city: {p.city || '—'}
+              {p.address ? `\naddress: ${p.address}` : ''}
+              {`\nsource: ${p.apple_maps_url ? 'apple_maps_url' : 'search-fallback'}`}
+            </Text>
+            <Text selectable className="font-mono text-xs text-slate-700">
+              {getMapsUrl(p)}
+            </Text>
+          </View>
+        ))
+      )}
+    </View>
   );
 }
 
