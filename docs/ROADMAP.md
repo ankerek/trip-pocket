@@ -73,6 +73,8 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 
 **Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall).
 
+**Note on geocoding:** v0.2 deliberately ships *without* lat/lng on extracted places. Apple's `CLGeocoder` / `MKLocalSearch` APIs proved unreliable for non-English-script countries (Japanese addresses fail routinely), and a server-side geocoder would be wasted work — the v1.x place-enrichment feature provides geocoding as a free side-effect of the Google Places call. Until then, tap-to-Maps uses a search-URL deep link with the full OCR address; Apple Maps' consumer app resolves it correctly. See `docs/superpowers/specs/2026-05-08-place-enrichment-design.md` for the forward path.
+
 ---
 
 ## v0.3 — "TestFlight beta"
@@ -120,8 +122,9 @@ Public. Paid from day one.
 
 Sequenced post-launch based on what users actually ask for. Order here is a guess, not a commitment.
 
+- **Place enrichment** — on-demand fetch of a real photo, a 1–2 sentence narrative, rating, hours, and price level the first time a user opens an extracted place. Google Places API for the facts + Gemini for the narrative blurb, all routed through the existing extract proxy. Free for everyone (this is the value-prop magic moment, not a premium gate). Also fills in `latitude`/`longitude`/`apple_maps_url` as a side-effect, replacing the v0.2 search-URL deep link with proper pinned coords. Full design in `docs/superpowers/specs/2026-05-08-place-enrichment-design.md`.
 - Smart suggestions on top of extracted places ("Looks like a café in Tokyo", auto-tagging).
-- In-app map view of saved places (geocoding extracted names; complement to the v1.0 maps deep-link).
+- In-app map view of saved places (depends on enrichment landing first, since enrichment is what populates lat/lng).
 - Cloud sync across devices (CloudKit while iOS-only; revisit if Android happens).
 - Itinerary generation from saved ideas.
 - Android.
@@ -132,9 +135,10 @@ Sequenced post-launch based on what users actually ask for. Order here is a gues
 
 Flagged so they don't get forgotten, but no need to resolve yet:
 
-- LLM provider for the extraction proxy (Anthropic vs. OpenAI vs. small open-weights via a hosted runner). Pick at v0.2 based on accuracy on real screenshots.
-- Where the proxy runs (Cloudflare Workers vs. Vercel Functions). Either is fine; pick whichever is faster to ship.
+- ~~LLM provider for the extraction proxy~~ — resolved: Gemini 2.5 Flash Lite via Cloudflare AI Gateway (v0.2 ships with this).
+- ~~Where the proxy runs~~ — resolved: Cloudflare Workers (v0.2 ships with this).
 - Sync direction (CloudKit vs. own backend). Deferred to v1.x.
+- API key separation for v1.x place enrichment — single `GOOGLE_API_KEY` shared with Gemini, or dedicated `GOOGLE_PLACES_API_KEY`. Decide at implementation time.
 
 ---
 
