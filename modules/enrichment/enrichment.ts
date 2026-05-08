@@ -1,5 +1,7 @@
 import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
+import { findCollidingByExternalId } from '@/modules/storage/places';
+import { transferJunctions } from '@/modules/storage/place_sources';
 
 // /enrich response, mirrors the worker's enrichResponseSchema.
 export type EnrichOutcome =
@@ -19,7 +21,7 @@ export type EnrichOutcome =
   | { kind: 'not-found' };
 
 export type EnrichRequestPayload = {
-  extracted_place_id: string;
+  place_id: string;
   name: string;
   city: string;
   address: string | null;
@@ -40,7 +42,7 @@ export type EnrichmentRunner = (
 ) => Promise<EnrichOutcome>;
 
 export type Enricher = {
-  enqueueEnrichment(extractedPlaceId: string): void;
+  enqueueEnrichment(placeId: string): void;
   /** Test-only. Resolves once all in-flight work has settled. */
   _awaitIdle(): Promise<void>;
 };
@@ -48,31 +50,29 @@ export type Enricher = {
 export type CreateEnricherOptions = {
   db: Database;
   enrich: EnrichmentRunner;
+  ownerId: string;
   /** Timestamp source. Default: () => new Date().toISOString(). Tests inject. */
   now?: () => string;
 };
 
-type RowSnapshot = {
+type PlaceSnapshot = {
   id: string;
   name: string;
   city: string;
-  address: string | null;
+  trip_id: string | null;
   enrichment_status: 'pending' | 'enriched' | 'not-found' | 'failed';
-  ocr_text: string;
+  // Most recent non-null hint from place_sources.
+  address: string | null;
+  // Most recent non-null OCR text from any attached source.
+  ocr_caption: string;
+  created_at: string;
 };
 
 export function createEnricher(opts: CreateEnricherOptions): Enricher {
   const getNow = opts.now ?? (() => new Date().toISOString());
 
-  // Per-extracted_place_id dedup. Cleared once a row settles.
+  // Per-place-id dedup. Cleared once a row settles.
   const inflightById = new Set<string>();
-  // OCR-key dedup. Two siblings (or two taps on the same row) share one
-  // /enrich call; the second arrival awaits the first's promise. Key is
-  // the joined OCR-key string ("<name>|<city>|<address>") because Map
-  // uses reference equality on object keys — recomputed objects would
-  // never collide.
-  const inflightByKey = new Map<string, Promise<EnrichOutcome | EnrichmentError>>();
-
   // Tracks every async operation we've kicked off; _awaitIdle() drains it.
   const pending = new Set<Promise<unknown>>();
 
@@ -83,10 +83,8 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
   }
 
   // Serialize DB writes. SQLite is single-writer, and our applyOutcome
-  // wraps INSERT + UPDATE + sibling-propagation in a transaction. Two
-  // concurrent applyOutcomes (e.g. when two siblings both await the same
-  // /enrich result) would issue overlapping BEGINs and crash. The chain
-  // forces them to run sequentially.
+  // wraps multiple statements in a transaction. Two concurrent applies
+  // would crash on overlapping BEGINs.
   let writeChain: Promise<void> = Promise.resolve();
   function enqueueWrite(work: () => Promise<void>): Promise<void> {
     const next = writeChain.then(work);
@@ -105,247 +103,227 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
   }
 
   async function processOne(id: string): Promise<void> {
-    const row = await loadRow(id);
-    if (!row) return;
-    if (row.enrichment_status === 'enriched' || row.enrichment_status === 'not-found') {
+    const place = await loadPlace(id);
+    if (!place) return;
+    if (place.enrichment_status === 'enriched' || place.enrichment_status === 'not-found') {
       return;
     }
-    if (!row.ocr_text || row.ocr_text.trim().length === 0) {
+    if (!place.ocr_caption || place.ocr_caption.trim().length === 0) {
       // Without an OCR caption the worker can't run the blurb step. Mark
       // 'not-found' rather than 'failed' so it doesn't retry on every open.
       await enqueueWrite(() => markNotFound(id));
+      notifyChange('places');
       return;
     }
 
-    const ocrKey = computeOcrKey(row);
-    const keyStr = `${ocrKey.name}|${ocrKey.city}|${ocrKey.address}`;
-
-    // Pre-flight venue check: another row already resolved this venue?
-    const resolved = await findResolvedSibling(ocrKey, id);
-    if (resolved) {
-      await enqueueWrite(() => applyEnrichedBySibling(id, resolved));
-      notifyChange('extracted_places');
-      return;
-    }
-
-    // OCR-key dedup. The synchronous get+set keeps siblings tied to the
-    // same in-flight promise.
-    let entry = inflightByKey.get(keyStr);
-    if (!entry) {
-      entry = runRequest(row).finally(() => {
-        if (inflightByKey.get(keyStr) === entry) {
-          inflightByKey.delete(keyStr);
-        }
-      });
-      inflightByKey.set(keyStr, entry);
-    }
-
-    const settled = await entry;
-    if (settled instanceof EnrichmentError) {
-      await enqueueWrite(() => applyError(id, settled.classification));
-      notifyChange('extracted_places');
-      return;
-    }
-
-    // After the originator has run applyOutcome (with sibling propagation),
-    // a re-read may show this row already 'enriched'. The applyOutcome below
-    // is then idempotent — the UPDATE matches its own row, INSERT OR IGNORE
-    // skips the existing place_enrichments row.
-    await enqueueWrite(() => applyOutcome(id, ocrKey, settled));
-    notifyChange('extracted_places');
-  }
-
-  async function runRequest(
-    row: RowSnapshot,
-  ): Promise<EnrichOutcome | EnrichmentError> {
+    let outcome: EnrichOutcome | EnrichmentError;
     try {
-      const out = await opts.enrich({
-        extracted_place_id: row.id,
-        name: row.name,
-        city: row.city,
-        address: row.address,
-        ocr_caption: row.ocr_text,
+      outcome = await opts.enrich({
+        place_id: place.id,
+        name: place.name,
+        city: place.city,
+        address: place.address,
+        ocr_caption: place.ocr_caption,
       });
-      return out;
     } catch (err) {
-      if (err instanceof EnrichmentError) return err;
-      return new EnrichmentError(String(err), 'retryable');
+      outcome =
+        err instanceof EnrichmentError ? err : new EnrichmentError(String(err), 'retryable');
     }
+
+    if (outcome instanceof EnrichmentError) {
+      await enqueueWrite(() => applyError(id));
+      notifyChange('places');
+      return;
+    }
+
+    await enqueueWrite(() => applyOutcome(place, outcome as EnrichOutcome));
+    notifyChange('places');
+    notifyChange('place_sources');
   }
 
-  async function loadRow(id: string): Promise<RowSnapshot | null> {
-    const row = await opts.db.getFirstAsync<{
+  async function loadPlace(id: string): Promise<PlaceSnapshot | null> {
+    const place = await opts.db.getFirstAsync<{
       id: string;
       name: string;
-      city: string;
-      address: string | null;
-      enrichment_status: RowSnapshot['enrichment_status'];
-      ocr_text: string | null;
+      city: string | null;
+      trip_id: string | null;
+      enrichment_status: PlaceSnapshot['enrichment_status'];
+      created_at: string;
     }>(
-      `SELECT ep.id, ep.name, ep.city, ep.address, ep.enrichment_status,
-              s.ocr_text
-         FROM extracted_places ep
-         JOIN screenshots s ON s.id = ep.screenshot_id
-        WHERE ep.id = ? AND ep.deleted_at IS NULL AND s.deleted_at IS NULL`,
+      `SELECT id, name, city, trip_id, enrichment_status, created_at
+         FROM places WHERE id = ? AND deleted_at IS NULL`,
       id,
     );
-    if (!row) return null;
-    return { ...row, ocr_text: row.ocr_text ?? '' };
-  }
+    if (!place) return null;
 
-  async function findResolvedSibling(
-    ocrKey: OcrKey,
-    excludeId: string,
-  ): Promise<string | null> {
-    const row = await opts.db.getFirstAsync<{ external_place_id: string }>(
-      `SELECT external_place_id
-         FROM extracted_places
-        WHERE deleted_at IS NULL
-          AND id != ?
-          AND external_place_id IS NOT NULL
-          AND LOWER(name) = ?
-          AND LOWER(TRIM(city)) = ?
-          AND LOWER(TRIM(COALESCE(address, ''))) = ?
+    // Most-recent non-null extracted_address from this place's sources.
+    const addrRow = await opts.db.getFirstAsync<{ extracted_address: string | null }>(
+      `SELECT extracted_address
+         FROM place_sources
+        WHERE place_id = ? AND deleted_at IS NULL AND extracted_address IS NOT NULL
+     ORDER BY extracted_at DESC
         LIMIT 1`,
-      excludeId,
-      ocrKey.name,
-      ocrKey.city,
-      ocrKey.address,
-    );
-    return row?.external_place_id ?? null;
-  }
-
-  async function applyEnrichedBySibling(
-    id: string,
-    externalPlaceId: string,
-  ): Promise<void> {
-    const ts = getNow();
-    await opts.db.runAsync(
-      `UPDATE extracted_places
-          SET external_place_id = ?,
-              enrichment_status = 'enriched',
-              enriched_at = ?,
-              updated_at = ?
-        WHERE id = ?`,
-      externalPlaceId,
-      ts,
-      ts,
       id,
     );
+
+    // Most-recent non-empty ocr_text from this place's sources.
+    const ocrRow = await opts.db.getFirstAsync<{ ocr_text: string | null }>(
+      `SELECT s.ocr_text
+         FROM place_sources ps
+         JOIN sources s ON s.id = ps.source_id
+        WHERE ps.place_id = ? AND ps.deleted_at IS NULL
+          AND s.deleted_at IS NULL
+          AND s.ocr_text IS NOT NULL AND TRIM(s.ocr_text) != ''
+     ORDER BY ps.extracted_at DESC
+        LIMIT 1`,
+      id,
+    );
+
+    return {
+      id: place.id,
+      name: place.name,
+      city: place.city ?? '',
+      trip_id: place.trip_id,
+      enrichment_status: place.enrichment_status,
+      address: addrRow?.extracted_address ?? null,
+      ocr_caption: ocrRow?.ocr_text ?? '',
+      created_at: place.created_at,
+    };
   }
 
   async function applyOutcome(
-    id: string,
-    ocrKey: OcrKey,
+    place: PlaceSnapshot,
     outcome: EnrichOutcome,
   ): Promise<void> {
     if (outcome.kind === 'not-found') {
-      await markNotFound(id);
+      await markNotFound(place.id);
       return;
+    }
+
+    // Collision check: another live place already has this external_place_id?
+    const collision = await findCollidingByExternalId(
+      opts.db,
+      outcome.external_place_id,
+      opts.ownerId,
+      place.id,
+    );
+
+    if (!collision) {
+      await writeEnrichmentColumns(place.id, outcome);
+      return;
+    }
+
+    // Trip-equality merge eligibility: equal trip_ids or one side NULL.
+    const eligible =
+      place.trip_id === collision.tripId ||
+      place.trip_id === null ||
+      collision.tripId === null;
+
+    if (!eligible) {
+      // Skip the merge: leave both places live, do not write external_place_id
+      // on incoming (UNIQUE constraint forbids two live rows). Telemetry hook
+      // is intentionally absent in this slice — see spec.
+      return;
+    }
+
+    // Pick the winner: side with non-null trip wins; tie → older created_at.
+    let winnerId: string;
+    let loserId: string;
+    if (collision.tripId !== null && place.trip_id === null) {
+      winnerId = collision.id;
+      loserId = place.id;
+    } else if (collision.tripId === null && place.trip_id !== null) {
+      winnerId = place.id;
+      loserId = collision.id;
+    } else {
+      // Both null OR both set to the same trip. Older created_at wins.
+      const winner = collision.createdAt <= place.created_at ? collision.id : place.id;
+      winnerId = winner;
+      loserId = winner === collision.id ? place.id : collision.id;
     }
 
     const ts = getNow();
     await opts.db.withTransactionAsync(async () => {
+      // Order matters: soft-delete the loser FIRST so the partial UNIQUE on
+      // external_place_id doesn't fire when we promote the winner. Soft-deleted
+      // rows are excluded from the UNIQUE index (WHERE deleted_at IS NULL).
       await opts.db.runAsync(
-        `INSERT OR IGNORE INTO place_enrichments (
-           external_place_id, photo_name, description, rating, price_level,
-           external_url, latitude, longitude, formatted_address,
-           fetched_at, model
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        outcome.external_place_id,
-        outcome.photo_name,
-        outcome.description,
-        outcome.rating,
-        outcome.price_level,
-        outcome.external_url,
-        outcome.latitude,
-        outcome.longitude,
-        outcome.formatted_address,
+        `UPDATE places SET deleted_at = ?, updated_at = ? WHERE id = ?`,
         ts,
-        outcome.model,
+        ts,
+        loserId,
       );
-      await opts.db.runAsync(
-        `UPDATE extracted_places
-            SET external_place_id = ?,
-                enrichment_status = 'enriched',
-                enriched_at = ?,
-                updated_at = ?
-          WHERE id = ?`,
-        outcome.external_place_id,
-        ts,
-        ts,
-        id,
-      );
-      // Sibling propagation: any other unresolved row with the same
-      // OCR-key collapses onto this venue. Keeps later opens cost-free.
-      await opts.db.runAsync(
-        `UPDATE extracted_places
-            SET external_place_id = ?,
-                enrichment_status = 'enriched',
-                enriched_at = ?,
-                updated_at = ?
-          WHERE deleted_at IS NULL
-            AND id != ?
-            AND external_place_id IS NULL
-            AND enrichment_status IN ('pending', 'failed')
-            AND LOWER(name) = ?
-            AND LOWER(TRIM(city)) = ?
-            AND LOWER(TRIM(COALESCE(address, ''))) = ?`,
-        outcome.external_place_id,
-        ts,
-        ts,
-        id,
-        ocrKey.name,
-        ocrKey.city,
-        ocrKey.address,
-      );
+
+      // Move junction rows from loser → winner with PK conflict tolerance.
+      await transferJunctions(opts.db, loserId, winnerId);
+
+      // If winner is incoming (place), copy enrichment columns onto it.
+      if (winnerId === place.id) {
+        await writeEnrichmentColumns(place.id, outcome);
+      }
     });
+  }
+
+  async function writeEnrichmentColumns(
+    placeId: string,
+    outcome: Extract<EnrichOutcome, { kind: 'enriched' }>,
+  ): Promise<void> {
+    const ts = getNow();
+    await opts.db.runAsync(
+      `UPDATE places
+          SET external_place_id = ?, photo_name = ?, description = ?,
+              rating = ?, price_level = ?, external_url = ?,
+              latitude = ?, longitude = ?, formatted_address = ?,
+              enrichment_status = 'enriched', enriched_at = ?,
+              enrichment_model = ?, updated_at = ?
+        WHERE id = ?`,
+      outcome.external_place_id,
+      outcome.photo_name,
+      outcome.description,
+      outcome.rating,
+      outcome.price_level,
+      outcome.external_url,
+      outcome.latitude,
+      outcome.longitude,
+      outcome.formatted_address,
+      ts,
+      outcome.model,
+      ts,
+      placeId,
+    );
   }
 
   async function markNotFound(id: string): Promise<void> {
     const ts = getNow();
     await opts.db.runAsync(
-      `UPDATE extracted_places
-          SET enrichment_status = 'not-found',
-              updated_at = ?
+      `UPDATE places
+          SET enrichment_status = 'not-found', updated_at = ?
         WHERE id = ?`,
       ts,
       id,
     );
   }
 
-  async function applyError(id: string, kind: EnrichErrorKind): Promise<void> {
-    // Rate-limited and permanent both write 'failed'. The user re-opening
-    // the card is the explicit retry signal — no automatic retry budget.
-    // (Retryable transient errors fall through to 'failed' too; the next
-    // open will retry. The worker's per-IP rate limit caps abuse.)
+  async function applyError(id: string): Promise<void> {
+    // Retryable, rate-limited, and permanent all write 'failed'. The user
+    // re-opening the card is the explicit retry signal — no automatic budget.
     const ts = getNow();
     await opts.db.runAsync(
-      `UPDATE extracted_places
-          SET enrichment_status = 'failed',
-              updated_at = ?
+      `UPDATE places
+          SET enrichment_status = 'failed', updated_at = ?
         WHERE id = ?`,
       ts,
       id,
     );
-    void kind;
   }
 
   async function _awaitIdle(): Promise<void> {
     while (pending.size > 0) {
       await Promise.allSettled(Array.from(pending));
     }
+    // Drain any tail writes too.
+    await writeChain;
   }
 
   return { enqueueEnrichment, _awaitIdle };
-}
-
-type OcrKey = { name: string; city: string; address: string };
-
-function computeOcrKey(row: RowSnapshot): OcrKey {
-  return {
-    name: row.name.toLowerCase(),
-    city: row.city.trim().toLowerCase(),
-    address: (row.address ?? '').trim().toLowerCase(),
-  };
 }

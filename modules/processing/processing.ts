@@ -5,7 +5,7 @@ import { getExtractor } from '@/modules/extraction';
 export type OcrRunner = (imagePath: string) => Promise<string>;
 
 export type Processor = {
-  enqueueOcr(screenshotId: string): void;
+  enqueueOcr(sourceId: string): void;
   runOcrSweep(): Promise<void>;
   runStartupRecovery(): Promise<void>;
   /**
@@ -53,7 +53,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
 
   async function processOne(id: string): Promise<{ retry: boolean }> {
     const row = await opts.db.getFirstAsync<{ file_path: string }>(
-      `SELECT file_path FROM screenshots WHERE id = ? AND deleted_at IS NULL`,
+      `SELECT file_path FROM sources WHERE id = ? AND deleted_at IS NULL`,
       id,
     );
     if (!row) return { retry: false };
@@ -61,14 +61,14 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     try {
       const text = await opts.ocr(row.file_path);
       await opts.db.runAsync(
-        `UPDATE screenshots
+        `UPDATE sources
             SET ocr_text = ?, ocr_status = 'done', updated_at = ?
           WHERE id = ?`,
         text,
         getNow(),
         id,
       );
-      notifyChange('screenshots');
+      notifyChange('sources');
       // Chain into AI extraction. Non-blocking; the extraction queue runs
       // in its own Promise chain. No-op when no extractor is provisioned
       // (Jest, share extension, web).
@@ -79,13 +79,13 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       retryCount.set(id, next);
       if (next < maxRetries) return { retry: true };
       await opts.db.runAsync(
-        `UPDATE screenshots
+        `UPDATE sources
             SET ocr_status = 'failed', updated_at = ?
           WHERE id = ?`,
         getNow(),
         id,
       );
-      notifyChange('screenshots');
+      notifyChange('sources');
       return { retry: false };
     }
   }
@@ -95,7 +95,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     // broken file should not burn a Vision call on every foreground. The
     // retry-on-relaunch path is runStartupRecovery (called once per process).
     const rows = await opts.db.getAllAsync<{ id: string }>(
-      `SELECT id FROM screenshots
+      `SELECT id FROM sources
         WHERE ocr_status = 'pending' AND deleted_at IS NULL
      ORDER BY captured_at ASC`,
     );
@@ -104,7 +104,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
 
   async function runStartupRecovery(): Promise<void> {
     await opts.db.runAsync(
-      `UPDATE screenshots
+      `UPDATE sources
           SET ocr_status = 'pending', updated_at = ?
         WHERE ocr_status = 'failed' AND deleted_at IS NULL`,
       getNow(),

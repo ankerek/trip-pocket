@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import type { Database } from '@/modules/storage/db';
-import { insertScreenshot } from '@/modules/storage/screenshots';
+import { insertSource } from '@/modules/storage/sources';
 import { notifyChange } from '@/modules/storage/live-query';
 import { getProcessor } from '@/modules/processing';
 
@@ -13,7 +13,7 @@ export type ImportFs = {
 
 export type ImportImageInput = {
   sourceUri: string;
-  source: 'share' | 'manual' | 'auto';
+  origin: 'share' | 'manual' | 'auto';
   ownerId: string;
   capturedAt: string;
   suggestedTripId?: string | null;
@@ -23,8 +23,8 @@ export type ImportImageInput = {
 };
 
 export type ImportImageResult =
-  | { status: 'imported'; screenshotId: string }
-  | { status: 'duplicate'; existingScreenshotId: string };
+  | { status: 'imported'; sourceId: string }
+  | { status: 'duplicate'; existingSourceId: string };
 
 export async function importImage(
   db: Database,
@@ -33,23 +33,23 @@ export async function importImage(
   const contentHash = await input.fs.sha256(input.sourceUri);
 
   const existing = await db.getFirstAsync<{ id: string }>(
-    `SELECT id FROM screenshots
+    `SELECT id FROM sources
       WHERE content_hash = ? AND deleted_at IS NULL
       LIMIT 1`,
     contentHash,
   );
   if (existing) {
-    return { status: 'duplicate', existingScreenshotId: existing.id };
+    return { status: 'duplicate', existingSourceId: existing.id };
   }
 
-  const screenshotId = Crypto.randomUUID();
+  const sourceId = Crypto.randomUUID();
   // expo-file-system's Directory.uri can come back with a trailing slash; strip
-  // it so we never produce `file://.../screenshots//<id>.jpg`. Some iOS code
-  // paths choke on the double slash even though the filesystem itself doesn't.
+  // it so we never produce `file://.../sources//<id>.jpg`. Some iOS code paths
+  // choke on the double slash even though the filesystem itself doesn't.
   const dir = input.storageDir.endsWith('/')
     ? input.storageDir.slice(0, -1)
     : input.storageDir;
-  const targetUri = `${dir}/${screenshotId}.jpg`;
+  const targetUri = `${dir}/${sourceId}.jpg`;
 
   if (input.transfer === 'move') {
     await input.fs.move(input.sourceUri, targetUri);
@@ -59,12 +59,13 @@ export async function importImage(
   console.log('[importImage]', input.transfer, input.sourceUri, '->', targetUri);
 
   try {
-    await insertScreenshot(db, {
-      id: screenshotId,
+    await insertSource(db, {
+      id: sourceId,
+      kind: 'screenshot',
       tripId: input.suggestedTripId ?? null,
       filePath: targetUri,
       contentHash,
-      source: input.source,
+      origin: input.origin,
       capturedAt: input.capturedAt,
       ownerId: input.ownerId,
     });
@@ -80,13 +81,13 @@ export async function importImage(
     throw err;
   }
 
-  notifyChange('screenshots');
+  notifyChange('sources');
   if (input.suggestedTripId) notifyChange('trips');
 
-  // Kick off OCR for the freshly inserted row. Non-blocking; the import
-  // call resolves immediately and the OCR worker picks it up in the
-  // background. No-op when no processor has been provisioned (Jest, etc.).
-  getProcessor()?.enqueueOcr(screenshotId);
+  // Kick off OCR for the freshly inserted row. Non-blocking; the import call
+  // resolves immediately and the OCR worker picks it up in the background.
+  // No-op when no processor has been provisioned (Jest, etc.).
+  getProcessor()?.enqueueOcr(sourceId);
 
-  return { status: 'imported', screenshotId };
+  return { status: 'imported', sourceId };
 }

@@ -1,13 +1,13 @@
 import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
+import { findSoleMatchByNormalizedKey, normalizePlaceKey } from '@/modules/storage/places';
+import { linkPlaceSource } from '@/modules/storage/place_sources';
 
 export type ExtractedPlaceInput = {
   name: string;
   city: string;
   // Street address from the OCR text, verbatim (or empty string when none).
-  // Persisted on the row and used by PlaceRow's tap-to-Maps fallback to
-  // build a precise `?q=name, address` search URL — and as the input to
-  // the v1.x place-enrichment call when that ships.
+  // Persisted on the place_sources junction row and used by /enrich as a hint.
   address: string;
   category: 'place' | 'food' | 'activity';
 };
@@ -22,10 +22,6 @@ export type ExtractionErrorKind =
   | { kind: 'retryable' }                       // 5xx, timeout, TLS — counts toward 3-try budget
   | { kind: 'deferred'; retryAfterMs: number }; // 429 — re-enqueue, do NOT count toward budget
 
-// Thrown by the proxy adapter so the extractor's chain segment can branch
-// on classification cleanly. Adapter errors that aren't ExtractionError
-// (e.g. programmer bugs) bubble up as 'retryable' by default — see the
-// chain segment below.
 export class ExtractionError extends Error {
   constructor(message: string, public readonly classification: ExtractionErrorKind) {
     super(message);
@@ -36,13 +32,10 @@ export class ExtractionError extends Error {
 export type ExtractionRunner = (ocrText: string) => Promise<ExtractionResult>;
 
 export type Extractor = {
-  enqueueExtraction(screenshotId: string): void;
+  enqueueExtraction(sourceId: string): void;
   runExtractionSweep(): Promise<void>;
   runStartupRecovery(): Promise<void>;
-  /**
-   * Test-only. Resolves once the in-memory queue has fully drained.
-   * Production code should not need to call this.
-   */
+  /** Test-only. Resolves once the in-memory queue has fully drained. */
   _awaitIdle(): Promise<void>;
 };
 
@@ -51,18 +44,15 @@ export type CreateExtractorOptions = {
   extract: ExtractionRunner;
   ownerId: string;
   maxRetries?: number;
-  /** Deferred-retry timer. Default: globalThis.setTimeout. Tests inject. */
   setTimer?: (cb: () => void, ms: number) => unknown;
-  /** UUID for new place rows. Default: crypto.randomUUID. Tests inject. */
   uuid?: () => string;
-  /** Timestamp source. Default: () => new Date().toISOString(). Tests inject. */
   now?: () => string;
 };
 
 type ProcessOutcome =
-  | { kind: 'done' }                             // success or permanent failure or empty-OCR
-  | { kind: 'retry' }                            // append back to chain immediately
-  | { kind: 'deferred'; retryAfterMs: number };  // schedule timer
+  | { kind: 'done' }
+  | { kind: 'retry' }
+  | { kind: 'deferred'; retryAfterMs: number };
 
 export function createExtractor(opts: CreateExtractorOptions): Extractor {
   const maxRetries = opts.maxRetries ?? 3;
@@ -72,10 +62,6 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
   const uuid = opts.uuid ?? defaultUuid;
 
   let chain: Promise<void> = Promise.resolve();
-  // `inflight` engages from the moment a row enters the queue until it's
-  // truly resolved (success, permanent fail, or budget exhausted). For
-  // 429 deferrals we keep it engaged through the wait so a foreground
-  // sweep doesn't squeeze in a duplicate timer.
   const inflight = new Set<string>();
   const retryCount = new Map<string, number>();
 
@@ -94,22 +80,18 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       }
       if (outcome.kind === 'deferred') {
         setTimer(() => {
-          // Inflight stays engaged across the wait. When the timer
-          // fires we re-append directly without going through enqueue
-          // (which would dedup against ourselves).
           appendToChain(id);
         }, outcome.retryAfterMs);
         return;
       }
-      // 'done' — release the row.
       inflight.delete(id);
       retryCount.delete(id);
     });
   }
 
   async function processOne(id: string): Promise<ProcessOutcome> {
-    const row = await opts.db.getFirstAsync<{ ocr_text: string | null }>(
-      `SELECT ocr_text FROM screenshots WHERE id = ? AND deleted_at IS NULL`,
+    const row = await opts.db.getFirstAsync<{ ocr_text: string | null; trip_id: string | null }>(
+      `SELECT ocr_text, trip_id FROM sources WHERE id = ? AND deleted_at IS NULL`,
       id,
     );
     if (!row) return { kind: 'done' };
@@ -119,13 +101,13 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       // Empty-OCR short-circuit: classifier signal of "noise". No proxy call.
       const ts = getNow();
       await opts.db.runAsync(
-        `UPDATE screenshots
+        `UPDATE sources
             SET extraction_status = 'done', updated_at = ?
           WHERE id = ?`,
         ts,
         id,
       );
-      notifyChange('screenshots');
+      notifyChange('sources');
       return { kind: 'done' };
     }
 
@@ -141,9 +123,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     }
 
     // Per-call dedup: drop case-insensitive name + trimmed-city + trimmed-address
-    // duplicates before INSERT. LLMs occasionally repeat in list mode; this
-    // keeps place_count honest. Address is part of the key so two distinct
-    // venues with the same name in the same city aren't collapsed.
+    // duplicates before any DB work. LLMs occasionally repeat in list mode.
     const seen = new Set<string>();
     const distinct = result.places.filter((p) => {
       const key = `${p.name.toLowerCase()}::${p.city.trim().toLowerCase()}::${p.address.trim().toLowerCase()}`;
@@ -152,36 +132,23 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       return true;
     });
 
-    // Geocoding is intentionally skipped at this stage: Apple's CLGeocoder /
-    // MKLocalSearch APIs proved unreliable for non-English-script countries
-    // (Japanese addresses fail routinely). Tap-to-Maps falls back to a
-    // search-URL deep link built from name + address (or city) — Apple Maps'
-    // consumer app resolves it correctly. Real coords land later via the
-    // v1.x place-enrichment feature; see
-    // docs/superpowers/specs/2026-05-08-place-enrichment-design.md.
     const ts = getNow();
     try {
       await opts.db.withTransactionAsync(async () => {
-        for (const place of distinct) {
-          await opts.db.runAsync(
-            `INSERT INTO extracted_places (
-               id, screenshot_id, name, city, address, category,
-               extraction_model, owner_id, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            uuid(),
-            id,
-            place.name,
-            place.city,
-            place.address,
-            place.category,
-            result.model,
-            opts.ownerId,
-            ts,
-            ts,
-          );
+        for (const candidate of distinct) {
+          const normalizedKey = normalizePlaceKey(candidate.name, candidate.city);
+          const placeId = await resolvePlaceId(candidate, normalizedKey, row.trip_id, ts);
+          await linkPlaceSource(opts.db, {
+            placeId,
+            sourceId: id,
+            extractedAt: ts,
+            extractedAddress: candidate.address,
+            extractionModel: result.model,
+            ownerId: opts.ownerId,
+          });
         }
         await opts.db.runAsync(
-          `UPDATE screenshots
+          `UPDATE sources
               SET extraction_status = 'done', updated_at = ?
             WHERE id = ?`,
           ts,
@@ -189,16 +156,63 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
         );
       });
     } catch (err) {
-      // FK constraint failure (screenshot hard-deleted between load and
-      // insert) is treated as permanent. Anything else is treated as
-      // retryable (transient DB lock, etc.).
+      // FK violation (source hard-deleted between load and insert) is permanent;
+      // anything else is treated as retryable.
       const isPermanent = String(err).includes('FOREIGN KEY');
       return classifyFailure(id, isPermanent ? { kind: 'permanent' } : { kind: 'retryable' });
     }
 
-    notifyChange('extracted_places');
-    notifyChange('screenshots');
+    notifyChange('places');
+    notifyChange('place_sources');
+    notifyChange('sources');
     return { kind: 'done' };
+  }
+
+  // Sole-match dedup against existing places. Returns the existing place id if
+  // exactly one live match by (normalized_key, owner_id); otherwise inserts a
+  // new place and returns its id. New places inherit trip_id from the source.
+  async function resolvePlaceId(
+    candidate: ExtractedPlaceInput,
+    normalizedKey: string,
+    sourceTripId: string | null,
+    ts: string,
+  ): Promise<string> {
+    const existing = await findSoleMatchByNormalizedKey(
+      opts.db,
+      normalizedKey,
+      opts.ownerId,
+    );
+    if (existing) {
+      // Spec: a re-attached source nudges a previously 'not-found' place back
+      // to 'pending' so the user gets one more enrichment attempt with the new
+      // raw_text. Already-enriched places stay enriched.
+      await opts.db.runAsync(
+        `UPDATE places
+            SET enrichment_status = 'pending', updated_at = ?
+          WHERE id = ? AND enrichment_status = 'not-found'`,
+        ts,
+        existing,
+      );
+      return existing;
+    }
+
+    const newId = uuid();
+    await opts.db.runAsync(
+      `INSERT INTO places (
+         id, trip_id, name, city, category, normalized_key,
+         enrichment_status, owner_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      newId,
+      sourceTripId,
+      candidate.name,
+      candidate.city,
+      candidate.category,
+      normalizedKey,
+      opts.ownerId,
+      ts,
+      ts,
+    );
+    return newId;
   }
 
   function classifyFailure(
@@ -212,7 +226,6 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       void markFailed(id);
       return { kind: 'done' };
     }
-    // retryable: consume budget
     const next = (retryCount.get(id) ?? 0) + 1;
     retryCount.set(id, next);
     if (next < maxRetries) return { kind: 'retry' };
@@ -222,21 +235,20 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
 
   async function markFailed(id: string): Promise<void> {
     await opts.db.runAsync(
-      `UPDATE screenshots
+      `UPDATE sources
           SET extraction_status = 'failed', updated_at = ?
         WHERE id = ?`,
       getNow(),
       id,
     );
-    notifyChange('screenshots');
+    notifyChange('sources');
   }
 
   async function runExtractionSweep(): Promise<void> {
-    // Mid-session sweeps deliberately skip 'failed' rows: a permanently
-    // broken row should not burn a Gemini call on every foreground. The
-    // retry-on-relaunch path is runStartupRecovery (called once per process).
+    // Mid-session sweeps deliberately skip 'failed' rows; the retry-on-relaunch
+    // path is runStartupRecovery (called once per process).
     const rows = await opts.db.getAllAsync<{ id: string }>(
-      `SELECT id FROM screenshots
+      `SELECT id FROM sources
         WHERE extraction_status = 'pending'
           AND ocr_status = 'done'
           AND deleted_at IS NULL
@@ -247,7 +259,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
 
   async function runStartupRecovery(): Promise<void> {
     await opts.db.runAsync(
-      `UPDATE screenshots
+      `UPDATE sources
           SET extraction_status = 'pending', updated_at = ?
         WHERE extraction_status = 'failed' AND deleted_at IS NULL`,
       getNow(),
@@ -266,7 +278,5 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
 }
 
 function defaultUuid(): string {
-  // crypto.randomUUID exists in Node 19+, RN's Hermes, and modern web.
-  // Tests inject seqUuid; production wires through expo-crypto in index.ts.
   return globalThis.crypto.randomUUID();
 }

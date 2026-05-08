@@ -41,7 +41,16 @@ export async function enrichFromProxy(
     response = await fetch(proxyUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      // Wire format keeps the legacy `extracted_place_id` key; the worker
+      // uses it for tracing only and is unaware of the client's places-first
+      // restructure. Internally we now key off the canonical place row.
+      body: JSON.stringify({
+        extracted_place_id: payload.place_id,
+        name: payload.name,
+        city: payload.city,
+        address: payload.address,
+        ocr_caption: payload.ocr_caption,
+      }),
       signal: controller.signal,
     });
   } catch (err) {
