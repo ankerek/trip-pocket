@@ -54,7 +54,7 @@ describe('runMigrations', () => {
 });
 
 describe('initial migration (0001)', () => {
-  it('creates every Phase-1+v0.2+v1.0 table', async () => {
+  it('creates the places-first schema tables', async () => {
     const db = await openDatabase(':memory:');
     await runMigrations(db, migrations);
     const tables = await db.getAllAsync<{ name: string }>(
@@ -64,22 +64,29 @@ describe('initial migration (0001)', () => {
     expect(names).toEqual(
       expect.arrayContaining([
         'trips',
-        'screenshots',
+        'sources',
+        'places',
+        'place_sources',
         'tags',
-        'extracted_places',
         'pending_imports',
         'meta',
         'schema_migrations',
       ]),
     );
+    // No legacy table names should leak through.
+    expect(names).not.toContain('screenshots');
+    expect(names).not.toContain('extracted_places');
+    expect(names).not.toContain('place_enrichments');
   });
 
-  it('creates the screenshots_fts virtual table', async () => {
+  it('creates places_fts and sources_fts virtual tables', async () => {
     const db = await openDatabase(':memory:');
     await runMigrations(db, migrations);
-    const row = await db.getFirstAsync<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='screenshots_fts'",
+    const rows = await db.getAllAsync<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('places_fts','sources_fts','screenshots_fts')",
     );
-    expect(row?.name).toBe('screenshots_fts');
+    const names = rows.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(['places_fts', 'sources_fts']));
+    expect(names).not.toContain('screenshots_fts');
   });
 });

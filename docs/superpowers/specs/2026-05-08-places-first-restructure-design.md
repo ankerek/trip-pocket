@@ -260,8 +260,11 @@ Forward-only, single migration. Runs on next launch. The whole migration runs in
      - INSERT INTO place_sources(place_id, source_id, extracted_at,
        raw_text, extracted_address, confidence, extraction_model, owner_id,
        created_at, updated_at) using the resolved place_id. extracted_address
-       is copied from extracted_places.formatted_address (the OCR-extracted
-       address from migration 0004).
+       is copied from extracted_places.address (the OCR-extracted street
+       address column added by migration 0004; do not confuse with
+       extracted_places.formatted_address from migration 0003, which is
+       the enrichment-derived field that maps to places.formatted_address
+       in step 4).
 
    Pass A: rows WHERE external_place_id IS NOT NULL, oldest first by
            created_at. This pass establishes canonical places keyed by
@@ -276,6 +279,18 @@ Forward-only, single migration. Runs on next launch. The whole migration runs in
 5. Drop indexes, FTS triggers, and tables in dependency-safe order:
    screenshots_fts (and its triggers) → extracted_places →
    place_enrichments → screenshots.
+
+   **Deferred to a follow-up migration `0007_drop_legacy.ts`.** Migration
+   0006 leaves the legacy tables in place so downstream module rewires
+   (Phase B in the implementation plan) can land incrementally without
+   the entire test suite going red. Once `modules/extraction`,
+   `modules/enrichment`, `modules/capture`, and `modules/search` all
+   read from the new schema, 0007 runs the drops plus the `tags`
+   rebuild (the existing `tags.screenshot_id → screenshots(id)` FK has
+   to migrate to `sources(id)`, and SQLite's automatic trigger
+   schema-rewrite during `ALTER TABLE … RENAME TO tags` requires
+   dropping and recreating `sources_fts_ai` / `sources_fts_au` around
+   the rebuild — body unchanged).
 ```
 
 Step 3 is the only step that needs care: it's read-from-old, write-to-new, with a deterministic two-pass dedup rule. Worth a smoke test on a snapshot of the dev DB before shipping.
