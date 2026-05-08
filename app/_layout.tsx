@@ -165,6 +165,14 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="triage"
+          options={{
+            headerShown: false,
+            presentation: 'fullScreenModal',
+            animation: 'slide_from_bottom',
+          }}
+        />
+        <Stack.Screen
           name="places/[id]"
           options={{ headerShown: true, ...SHARED_HEADER_OPTIONS }}
         />

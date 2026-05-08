@@ -61,7 +61,7 @@ Opens from the Inbox banner or after a manual capture.
 **Presentation.** Route registered with `presentation: 'fullScreenModal'` (not `formSheet`). Native sheet detents cannot be used here because they resize the *entire* presented screen and we need the screenshot to remain visible above a draggable sheet. The bottom sheet is therefore a JS-implemented sheet on top of the modal screen — built with `react-native-reanimated` + `react-native-gesture-handler` (or `@gorhom/bottom-sheet` if added; decision in the spike).
 
 - **Top half** (~45% of screen) — full-bleed screenshot. Top overlay: close `✕`, progress `1 of 3`, edit affordance.
-- **JS bottom sheet** — three snap points expressed as fractions of screen height: `0.55`, `0.85`, `1.0`. Implemented in JS (Reanimated + Gesture Handler), not native sheet detents. Rounded top corners 20pt, grabber 40×4.
+- **JS bottom sheet** — phase 5 ships an *auto-snap* sheet with two states (`0.55` resting, `0.85` expanded for keyboard). User-initiated drag-to-snap with overshoot is deferred to phase 7 (motion polish) so the rest of the redesign can land. Rounded top corners 20pt, grabber 40×4 still drawn (informational, not interactive in v1).
   - **AI extracted** label pill (Teal accent gradient).
   - Place name (large title 22pt) + location subtitle.
   - Field rows: `Trip ›`, `Category ›`, `Notes ›`. Tapping any row pushes a focused picker sheet.
