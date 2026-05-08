@@ -43,7 +43,7 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 - [x] Basic settings screen (version, about). (Version shown; "about" copy minimal.)
 
 ### Explicit non-goals for v0.1
-- Auto-detect of new screenshots — deferred to v0.2.
+- Auto-detect of new screenshots — deferred to v1.x.
 - OCR — v0.2.
 - Tags — v0.2.
 - AI extraction / Places view — v0.2.
@@ -61,7 +61,7 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 **Scope:**
 - On-device OCR (Apple Vision via native module if needed).
 - AI extraction pipeline: thin server-side proxy to an LLM, called from the app per screenshot, results stored locally in `extracted_places`. The same call doubles as a "is this travel?" classifier — an empty result means the screenshot is noise, not content.
-- Auto-detect new screenshots in background, **gated by the AI classifier**: only screenshots that yield ≥1 extracted place surface in Inbox; the rest are recorded for dedup but stay hidden. Raw auto-detect (every screenshot into Inbox) was rejected — without the classifier, Inbox becomes a junk drawer, not an inbox.
+- Place enrichment via Google Places API: on-demand fetch of a real photo, 1–2 sentence narrative, rating, hours, price level, and lat/lng the first time a user opens an extracted place. Google Places for facts + Gemini for the narrative, both routed through the existing extract proxy. Free for everyone — this is the magic-moment value prop, not a premium gate. Also replaces the OCR-address search-URL deep link with proper pinned coords. Full design in `docs/superpowers/specs/2026-05-08-place-enrichment-design.md`.
 - Search across OCR text + trip names + tags + extracted place names.
 - Manual tagging: place / food / activity.
 - Trip detail view with grouping/filtering by tag.
@@ -69,11 +69,9 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 - Per-trip "Places" tab listing distinct extracted names.
 - Performance pass: list scrolling, image loading.
 
-**Sequencing inside v0.2:** OCR ships first (also unlocks search). Then AI extraction (also unlocks the Places tab and per-screenshot badge). Then auto-detect, which is gated by extraction. The remaining items — manual tagging, trip-detail filtering, performance pass — are independent and slot in alongside whenever convenient.
+**Sequencing inside v0.2:** OCR ships first (also unlocks search). Then AI extraction (also unlocks the Places tab and per-screenshot badge). Then place enrichment, which depends on extraction landing first. The remaining items — manual tagging, trip-detail filtering, performance pass — are independent and slot in alongside whenever convenient.
 
 **Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall).
-
-**Note on geocoding:** v0.2 deliberately ships *without* lat/lng on extracted places. Apple's `CLGeocoder` / `MKLocalSearch` APIs proved unreliable for non-English-script countries (Japanese addresses fail routinely), and a server-side geocoder would be wasted work — the v1.x place-enrichment feature provides geocoding as a free side-effect of the Google Places call. Until then, tap-to-Maps uses a search-URL deep link with the full OCR address; Apple Maps' consumer app resolves it correctly. See `docs/superpowers/specs/2026-05-08-place-enrichment-design.md` for the forward path.
 
 ---
 
@@ -122,9 +120,9 @@ Public. Paid from day one.
 
 Sequenced post-launch based on what users actually ask for. Order here is a guess, not a commitment.
 
-- **Place enrichment** — on-demand fetch of a real photo, a 1–2 sentence narrative, rating, hours, and price level the first time a user opens an extracted place. Google Places API for the facts + Gemini for the narrative blurb, all routed through the existing extract proxy. Free for everyone (this is the value-prop magic moment, not a premium gate). Also fills in `latitude`/`longitude`/`apple_maps_url` as a side-effect, replacing the v0.2 search-URL deep link with proper pinned coords. Full design in `docs/superpowers/specs/2026-05-08-place-enrichment-design.md`.
+- **Auto-detect new screenshots in background**, **gated by the AI classifier**: only screenshots that yield ≥1 extracted place surface in Inbox; the rest are recorded for dedup but stay hidden. Raw auto-detect (every screenshot into Inbox) was rejected — without the classifier, Inbox becomes a junk drawer, not an inbox. Deferred from v0.2: PhotoKit observers + background fetch are a meaningful platform lift, and share-sheet capture already covers the daily-use loop.
 - Smart suggestions on top of extracted places ("Looks like a café in Tokyo", auto-tagging).
-- In-app map view of saved places (depends on enrichment landing first, since enrichment is what populates lat/lng).
+- In-app map view of saved places (uses the lat/lng populated by v0.2 place enrichment).
 - Cloud sync across devices (CloudKit while iOS-only; revisit if Android happens).
 - Itinerary generation from saved ideas.
 - Android.
