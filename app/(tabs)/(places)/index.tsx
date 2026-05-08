@@ -5,7 +5,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { FlatList, Text, View } from '@/tw';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { SearchButton } from '@/components/SearchButton';
@@ -57,6 +57,7 @@ const UNTRIAGED_FILTER_ID = '__untriaged__';
 
 export default function Pocket() {
   const db = useDatabase();
+  const router = useRouter();
   const places = useLiveQuery<PlaceRow>(PLACES_SQL, [], ['places', 'trips']);
   const inboxCountRows = useLiveQuery<InboxCount>(
     INBOX_COUNT_SQL,
@@ -146,7 +147,10 @@ export default function Pocket() {
         ItemSeparatorComponent={GridGap}
         ListHeaderComponent={
           <View>
-            <InboxBanner count={inboxCount} onPress={() => setFilter(UNTRIAGED_FILTER_ID)} />
+            <InboxBanner
+              count={inboxCount}
+              onPress={() => router.push('/triage' as never)}
+            />
             <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
           </View>
         }
