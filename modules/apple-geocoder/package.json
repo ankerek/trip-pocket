@@ -1,8 +1,0 @@
-{
-  "name": "apple-geocoder",
-  "version": "0.0.1",
-  "description": "MKLocalSearch geocoder for Trip Pocket — turns (name, city) into lat/lng + Apple Maps URL.",
-  "main": "index.ts",
-  "private": true,
-  "license": "UNLICENSED"
-}

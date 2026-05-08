@@ -3,7 +3,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceRow, type PlaceRowData } from '@/components/PlaceRow';
 
-const PLACES_SQL = `SELECT id, name, city, category,
+const PLACES_SQL = `SELECT id, name, city, address, category,
                            formatted_address, apple_maps_url
                       FROM extracted_places
                      WHERE screenshot_id = ? AND deleted_at IS NULL

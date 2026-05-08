@@ -10,7 +10,6 @@ import {
   createExtractor,
   ExtractionError,
   type ExtractionRunner,
-  type GeocoderRunner,
   type Extractor,
 } from '../extraction';
 
@@ -68,9 +67,18 @@ async function getStatus(
 async function getPlaces(
   db: Database,
   screenshotId: string,
-): Promise<Array<{ name: string; city: string; category: string; latitude: number | null }>> {
+): Promise<
+  Array<{
+    name: string;
+    city: string;
+    address: string | null;
+    category: string;
+    latitude: number | null;
+    apple_maps_url: string | null;
+  }>
+> {
   return db.getAllAsync(
-    `SELECT name, city, category, latitude
+    `SELECT name, city, address, category, latitude, apple_maps_url
        FROM extracted_places WHERE screenshot_id = ? ORDER BY created_at ASC`,
     screenshotId,
   );
@@ -97,11 +105,17 @@ function mockTimer() {
 }
 
 const okExtract = (
-  places: Array<{ name: string; city: string; category: 'place' | 'food' | 'activity' }>,
+  places: Array<{
+    name: string;
+    city: string;
+    category: 'place' | 'food' | 'activity';
+    address?: string;
+  }>,
 ): ExtractionRunner =>
-  jest.fn(async () => ({ places, model: 'gemini-2.5-flash-lite' }));
-
-const noGeocode: GeocoderRunner = jest.fn(async () => null);
+  jest.fn(async () => ({
+    places: places.map((p) => ({ address: '', ...p })),
+    model: 'gemini-2.5-flash-lite',
+  }));
 
 let counter = 0;
 const seqUuid = (): string => {
@@ -137,7 +151,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -155,26 +168,24 @@ describe('createExtractor', () => {
       expect(notifySpy).toHaveBeenCalledWith('screenshots');
     });
 
-    it('persists geocode fields when geocoder returns a hit', async () => {
+    it('persists the address column and leaves geocode fields NULL', async () => {
+      // MVP intentionally skips geocoding (Apple's CLGeocoder/MKLocalSearch
+      // are unreliable for non-English-script countries). Address is what
+      // PlaceRow's tap-to-Maps fallback uses to build a precise search URL,
+      // and is the input to the v1.x place-enrichment call.
       const db = await freshDb();
       await seedScreenshot(db, 's1');
-      const geocode: GeocoderRunner = jest.fn(async (name) =>
-        name === 'Maru Tonkatsu'
-          ? {
-              latitude: 35.6595,
-              longitude: 139.7005,
-              formattedAddress: '4 Chome, Shibuya, Tokyo',
-              appleMapsUrl: 'https://maps.apple.com/?ll=35.6595,139.7005&q=Maru%20Tonkatsu',
-            }
-          : null,
-      );
       const e = createExtractor({
         db,
         extract: okExtract([
-          { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
-          { name: 'Mystery Place', city: 'Nowhereville', category: 'place' },
+          {
+            name: 'Kosoan',
+            city: 'Tokyo',
+            address: '1 Chome-24-23 Jiyugaoka, Meguro City, Tokyo 152-0035, Japan',
+            category: 'food',
+          },
+          { name: 'No Address Place', city: 'Kyoto', category: 'place' },
         ]),
-        geocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -184,8 +195,16 @@ describe('createExtractor', () => {
       await drain(e);
 
       const rows = await getPlaces(db, 's1');
-      expect(rows[0]?.latitude).toBeCloseTo(35.6595);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.address).toBe(
+        '1 Chome-24-23 Jiyugaoka, Meguro City, Tokyo 152-0035, Japan',
+      );
+      expect(rows[1]?.address).toBe('');
+      // Geocode fields stay NULL — they're filled by future v1.x enrichment.
+      expect(rows[0]?.latitude).toBeNull();
+      expect(rows[0]?.apple_maps_url).toBeNull();
       expect(rows[1]?.latitude).toBeNull();
+      expect(rows[1]?.apple_maps_url).toBeNull();
     });
   });
 
@@ -197,7 +216,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -218,7 +236,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -244,7 +261,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -269,7 +285,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -292,7 +307,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -315,7 +329,6 @@ describe('createExtractor', () => {
       const e1 = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -330,7 +343,6 @@ describe('createExtractor', () => {
       const e2 = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -361,7 +373,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -404,7 +415,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -434,7 +444,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -461,7 +470,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -485,7 +493,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -540,7 +547,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract,
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -563,7 +569,6 @@ describe('createExtractor', () => {
       const e = createExtractor({
         db,
         extract: okExtract([]),
-        geocode: noGeocode,
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,

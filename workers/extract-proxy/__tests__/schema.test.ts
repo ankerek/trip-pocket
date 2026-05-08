@@ -32,8 +32,13 @@ describe('extract-proxy schema', () => {
     it('accepts a valid places array', () => {
       const result = extractionResponseSchema.safeParse({
         places: [
-          { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
-          { name: 'Tsukiji Outer Market', city: 'Tokyo', category: 'place' },
+          { name: 'Maru Tonkatsu', city: 'Tokyo', address: '', category: 'food' },
+          {
+            name: 'Tsukiji Outer Market',
+            city: 'Tokyo',
+            address: '5 Chome-2-1 Tsukiji, Chuo City, Tokyo 104-0045, Japan',
+            category: 'place',
+          },
         ],
       });
       expect(result.success).toBe(true);
@@ -46,7 +51,7 @@ describe('extract-proxy schema', () => {
 
     it('rejects unknown category values', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'X', city: 'Y', category: 'bogus' }],
+        places: [{ name: 'X', city: 'Y', address: '', category: 'bogus' }],
       });
       expect(result.success).toBe(false);
     });
@@ -60,9 +65,23 @@ describe('extract-proxy schema', () => {
 
     it('accepts empty city string (LLM signaling truly ambiguous location)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Mystery Place', city: '', category: 'place' }],
+        places: [{ name: 'Mystery Place', city: '', address: '', category: 'place' }],
       });
       expect(result.success).toBe(true);
+    });
+
+    it('accepts empty address string (LLM signaling no address in OCR)', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food' }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects places missing the address field', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Paris', category: 'food' }],
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

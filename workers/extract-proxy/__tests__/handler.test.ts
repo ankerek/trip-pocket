@@ -8,7 +8,10 @@ function rateLimit(allowed = true) {
   };
 }
 
-function geminiOkResponse(places: Array<{ name: string; city: string; category: string }>) {
+function geminiOkResponse(
+  places: Array<{ name: string; city: string; category: string; address?: string }>,
+) {
+  const padded = places.map((p) => ({ address: '', ...p }));
   // Gemini's structure for `responseMimeType: 'application/json'`:
   // candidates[0].content.parts[0].text contains the JSON string.
   return new Response(
@@ -16,7 +19,7 @@ function geminiOkResponse(places: Array<{ name: string; city: string; category: 
       candidates: [
         {
           content: {
-            parts: [{ text: JSON.stringify({ places }) }],
+            parts: [{ text: JSON.stringify({ places: padded }) }],
           },
         },
       ],

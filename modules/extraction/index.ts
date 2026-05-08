@@ -7,8 +7,6 @@ export {
   type ExtractionErrorKind,
   type ExtractionResult,
   type ExtractionRunner,
-  type GeocodeResult,
-  type GeocoderRunner,
 } from './extraction';
 export { extractFromProxy } from './proxy';
 

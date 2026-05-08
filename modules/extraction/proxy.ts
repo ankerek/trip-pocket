@@ -10,6 +10,7 @@ const responseSchema = z.object({
     z.object({
       name: z.string().min(1),
       city: z.string(),
+      address: z.string(),
       category: z.enum(['place', 'food', 'activity']),
     }),
   ),

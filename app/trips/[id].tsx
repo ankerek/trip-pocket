@@ -23,23 +23,25 @@ const TRIP_GRID_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_stat
                      ORDER BY s.captured_at DESC`;
 
 // Distinct places across the trip's screenshots. The GROUP BY key:
-//   (LOWER(name), LOWER(TRIM(city)), COALESCE(apple_maps_url, ''))
+//   (LOWER(name), LOWER(TRIM(city)), LOWER(TRIM(COALESCE(address, ''))),
+//    COALESCE(apple_maps_url, ''))
 //
-// Including apple_maps_url is the codex-flagged P2 fix: without it, two
-// distinct branches of a chain (e.g. two different Starbucks in Tokyo)
-// collapse into a single row, and tapping it can only open one of them.
-// With apple_maps_url in the key, geocoded distinct branches stay
-// distinct (their URLs differ); non-geocoded duplicates of the same
-// name+city still merge (both have NULL → COALESCE → '' → same group),
-// which is the correct behavior when we have no location signal.
+// Both `address` and `apple_maps_url` are in the key for the same reason:
+// disambiguating two same-named venues in the same city (e.g. two
+// Starbucks in Tokyo). Pre-enrichment, `apple_maps_url` is always NULL
+// and `address` carries the signal — distinct addresses keep distinct
+// rows; rows with no address (both NULL → '') merge by name+city.
+// Post-enrichment (v1.x), `apple_maps_url` becomes non-null and adds
+// further precision; the COALESCE keeps mixed groups working.
 //
 // MIN(id), MAX(formatted_address) etc. are arbitrary picks — within a
-// group all rows share the same canonical apple_maps_url (it's part of
-// the key), so the formatted_address from any one of them is fine.
+// group, address and apple_maps_url are part of the key (same value
+// across rows), so MAX() of the others picks an arbitrary representative.
 const TRIP_PLACES_SQL = `SELECT
                            MIN(ep.id) AS id,
                            ep.name,
                            ep.city,
+                           MAX(ep.address) AS address,
                            ep.category,
                            MAX(ep.formatted_address) AS formatted_address,
                            ep.apple_maps_url,
@@ -52,6 +54,7 @@ const TRIP_PLACES_SQL = `SELECT
                            AND ep.deleted_at IS NULL
                          GROUP BY LOWER(ep.name),
                                   LOWER(TRIM(ep.city)),
+                                  LOWER(TRIM(COALESCE(ep.address, ''))),
                                   COALESCE(ep.apple_maps_url, '')
                          ORDER BY last_seen DESC`;
 
