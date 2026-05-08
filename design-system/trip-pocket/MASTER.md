@@ -18,6 +18,8 @@
 
 ## Color tokens
 
+Tokens live in `global.css` inside a `@theme` block (Tailwind v4 / NativeWind v5 only generates utility classes for tokens declared this way). `tw/theme.ts` mirrors the same hex values for JS-side animation code; both files keep the table below as their source of truth.
+
 | Role             | Light                           | Dark                                | NativeWind class           |
 | ---------------- | ------------------------------- | ----------------------------------- | -------------------------- |
 | `bg`             | `#ffffff`                       | `#020617`                           | `bg-bg`                    |
@@ -28,7 +30,7 @@
 | `info-bg`        | `#ccfbf1` (Mint)                | `#134e4a`                           | `bg-info-bg`               |
 | `info-text`      | `#115e59`                       | `#5eead4`                           | `text-info-text`           |
 | `hairline`       | `rgba(15,23,42,0.06)`           | `rgba(255,255,255,0.08)`            | `border-hairline`          |
-| `overlay-strong` | `rgba(0,0,0,0.45)`              | `rgba(0,0,0,0.55)`                  | photo-name gradient bottom |
+| `overlay-strong` | `rgba(0,0,0,0.55)`              | `rgba(0,0,0,0.55)`                  | photo-name gradient bottom (single recipe across modes — see spec §9.2) |
 
 ## Typography
 
@@ -78,7 +80,8 @@ Reduce-motion fallback: replace springs with `ease.out` linear interpolation, dr
 
 ## Iconography
 
-- Use Apple SF Symbols via `expo-symbols` (existing `Icon.tsx` component pattern).
+- Use Apple SF Symbols through the existing `components/Icon.tsx` wrapper. It renders symbols via `expo-image` `sf:` sources — no `expo-symbols` dependency is needed and none should be added.
+- Pass the SF Symbol name without the `sf:` prefix: `<Icon name="magnifyingglass" />`, `<Icon name="plus" />`.
 - 22pt default size, 26pt for primary nav.
 - Tint with `text` token by default; `accent` for active state.
 - **No emoji as icons.**

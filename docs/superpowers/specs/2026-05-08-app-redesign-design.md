@@ -52,21 +52,25 @@ This is a deliberate IA change from the current `Places / Trips / Settings` thre
 - **Filter pills** — `All · <Trip A> · <Trip B> · …`. Horizontal scroll, active pill = Sea bg + Snow text, inactive = Snow-200 bg + slate text.
 - **Place grid** — 2 columns, 3:4 aspect tiles, 12pt radius, 6pt gutter. Tile shows hero photo (or placeholder gradient if pre-enrichment) with bottom gradient and white place name overlay. Trip chip top-left: Snow translucent material, tiny.
 - **Empty state** — centered illustration + line: "Save your first travel screenshot — share from Photos."
-- **Pull to refresh** — runs `processor.runOcrSweep` + `extractor.runExtractionSweep`.
+- **Pull to refresh** — invokes a single `runForegroundIngest()` helper that wraps the established foreground sequence (`ingestPendingImports` → `processor.runOcrSweep` → `extractor.runExtractionSweep`) under the same `ingesting` mutex used by `app/_layout.tsx`. This avoids racing with foreground ingestion and ensures share-extension imports are not missed. The helper is extracted from the existing block in `app/_layout.tsx` and reused by both that effect and pull-to-refresh.
 
 ### 4.2 Triage flow (modal)
 
 Opens from the Inbox banner or after a manual capture.
 
-- **Top half** (45% of screen) — full-bleed screenshot. Top overlay: close `✕`, progress `1 of 3`, edit affordance.
-- **Bottom sheet** — rounded-top sheet, three detents (`0.55`, `0.85`, `1.0`).
+**Presentation.** Route registered with `presentation: 'fullScreenModal'` (not `formSheet`). Native sheet detents cannot be used here because they resize the *entire* presented screen and we need the screenshot to remain visible above a draggable sheet. The bottom sheet is therefore a JS-implemented sheet on top of the modal screen — built with `react-native-reanimated` + `react-native-gesture-handler` (or `@gorhom/bottom-sheet` if added; decision in the spike).
+
+- **Top half** (~45% of screen) — full-bleed screenshot. Top overlay: close `✕`, progress `1 of 3`, edit affordance.
+- **JS bottom sheet** — three snap points expressed as fractions of screen height: `0.55`, `0.85`, `1.0`. Implemented in JS (Reanimated + Gesture Handler), not native sheet detents. Rounded top corners 20pt, grabber 40×4.
   - **AI extracted** label pill (Teal accent gradient).
   - Place name (large title 22pt) + location subtitle.
   - Field rows: `Trip ›`, `Category ›`, `Notes ›`. Tapping any row pushes a focused picker sheet.
   - Primary button: `Save & next →` (Teal, full-width).
   - Secondary actions row above primary: `Skip`, `Save without trip`.
-  - At full detent, sheet expands to show OCR text, source thumbnail, and "Found in this screenshot" list (existing places-found UI surfaced here).
-- **Horizontal swipe** between items (`PagerView`-style). Bottom dot indicator under the sheet.
+  - At full snap, sheet expands to show OCR text, source thumbnail, and "Found in this screenshot" list (existing places-found UI surfaced here).
+- **Horizontal swipe** between items uses a horizontal `FlatList` with `pagingEnabled` (NOT `react-native-pager-view` — avoids gesture conflicts with the vertical sheet pan). Bottom dot indicator under the sheet. Gesture rule: when the sheet is at any snap point > `0.55`, horizontal swipes are disabled to prevent gesture race.
+- **Keyboard behavior.** When any text field gains focus (Notes, picker search), the sheet auto-snaps to `0.85` minimum (or `1.0` if Dynamic Type ≥ XL). `KeyboardAvoidingView` (`behavior="padding"`) wraps the sheet content so primary action stays visible above the keyboard.
+- **Modal isolation.** Set `accessibilityViewIsModal={true}` on the modal root and `importantForAccessibility="no-hide-descendants"` on the underlying tabs. Initial VoiceOver focus = sheet's place name. On dismiss, focus restores to the originating Inbox banner (or the FAB if entered from manual capture).
 - **Save behavior** — confirmed item moves out of inbox; if it's the last, sheet animates closed and returns to Pocket with a success haptic.
 
 ### 4.3 Place detail (`/places/[id]`)
@@ -104,7 +108,7 @@ Opens from the Inbox banner or after a manual capture.
 
 | Interaction              | Motion                                                                                  |
 | ------------------------ | --------------------------------------------------------------------------------------- |
-| Tile → Place detail      | Shared-element morph (photo + trip chip), surrounding tiles fall away (-8px Y, 0.94 scale, 0 opacity), 380ms spring, overshoot tension 180. |
+| Tile → Place detail      | Shared-element morph of the photo (trip chip cross-fades, does not morph). Surrounding tiles fall away (-8px Y, 0.94 scale, 0 opacity), 380ms spring. **Implementation path is decided by the Phase 4 spike (see §11)**, not assumed in this spec. |
 | Place detail close       | Reverse of the above. Pinch-to-zoom-out also dismisses.                                 |
 | Inbox banner             | Half-speed parallax until it pins; on pin, swaps to blurred-chip variant in the header. |
 | Triage save              | Current card -y 30px + fade out; next card slides in from x: +24px, spring.              |
@@ -112,7 +116,14 @@ Opens from the Inbox banner or after a manual capture.
 | Tab switch               | Cross-fade with content stagger (children fade in 40ms apart).                          |
 | Pull to refresh          | Custom indicator: Teal arc draws as user pulls; springs to chevron when threshold met.  |
 
-Implementation: Reanimated 4 layout transitions for shared-element where supported, with `react-native-screens` native push as fallback. View Transitions API used on web build only.
+**Implementation note.** Reanimated's `sharedTransitionTag` API is documented as native-stack-only and Paper-only in current versions; on a Fabric/new-arch build it cannot be assumed to work. Phase 4 starts with a hard spike (see §11). The spike must produce one of three outcomes, in this order of preference:
+1. `sharedTransitionTag` works in a release iOS build → use it.
+2. JS-driven snapshot transition: measure source tile, render an absolutely-positioned `<Animated.Image>` overlay above the navigator, animate position/size to the destination frame, then swap to the real Place detail. Implemented with Reanimated 4 + `measure()`.
+3. Fallback to a polished native push with photo cross-fade only (no morph).
+
+The spike's chosen outcome becomes binding for the rest of the implementation; it is recorded as a short note in this spec under §11.
+
+Web View Transitions API is **not** in scope for this redesign — web shipping is deferred (see §10).
 
 ## 6. Visual system
 
@@ -162,8 +173,8 @@ Airy, photo-led. 14pt page padding. 6pt grid gutter. 16pt vertical rhythm betwee
 | `PlaceDetailHero`        | New. Shared-element receiver for the hero photo.                        |
 | `TripDetailHeader`       | Restyle as cover-photo header.                                          |
 | `Avatar`/`HeaderProfile` | New. Settings entry point.                                              |
-| `TabBar`                 | Spike first: try absolute-positioned `CaptureFAB` overlaid above `NativeTabs` (cheapest). If layout/safe-area issues arise, fall back to a custom three-zone JS tab bar (tab \| FAB \| tab). Decision recorded in the spike notes. |
-| Theme tokens             | New file `tw/theme.ts` exporting palette, type scale, spring presets.   |
+| `TabBar`                 | Custom three-zone JS tab bar (`tab \| FAB \| tab`). Replaces `NativeTabs`. Built on `BlurView` (`systemMaterial`) + `useSafeAreaInsets` for the home-indicator inset. Implements its own scroll-down minimize behavior using a Reanimated shared value if needed. |
+| Theme tokens             | Tokens declared in `global.css` via `@import "nativewind/theme"` + a `@theme` block (this is what NativeWind v5 / Tailwind v4 actually consume to generate `bg-bg`, `text-text`, etc.). A thin `tw/theme.ts` mirror exports the same values as JS constants for Reanimated/animation code that can't read CSS. Both files reference §6.1 as the source of truth. |
 
 Existing `_layout.tsx`'s `SHARED_HEADER_OPTIONS` (transparent + system blur) carries over; route registrations get updated for the modal `triage` and the dropped `(settings)` group.
 
@@ -173,11 +184,43 @@ Both first-class. Tab bar and headers use native `BlurView` (`systemMaterial` li
 
 ## 9. Accessibility
 
+Accessibility requirements are **not deferred to phase 8** — each phase below has accessibility acceptance criteria. Phase 8 is an audit/regression pass only.
+
+### 9.1 Universal floor (every phase)
+
 - All tappable surfaces meet 44×44pt target.
-- Place name overlays meet WCAG AA against worst-case photos (use 0.4 alpha black gradient; verify per-photo if luminance is high).
-- Reduced motion: shared-element transitions degrade to fade; parallax disables; springs reduce to ease curves.
-- VoiceOver labels: existing `accessibilityLabel` props in `PlaceTile`, `TripPicker`, etc. carry over and get re-validated on the new components.
-- Dynamic Type: type scale uses scaled units; large-text mode reflows tiles to 1-column at body size XL+.
+- All interactive elements have `accessibilityLabel` + `accessibilityRole`. Existing labels in `PlaceTile`, `TripPicker`, etc. carry over and get re-validated on rebuilt components.
+- No color-only state — active pills also change weight/contrast, errors carry an icon.
+
+### 9.2 Photo-overlay contrast (phase 3 acceptance)
+
+Single overlay recipe — no per-photo runtime adjustment.
+
+- Bottom gradient: `linear-gradient(180deg, transparent 0%, transparent 55%, rgba(0,0,0,0.55) 100%)`.
+- Place name text: white, weight 600, size ≥ 12pt, with a 1px text shadow `0 1px 2px rgba(0,0,0,0.45)` for high-luminance photos.
+- Acceptance test: render the gradient + text over a fixture set of 10 hero photos in `__tests__/fixtures/high-luminance/` (5 mostly-white, 5 high-contrast). Visual diff must show ≥ 4.5:1 contrast (snapshotted via Playwright/Detox or measured in a unit helper). Non-passing photos trigger a stronger gradient stop (`0.7` alpha) on a per-tile basis.
+
+### 9.3 Modal & sheet semantics (phases 2, 5, 6 acceptance)
+
+- Triage modal, settings sheet, picker sheets, trip-edit sheet: set `accessibilityViewIsModal={true}` on root and `importantForAccessibility="no-hide-descendants"` on underlying tabs.
+- Initial VoiceOver focus on each modal targets its primary heading.
+- On dismiss, focus restores to the originating element (Inbox banner, header avatar, FAB, or source tile).
+- Two-finger Z scrub gesture must dismiss the modal (default iOS — verify nothing intercepts it).
+- Keyboard-aware behavior: any focus on an editable field forces the sheet to ≥ 0.85 snap.
+
+### 9.4 Motion (every phase that animates)
+
+- `useReducedMotion()` (Reanimated) drives the fallback path on every animated component. Truth table in §13.
+- Animation budget: at most **2 elements animated simultaneously** in any gesture frame, plus tile-level layout shifts (which count as one logical group, not N elements). The shared-element transition counts as 1 (hero) + 1 (surrounding-tile group) = 2; the trip-chip cross-fade is gated to start *after* the morph completes. Tab-switch staggers count as 1 group.
+
+### 9.5 Dynamic Type (phases 3, 4, 6 acceptance)
+
+- Type tokens scale with `PixelRatio.getFontScale()`.
+- At Dynamic Type body size **XL or larger** (`fontScale ≥ 1.35`): the place grid reflows to **1 column**, tiles change to 4:5 aspect (taller, more breathing room), and the trip-chip top-left becomes a stacked label below the photo to avoid truncation. Acceptance test: snapshot at body sizes M, XL, XXL, AX1.
+
+### 9.6 Web
+
+Cursor and focus-ring styles are out of scope until a web build ships. Tracked under future-work in §10.
 
 ## 10. Out of scope
 
@@ -193,22 +236,28 @@ Both first-class. Tab bar and headers use native `BlurView` (`systemMaterial` li
 
 | Risk                                                          | Mitigation                                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `NativeTabs` may not allow a center FAB overlay               | Spike: try absolute-positioned FAB above NativeTabs first; fall back to custom JS tab bar.       |
-| Shared-element transitions on RN 0.83 / Reanimated 4          | Spike with Reanimated 4 layout animations; alternate is `react-native-screens` shared element.   |
-| Photo overlay legibility in dark mode                         | Verify with a test set of 10 hero photos across luminance ranges; tune gradient stops per mode. |
+| Shared-element transitions on RN 0.83 + Fabric                 | **Phase 4 hard spike, decision tree in §5.** Default plan is the JS snapshot/overlay transition (path 2); `sharedTransitionTag` is opportunistic. Spike outcome is recorded back into this section. |
+| `NativeTabs` (UIKit `UITabBarController`) does not own a FAB slot | **Default to a custom JS tab bar** (3-zone: tab \| FAB \| tab) built on `react-native-safe-area-context` + `BlurView`. Overlay-on-NativeTabs is rejected because UIKit tab-bar z-order, safe-area ownership, `minimizeBehavior`, hit-testing, VoiceOver order, and rotation can each break independently. |
+| `PagerView` not in deps + gesture conflict with vertical sheet pan | Use a horizontal `FlatList` with `pagingEnabled` + `decelerationRate="fast"`. Coordinate with the sheet via gesture-handler `simultaneousHandlers` / `waitFor` so the sheet pan wins above 0.55 snap.   |
+| Photo overlay legibility (light + dark)                       | Single overlay recipe in §9.2; high-luminance fallback gradient. Fixture set verified during phase 3. |
+| List virtualization vs. shared-element source tile            | When a transition is in flight, disable `removeClippedSubviews` on the grid and pin the source row in the window; OR base the morph on a measured snapshot independent of the cell's mount lifecycle. The phase 4 spike picks one. |
 | Settings-as-sheet may hurt discoverability                    | Avatar in header is a known iOS pattern (Apple Music, Mail). Track via session telemetry post-ship. |
-| Existing `(settings)` route group needs migration             | Move `app/(tabs)/(settings)/*` to `app/settings.tsx` modal; redirect old paths.                  |
+| Existing `(settings)` route group needs migration             | Phase 2: delete `app/(tabs)/(settings)/_layout.tsx` + `index.tsx`; add `app/settings.tsx` registered as `presentation: 'formSheet'` with `sheetAllowedDetents: [0.5, 1.0]`. Add `app/(tabs)/(settings)+not-found.tsx` (or a top-level `app/+not-found.tsx` redirect) that pushes `/settings` so any deep links from previously-shared URLs resolve. |
+| NativeWind v5 + Tailwind v4 token wiring                      | Tokens declared in `global.css` via `@import "nativewind/theme"` + a `@theme` block (NOT in a TS file alone — Tailwind v4 only generates utilities for tokens defined in CSS). `tw/theme.ts` mirrors values for JS animation constants only. |
 
 ## 12. Implementation phasing (high-level — drives the plan)
 
-1. **Theme + tokens.** New `tw/theme.ts`, dark mode wired through, palette migrated.
-2. **Tab bar + FAB.** Spike, then build. Settings sheet moved.
-3. **Pocket home.** New header, Inbox banner, filter pills, restyled grid.
-4. **Place detail.** Hero photo, shared-element transition, restyled body.
-5. **Triage flow.** New modal, hero + bottom sheet, swipe pager.
-6. **Trips list + detail.** Cover photo header, view toggle scaffold.
-7. **Motion polish.** Parallax, stagger, custom pull-to-refresh, haptics.
-8. **Accessibility pass.** Reduced motion, dynamic type, contrast audit.
+Every phase below has accessibility acceptance criteria from §9 baked in — phase 8 is audit only, not the first time accessibility is considered.
+
+1. **Theme + tokens.** Update `global.css` with `@theme` block, add `tw/theme.ts` mirror, dark mode token branches via `@media (prefers-color-scheme: dark)` per NativeWind v5 conventions. **A11y:** verify Dynamic Type scaling renders type tokens correctly.
+2. **Tab bar + FAB + Settings migration.** Custom JS tab bar replaces `NativeTabs`; `app/(tabs)/(settings)/*` removed; `app/settings.tsx` modal added; deep-link redirect in place. **A11y:** tab bar VoiceOver order; FAB has `accessibilityLabel="Capture"` and `accessibilityRole="button"`; settings modal isolation per §9.3.
+3. **Pocket home.** New header, Inbox banner (parallax + collapsed-chip), filter pills, **`FlatList` virtualization with `numColumns={2}`** replacing the current `ScrollView`+`map()`. **A11y:** photo-overlay contrast fixture (§9.2); inbox banner is announced; Dynamic Type 1-column reflow.
+4. **Phase 4a — Hard spike (1–2 days).** Decide shared-element implementation per §5 decision tree. Document the chosen path in this file before starting 4b.
+   **Phase 4b — Place detail.** Hero photo, transition (per spike outcome), restyled body, "Open in Maps" CTA. **A11y:** focus-restore to source tile on dismiss; reduced-motion fallback verified.
+5. **Triage flow.** Full-screen modal, JS bottom sheet (Reanimated + Gesture Handler), horizontal `FlatList` pager, keyboard-aware snapping. **A11y:** `accessibilityViewIsModal`, initial focus on place name, 2-finger Z dismiss preserved, focus restore.
+6. **Trips list + detail.** Cover photo header, view toggle (Map = disabled "Coming soon"), edit sheet. **A11y:** Dynamic Type 1-column reflow on trip detail too.
+7. **Motion polish.** Parallax, stagger, custom pull-to-refresh wired to `runForegroundIngest()`, haptics. **A11y:** verify the ≤2-element animation budget (§9.4) per interaction.
+8. **Accessibility audit.** Run with VoiceOver on a device; test all 4 Dynamic Type sizes; test reduced-motion globally; contrast pass on dark mode. Fix regressions.
 
 Each phase is independently shippable; phases 1–4 deliver the library wow, 5 delivers the capture wow, 6–8 polish.
 
@@ -216,18 +265,18 @@ Each phase is independently shippable; phases 1–4 deliver the library wow, 5 d
 
 These items came out of running the design through `ui-ux-pro-max` and are now binding.
 
-- **Lists must virtualize.** `app/(tabs)/(places)/index.tsx` currently renders the places grid with `ScrollView` + `.map()`. Phase 3 replaces this with `FlatList` (or `FlashList` if added) with `keyExtractor={(p) => p.id}`, `windowSize={5}`, `removeClippedSubviews`, and `numColumns={2}`. Same change for the trip list when length warrants.
+- **Lists must virtualize.** `app/(tabs)/(places)/index.tsx` currently renders the places grid with `ScrollView` + `.map()`. Phase 3 replaces this with `FlatList` (or `FlashList` if added) with `keyExtractor={(p) => p.id}`, `windowSize={5}`, and `numColumns={2}`. **`removeClippedSubviews` is OFF on the grid** (default is platform-dependent; explicitly set to `false`) because clipping the source tile during a shared-element / snapshot transition unmounts the receiver and breaks the morph. Same change for the trip list when length warrants.
 - **Image sizing must be explicit.** Every `expo-image` instance needs explicit `style={{ width, height }}` (or aspect-ratio reserved at the parent) and `cachePolicy="memory-disk"`. No bare `<Image source={uri} />`. Tile parents get `aspect-ratio: 3/4` and the image fills it with `contentFit="cover"`.
 - **Reduced motion is a first-class branch, not a graceful degradation.** Use `useReducedMotion()` (Reanimated) on every animated component. Truth table:
   - Shared-element morph → fade crossfade (180ms ease.out)
   - Parallax banner → static
   - Stagger reveals → simultaneous fade
   - Spring overshoot → linear ease.out
-- **Animate ≤ 2 elements at once.** The triage swipe must not animate sheet content while the card slides; only the card moves, then content fades in.
-- **Photo-overlay contrast.** Place name text on tiles must hit 4.5:1 even on bright photos. Implement with a fixed bottom gradient (`linear-gradient(180deg, transparent 55%, rgba(0,0,0,0.55) 100%)`) and 600-weight white text. Verify on a test set of 10 high-luminance images during phase 3.
-- **No emoji as icons** anywhere in production UI. Replace any current emoji with SF Symbols via `Icon.tsx`. Country chips on trips may use the unicode flag glyph since it's a content character, not a UI icon.
+- **Motion budget — ≤ 2 logical groups animated simultaneously.** This is a budget, not a hard count of nodes. Allowed groupings: (a) hero element morphing, (b) one supporting list/cluster (e.g. surrounding tiles fall away), (c) one CTA reveal. The trip-chip cross-fade on the tile→detail transition starts *after* the photo morph completes and counts as a separate frame. Tab-switch staggers count as one group (the children, treated as a cluster). Triage swipe: only the card moves while sliding; sheet content fades in *after* the card lands.
+- **Photo-overlay contrast.** See §9.2 for the binding recipe (single 0.55 alpha gradient + text shadow + fixture set). All earlier mentions of `0.4`/`0.45` alpha gradients in this document are superseded by §9.2.
+- **No emoji as icons** anywhere in production UI. Use SF Symbols via the existing `components/Icon.tsx` wrapper, which renders SF Symbol names through `expo-image` `sf:` sources (no `expo-symbols` dependency). Country chips on trips may use the unicode flag glyph since it's a content character, not a UI icon.
 - **Easing direction.** Entering elements use `ease.out`; exiting elements use `ease.in`. The Reanimated spring presets in MASTER are the shared-element/sheet defaults — fall back to ease curves only on reduced motion.
-- **Cursor and focus** are N/A on native iOS but become required if the web build (`react-native-web`) is exposed. Track as a follow-up if web ships.
+- **Web (out of scope).** Cursor styles, focus rings, View Transitions API, and any `react-native-web` surfacing are deferred. If a web build ships later, treat web a11y/cursor work as a separate spec.
 
 ## 14. Validated against
 
