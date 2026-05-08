@@ -145,10 +145,15 @@ export default function Pocket() {
         ItemSeparatorComponent={GridGap}
         ListHeaderComponent={
           <View>
-            <InboxBanner
-              count={inboxCount}
-              onPress={() => router.push('/triage' as never)}
-            />
+            {/* Banner only on the Untriaged filter — keeps the All
+                feed visually quiet for users who already have a queue
+                they're ignoring. */}
+            {filter === UNTRIAGED_FILTER_ID ? (
+              <InboxBanner
+                count={inboxCount}
+                onPress={() => router.push('/triage' as never)}
+              />
+            ) : null}
             <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
           </View>
         }
