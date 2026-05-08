@@ -10,7 +10,7 @@ async function freshDb(): Promise<Database> {
 
 async function seedFts(db: Database, id: string, content: string): Promise<void> {
   await db.runAsync(
-    'INSERT INTO screenshots_fts (screenshot_id, content) VALUES (?, ?)',
+    'INSERT INTO sources_fts (source_id, content) VALUES (?, ?)',
     id,
     content,
   );
@@ -19,14 +19,14 @@ async function seedFts(db: Database, id: string, content: string): Promise<void>
 async function searchIds(db: Database, input: string): Promise<string[]> {
   const match = buildFtsMatch(input);
   if (match === null) return [];
-  const rows = await db.getAllAsync<{ screenshot_id: string }>(
-    `SELECT screenshot_id FROM screenshots_fts WHERE screenshots_fts MATCH ? ORDER BY rank`,
+  const rows = await db.getAllAsync<{ source_id: string }>(
+    `SELECT source_id FROM sources_fts WHERE sources_fts MATCH ? ORDER BY rank`,
     match,
   );
-  return rows.map((r) => r.screenshot_id);
+  return rows.map((r) => r.source_id);
 }
 
-describe('search integration: buildFtsMatch -> screenshots_fts MATCH', () => {
+describe('search integration: buildFtsMatch -> sources_fts MATCH', () => {
   it('finds an English substring inside a longer OCR text', async () => {
     const db = await freshDb();
     await seedFts(db, 's1', 'Welcome to Maru Tonkatsu in Shibuya, Tokyo.');
@@ -63,15 +63,10 @@ describe('search integration: buildFtsMatch -> screenshots_fts MATCH', () => {
     const db = await freshDb();
     await seedFts(db, 's1', 'rated 5*** experience');
     await seedFts(db, 's2', 'plain text');
-    // `5***` is a literal substring of s1; helper quotes the token so FTS5
-    // treats * as data, not operator. 5+ASCII satisfies trigram (≥3 chars).
     expect(await searchIds(db, '5***')).toEqual(['s1']);
   });
 
   it('a query that fails to parse as FTS5 throws, not silently masks (sanity check on quoting)', async () => {
-    // If we ever regress quoting, an unquoted `(` would yield an FTS5 syntax
-    // error. We assert the helper produces well-formed output instead, by
-    // checking that the same input runs cleanly.
     const db = await freshDb();
     await seedFts(db, 's1', 'event (sold out) tomorrow');
     await expect(searchIds(db, '(sold')).resolves.toEqual(['s1']);

@@ -1,7 +1,7 @@
 import {
   openDatabase,
   runMigrations,
-  insertScreenshot,
+  insertSource,
   type Database,
 } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
@@ -21,7 +21,7 @@ async function freshDb(): Promise<Database> {
 
 const NOW = '2026-05-08T10:00:00.000Z';
 
-async function seedScreenshot(
+async function seedSource(
   db: Database,
   id: string,
   opts: {
@@ -29,19 +29,20 @@ async function seedScreenshot(
     ocrStatus?: 'pending' | 'done' | 'failed';
     extractionStatus?: 'pending' | 'done' | 'failed';
     capturedAt?: string;
+    tripId?: string | null;
   } = {},
 ): Promise<void> {
-  await insertScreenshot(db, {
+  await insertSource(db, {
     id,
-    tripId: null,
+    tripId: opts.tripId ?? null,
     filePath: `/tmp/${id}.jpg`,
     contentHash: `hash-${id}`,
-    source: 'manual',
+    origin: 'manual',
     capturedAt: opts.capturedAt ?? NOW,
     ownerId: 'owner-1',
   });
   await db.runAsync(
-    `UPDATE screenshots
+    `UPDATE sources
         SET ocr_status = ?, ocr_text = ?, extraction_status = ?, updated_at = ?
       WHERE id = ?`,
     opts.ocrStatus ?? 'done',
@@ -57,35 +58,42 @@ async function getStatus(
   id: string,
 ): Promise<{ status: string }> {
   const row = await db.getFirstAsync<{ extraction_status: string }>(
-    `SELECT extraction_status FROM screenshots WHERE id = ?`,
+    `SELECT extraction_status FROM sources WHERE id = ?`,
     id,
   );
   if (!row) throw new Error(`row ${id} missing`);
   return { status: row.extraction_status };
 }
 
-async function getPlaces(
+type PlaceJoin = {
+  place_id: string;
+  name: string;
+  city: string | null;
+  category: string | null;
+  normalized_key: string;
+  trip_id: string | null;
+  enrichment_status: string;
+  extracted_address: string | null;
+  raw_text: string | null;
+  confidence: number | null;
+};
+
+async function getPlacesForSource(
   db: Database,
-  screenshotId: string,
-): Promise<
-  Array<{
-    name: string;
-    city: string;
-    address: string | null;
-    category: string;
-    latitude: number | null;
-    apple_maps_url: string | null;
-  }>
-> {
-  return db.getAllAsync(
-    `SELECT name, city, address, category, latitude, apple_maps_url
-       FROM extracted_places WHERE screenshot_id = ? ORDER BY created_at ASC`,
-    screenshotId,
+  sourceId: string,
+): Promise<PlaceJoin[]> {
+  return db.getAllAsync<PlaceJoin>(
+    `SELECT p.id AS place_id, p.name, p.city, p.category, p.normalized_key,
+            p.trip_id, p.enrichment_status,
+            ps.extracted_address, ps.raw_text, ps.confidence
+       FROM place_sources ps
+       JOIN places p ON p.id = ps.place_id
+      WHERE ps.source_id = ? AND ps.deleted_at IS NULL AND p.deleted_at IS NULL
+   ORDER BY p.created_at ASC`,
+    sourceId,
   );
 }
 
-// Drive setTimeout substitution: tests can capture pending timers and fire
-// them deterministically without globally faking the Jest clock.
 function mockTimer() {
   type Pending = { cb: () => void; ms: number };
   const pending: Pending[] = [];
@@ -141,9 +149,9 @@ describe('createExtractor', () => {
   });
 
   describe('processOne happy path', () => {
-    it('inserts places + sets extraction_status=done + fires notifyChange', async () => {
+    it('inserts canonical places + junctions, sets sources.extraction_status=done, fires notifyChange', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1', { ocrText: 'Maru Tonkatsu, Shibuya. Try Tsukiji.' });
+      await seedSource(db, 's1', { ocrText: 'Maru Tonkatsu, Shibuya. Try Tsukiji.' });
       const extract = okExtract([
         { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
         { name: 'Tsukiji Outer Market', city: 'Tokyo', category: 'place' },
@@ -160,21 +168,20 @@ describe('createExtractor', () => {
       await drain(e);
 
       expect((await getStatus(db, 's1')).status).toBe('done');
-      const rows = await getPlaces(db, 's1');
+      const rows = await getPlacesForSource(db, 's1');
       expect(rows).toHaveLength(2);
       expect(rows[0]?.name).toBe('Maru Tonkatsu');
+      expect(rows[0]?.normalized_key).toBe('maru tonkatsu|tokyo');
+      expect(rows[0]?.enrichment_status).toBe('pending');
       expect(rows[1]?.name).toBe('Tsukiji Outer Market');
-      expect(notifySpy).toHaveBeenCalledWith('extracted_places');
-      expect(notifySpy).toHaveBeenCalledWith('screenshots');
+      expect(notifySpy).toHaveBeenCalledWith('places');
+      expect(notifySpy).toHaveBeenCalledWith('place_sources');
+      expect(notifySpy).toHaveBeenCalledWith('sources');
     });
 
-    it('persists the address column and leaves geocode fields NULL', async () => {
-      // MVP intentionally skips geocoding (Apple's CLGeocoder/MKLocalSearch
-      // are unreliable for non-English-script countries). Address is what
-      // PlaceRow's tap-to-Maps fallback uses to build a precise search URL,
-      // and is the input to the v1.x place-enrichment call.
+    it('persists extracted_address on the junction row, leaves enrichment fields NULL on the place', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const e = createExtractor({
         db,
         extract: okExtract([
@@ -194,24 +201,206 @@ describe('createExtractor', () => {
       e.enqueueExtraction('s1');
       await drain(e);
 
-      const rows = await getPlaces(db, 's1');
+      const rows = await getPlacesForSource(db, 's1');
       expect(rows).toHaveLength(2);
-      expect(rows[0]?.address).toBe(
+      expect(rows[0]?.extracted_address).toBe(
         '1 Chome-24-23 Jiyugaoka, Meguro City, Tokyo 152-0035, Japan',
       );
-      expect(rows[1]?.address).toBe('');
-      // Geocode fields stay NULL — they're filled by future v1.x enrichment.
-      expect(rows[0]?.latitude).toBeNull();
-      expect(rows[0]?.apple_maps_url).toBeNull();
-      expect(rows[1]?.latitude).toBeNull();
-      expect(rows[1]?.apple_maps_url).toBeNull();
+      expect(rows[1]?.extracted_address).toBe('');
+
+      // Enrichment-derived fields stay NULL until /enrich runs.
+      const enrichment = await db.getAllAsync<{
+        latitude: number | null;
+        external_place_id: string | null;
+        formatted_address: string | null;
+      }>(`SELECT latitude, external_place_id, formatted_address FROM places ORDER BY created_at ASC`);
+      expect(enrichment[0]?.latitude).toBeNull();
+      expect(enrichment[0]?.external_place_id).toBeNull();
+      expect(enrichment[0]?.formatted_address).toBeNull();
+    });
+
+    it('inherits trip_id from the source onto newly-created places', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+         VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
+        NOW,
+        NOW,
+      );
+      await seedSource(db, 's1', { tripId: 't1' });
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([{ name: 'Kosoan', city: 'Tokyo', category: 'food' }]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const rows = await getPlacesForSource(db, 's1');
+      expect(rows[0]?.trip_id).toBe('t1');
+    });
+  });
+
+  describe('sole-match dedup against existing places', () => {
+    it('reuses an existing live place when exactly one match exists by (normalized_key, owner_id)', async () => {
+      const db = await freshDb();
+      // Pre-existing place from a prior extraction.
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             enrichment_status, owner_id, created_at, updated_at)
+         VALUES ('p-existing', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 'pending', 'owner-1', ?, ?)`,
+        NOW,
+        NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([{ name: 'kosoan', city: 'Tokyo ', category: 'food' }]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const rows = await getPlacesForSource(db, 's1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.place_id).toBe('p-existing');
+
+      const placeCount = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM places WHERE deleted_at IS NULL`,
+      );
+      expect(placeCount?.n).toBe(1);
+    });
+
+    it('creates a new place when ≥2 live matches already exist (ambiguous → defer to enrichment)', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             enrichment_status, owner_id, created_at, updated_at)
+         VALUES ('p1', NULL, 'Starbucks', 'Tokyo', 'food', 'starbucks|tokyo', 'pending', 'owner-1', ?, ?),
+                ('p2', NULL, 'Starbucks', 'Tokyo', 'food', 'starbucks|tokyo', 'pending', 'owner-1', ?, ?)`,
+        NOW, NOW, NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([{ name: 'Starbucks', city: 'Tokyo', category: 'food' }]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const rows = await getPlacesForSource(db, 's1');
+      expect(rows).toHaveLength(1);
+      // Distinct from the two existing rows.
+      expect(['p1', 'p2'].includes(rows[0]!.place_id)).toBe(false);
+
+      const placeCount = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM places WHERE deleted_at IS NULL`,
+      );
+      expect(placeCount?.n).toBe(3);
+    });
+
+    it('does not match across owner boundaries', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             enrichment_status, owner_id, created_at, updated_at)
+         VALUES ('p-other', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 'pending', 'someone-else', ?, ?)`,
+        NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([{ name: 'Kosoan', city: 'Tokyo', category: 'food' }]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const rows = await getPlacesForSource(db, 's1');
+      expect(rows[0]?.place_id).not.toBe('p-other');
+
+      const myCount = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM places WHERE owner_id = 'owner-1' AND deleted_at IS NULL`,
+      );
+      expect(myCount?.n).toBe(1);
+    });
+
+    it("flips a sole-matched place's enrichment_status from 'not-found' back to 'pending' (retry hint)", async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             enrichment_status, enriched_at, owner_id,
+                             created_at, updated_at)
+         VALUES ('p-nf', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 'not-found', ?, 'owner-1', ?, ?)`,
+        NOW, NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([{ name: 'Kosoan', city: 'Tokyo', category: 'food' }]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const place = await db.getFirstAsync<{ enrichment_status: string }>(
+        `SELECT enrichment_status FROM places WHERE id = 'p-nf'`,
+      );
+      expect(place?.enrichment_status).toBe('pending');
+    });
+
+    it("does NOT reset 'enriched' places when a new source attaches", async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             enrichment_status, enriched_at, external_place_id,
+                             owner_id, created_at, updated_at)
+         VALUES ('p-en', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 'enriched', ?, 'gp-123', 'owner-1', ?, ?)`,
+        NOW, NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([{ name: 'Kosoan', city: 'Tokyo', category: 'food' }]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const place = await db.getFirstAsync<{ enrichment_status: string }>(
+        `SELECT enrichment_status FROM places WHERE id = 'p-en'`,
+      );
+      expect(place?.enrichment_status).toBe('enriched');
     });
   });
 
   describe('empty-OCR short-circuit', () => {
     it('skips the proxy entirely and marks done with 0 places', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1', { ocrText: '' });
+      await seedSource(db, 's1', { ocrText: '' });
       const extract = jest.fn() as unknown as ExtractionRunner;
       const e = createExtractor({
         db,
@@ -226,12 +415,12 @@ describe('createExtractor', () => {
 
       expect(extract).not.toHaveBeenCalled();
       expect((await getStatus(db, 's1')).status).toBe('done');
-      expect(await getPlaces(db, 's1')).toEqual([]);
+      expect(await getPlacesForSource(db, 's1')).toEqual([]);
     });
 
     it('treats whitespace-only OCR as empty', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1', { ocrText: '   \n\t   ' });
+      await seedSource(db, 's1', { ocrText: '   \n\t   ' });
       const extract = jest.fn() as unknown as ExtractionRunner;
       const e = createExtractor({
         db,
@@ -252,7 +441,7 @@ describe('createExtractor', () => {
   describe('per-call dedup of LLM output', () => {
     it('drops case-insensitive name + trimmed-city duplicates before INSERT', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const extract = okExtract([
         { name: 'Starbucks', city: 'Tokyo', category: 'food' },
         { name: 'starbucks', city: 'Tokyo ', category: 'food' },
@@ -269,7 +458,7 @@ describe('createExtractor', () => {
       e.enqueueExtraction('s1');
       await drain(e);
 
-      const rows = await getPlaces(db, 's1');
+      const rows = await getPlacesForSource(db, 's1');
       expect(rows).toHaveLength(2);
       expect(rows.map((r) => r.name).sort()).toEqual(['Starbucks', 'Tsukiji']);
     });
@@ -278,7 +467,7 @@ describe('createExtractor', () => {
   describe('failure + retry', () => {
     it('retries a retryable error up to maxRetries and then marks failed', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const extract = jest.fn(async () => {
         throw new ExtractionError('upstream burning', { kind: 'retryable' });
       }) as unknown as ExtractionRunner;
@@ -300,7 +489,7 @@ describe('createExtractor', () => {
 
     it('marks a permanent error as failed immediately, no retries', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const extract = jest.fn(async () => {
         throw new ExtractionError('bad request', { kind: 'permanent' });
       }) as unknown as ExtractionRunner;
@@ -322,7 +511,7 @@ describe('createExtractor', () => {
 
     it('a fresh extractor (simulated relaunch) gets a new retry budget', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const extract = jest.fn(async () => {
         throw new ExtractionError('boom', { kind: 'retryable' });
       }) as unknown as ExtractionRunner;
@@ -338,7 +527,6 @@ describe('createExtractor', () => {
       await drain(e1);
       expect(extract).toHaveBeenCalledTimes(3);
 
-      // Simulate relaunch: startup recovery flips failed → pending.
       await e1.runStartupRecovery();
       const e2 = createExtractor({
         db,
@@ -350,14 +538,14 @@ describe('createExtractor', () => {
       });
       e2.enqueueExtraction('s1');
       await drain(e2);
-      expect(extract).toHaveBeenCalledTimes(6); // 3 more for the new budget
+      expect(extract).toHaveBeenCalledTimes(6);
     });
   });
 
   describe('429 deferral', () => {
     it('does NOT consume retry budget; re-enqueues after retryAfterMs; row stays pending during the wait', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const timer = mockTimer();
       let calls = 0;
       const extract = jest.fn(async () => {
@@ -383,7 +571,6 @@ describe('createExtractor', () => {
       e.enqueueExtraction('s1');
       await drain(e);
 
-      // After the first call, we should be waiting on a timer.
       expect(extract).toHaveBeenCalledTimes(1);
       expect(timer.pendingCount()).toBe(1);
       expect(timer.pendingDelays()).toEqual([60000]);
@@ -407,7 +594,7 @@ describe('createExtractor', () => {
 
     it('re-enqueue from a sweep is deduped while a 429 deferral timer is pending', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const timer = mockTimer();
       const extract = jest.fn(async () => {
         throw new ExtractionError('429', { kind: 'deferred', retryAfterMs: 60000 });
@@ -426,11 +613,9 @@ describe('createExtractor', () => {
       expect(extract).toHaveBeenCalledTimes(1);
       expect(timer.pendingCount()).toBe(1);
 
-      // Foreground sweep tries to re-enqueue while we're still waiting.
       e.enqueueExtraction('s1');
       e.enqueueExtraction('s1');
       await drain(e);
-      // No additional calls — the dedup set kept it engaged.
       expect(extract).toHaveBeenCalledTimes(1);
       expect(timer.pendingCount()).toBe(1);
     });
@@ -439,7 +624,7 @@ describe('createExtractor', () => {
   describe('queue dedup + serialization', () => {
     it('two concurrent enqueueExtraction(id) only invoke extract once', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
+      await seedSource(db, 's1');
       const extract = okExtract([]);
       const e = createExtractor({
         db,
@@ -458,8 +643,8 @@ describe('createExtractor', () => {
 
     it('processes ids strictly serially', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 'sA');
-      await seedScreenshot(db, 'sB');
+      await seedSource(db, 'sA');
+      await seedSource(db, 'sB');
       const order: string[] = [];
       const extract = jest.fn(async (text: string) => {
         order.push(text.startsWith('text-sA') ? 'A-start' : 'B-start');
@@ -484,10 +669,10 @@ describe('createExtractor', () => {
   });
 
   describe('soft-delete handling', () => {
-    it('skips screenshots that were soft-deleted between enqueue and run', async () => {
+    it('skips sources that were soft-deleted between enqueue and run', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1');
-      await db.runAsync(`UPDATE screenshots SET deleted_at = ? WHERE id = 's1'`, NOW);
+      await seedSource(db, 's1');
+      await db.runAsync(`UPDATE sources SET deleted_at = ? WHERE id = 's1'`, NOW);
 
       const extract = okExtract([{ name: 'X', city: 'Y', category: 'place' }]);
       const e = createExtractor({
@@ -502,37 +687,34 @@ describe('createExtractor', () => {
       await drain(e);
 
       expect(extract).not.toHaveBeenCalled();
-      expect(await getPlaces(db, 's1')).toEqual([]);
+      expect(await getPlacesForSource(db, 's1')).toEqual([]);
     });
   });
 
   describe('runExtractionSweep', () => {
     it('picks only extraction_status=pending AND ocr_status=done, ordered by captured_at ASC', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 'sA', {
+      await seedSource(db, 'sA', {
         ocrStatus: 'done',
         extractionStatus: 'pending',
         capturedAt: '2026-05-01T10:00:00.000Z',
       });
-      await seedScreenshot(db, 'sB', {
+      await seedSource(db, 'sB', {
         ocrStatus: 'done',
         extractionStatus: 'pending',
         capturedAt: '2026-05-02T10:00:00.000Z',
       });
-      // OCR not done: skipped.
-      await seedScreenshot(db, 'sC', {
+      await seedSource(db, 'sC', {
         ocrStatus: 'pending',
         extractionStatus: 'pending',
         capturedAt: '2026-05-03T10:00:00.000Z',
       });
-      // extraction already done: skipped.
-      await seedScreenshot(db, 'sD', {
+      await seedSource(db, 'sD', {
         ocrStatus: 'done',
         extractionStatus: 'done',
         capturedAt: '2026-05-04T10:00:00.000Z',
       });
-      // failed: skipped (mid-session sweep posture).
-      await seedScreenshot(db, 'sE', {
+      await seedSource(db, 'sE', {
         ocrStatus: 'done',
         extractionStatus: 'failed',
         capturedAt: '2026-05-05T10:00:00.000Z',
@@ -562,9 +744,9 @@ describe('createExtractor', () => {
   describe('runStartupRecovery', () => {
     it('flips failed extractions back to pending exactly once per process', async () => {
       const db = await freshDb();
-      await seedScreenshot(db, 's1', { extractionStatus: 'failed' });
-      await seedScreenshot(db, 's2', { extractionStatus: 'failed' });
-      await seedScreenshot(db, 's3', { extractionStatus: 'done' });
+      await seedSource(db, 's1', { extractionStatus: 'failed' });
+      await seedSource(db, 's2', { extractionStatus: 'failed' });
+      await seedSource(db, 's3', { extractionStatus: 'done' });
 
       const e = createExtractor({
         db,
@@ -579,7 +761,6 @@ describe('createExtractor', () => {
       expect((await getStatus(db, 's2')).status).toBe('pending');
       expect((await getStatus(db, 's3')).status).toBe('done');
 
-      // Subsequent calls in the same process are a no-op.
       await e.runStartupRecovery();
       expect((await getStatus(db, 's1')).status).toBe('pending');
     });

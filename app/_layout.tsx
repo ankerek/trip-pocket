@@ -20,7 +20,7 @@ import {
   getAppGroupContainerUri,
   getStorageDirectory,
   createImportFs,
-  cleanupOrphanScreenshots,
+  cleanupOrphanSources,
 } from '@/modules/capture';
 import {
   createProcessor,
@@ -83,9 +83,9 @@ export default function RootLayout() {
       await processor.runStartupRecovery();
 
       // Sweep rows whose image file is gone (typically: dev reinstall wiped
-      // the old private-sandbox path before screenshots were colocated into
-      // the App Group). Soft-delete keeps the schema invariant clean.
-      await cleanupOrphanScreenshots(db);
+      // the old private-sandbox path before sources were colocated into the
+      // App Group). Soft-delete keeps the schema invariant clean.
+      await cleanupOrphanSources(db);
 
       const storage = getStorageDirectory();
       const ownerId = getOrCreateOwnerId();
@@ -119,6 +119,7 @@ export default function RootLayout() {
         | undefined;
       const enricher = createEnricher({
         db,
+        ownerId,
         // Empty-string fallback mirrors the extractor: missing config fails
         // loudly on first call, no silent breakage.
         enrich: (payload) => enrichFromProxy(payload, enrichProxyUrl ?? ''),

@@ -30,7 +30,7 @@ export async function ingestPendingImports(
       if (suggestedTripId !== null) {
         // Trip may have been soft-deleted (or never existed) between when the
         // share extension wrote the pending row and now. Falling back to Inbox
-        // beats orphaning the screenshot on a deleted trip.
+        // beats orphaning the source on a deleted trip.
         const live = await db.getFirstAsync<{ id: string }>(
           `SELECT id FROM trips WHERE id = ? AND deleted_at IS NULL`,
           suggestedTripId,
@@ -40,7 +40,7 @@ export async function ingestPendingImports(
 
       await importImage(db, {
         sourceUri: p.app_group_path,
-        source: 'share',
+        origin: 'share',
         ownerId: opts.ownerId,
         capturedAt: p.created_at,
         suggestedTripId,

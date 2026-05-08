@@ -7,7 +7,7 @@ const MIN_QUERY_CODEPOINTS = 3;
 /**
  * Build an FTS5 MATCH expression from raw user input.
  *
- * Returns the bound parameter string for `screenshots_fts MATCH ?`, or
+ * Returns the bound parameter string for `sources_fts MATCH ?` (or `places_fts MATCH ?`), or
  * `null` if the input is empty / below the trigram minimum (in which case
  * the caller should not run the query).
  *

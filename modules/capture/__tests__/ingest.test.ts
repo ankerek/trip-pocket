@@ -1,6 +1,6 @@
 import { openDatabase, runMigrations, type Database } from '@/modules/storage/db';
 import { migrations } from '@/modules/storage/migrations';
-import { listScreenshots } from '@/modules/storage/screenshots';
+import { listSources } from '@/modules/storage/sources';
 import { ingestPendingImports } from '../ingest';
 import type { ImportFs } from '../importImage';
 
@@ -33,7 +33,7 @@ function makeFs(overrides: Partial<ImportFs> = {}): ImportFs & {
 }
 
 describe('ingestPendingImports', () => {
-  it('drains a pending import into a screenshots row with a real content hash', async () => {
+  it('drains a pending import into a sources row with a real content hash', async () => {
     const db = await freshDb();
     await db.runAsync(
       `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
@@ -50,11 +50,12 @@ describe('ingestPendingImports', () => {
       fs,
     });
 
-    const rows = await listScreenshots(db, { tripId: null });
+    const rows = await listSources(db, { tripId: null });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
+      kind: 'screenshot',
       filePath: expect.stringContaining('/sandbox/'),
-      source: 'share',
+      origin: 'share',
       tripId: null,
       contentHash: 'sha-of:/appgroup/img1.jpg',
     });
@@ -101,7 +102,7 @@ describe('ingestPendingImports', () => {
       warnSpy.mockRestore();
     }
 
-    const rows = await listScreenshots(db, { tripId: null });
+    const rows = await listSources(db, { tripId: null });
     expect(rows).toHaveLength(1);
 
     const remaining = await db.getAllAsync<{ id: string }>(
@@ -125,7 +126,7 @@ describe('ingestPendingImports', () => {
     const fs = makeFs();
     await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
-    const inbox = await listScreenshots(db, { tripId: null });
+    const inbox = await listSources(db, { tripId: null });
     expect(inbox).toHaveLength(1);
     expect(inbox[0]?.tripId).toBeNull();
 
@@ -142,7 +143,7 @@ describe('ingestPendingImports', () => {
     const fs = makeFs();
     await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
-    const inbox = await listScreenshots(db, { tripId: null });
+    const inbox = await listSources(db, { tripId: null });
     expect(inbox).toHaveLength(1);
     expect(inbox[0]?.tripId).toBeNull();
   });
@@ -162,20 +163,20 @@ describe('ingestPendingImports', () => {
     const fs = makeFs();
     await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
-    const onTrip = await listScreenshots(db, { tripId: 't-live' });
+    const onTrip = await listSources(db, { tripId: 't-live' });
     expect(onTrip).toHaveLength(1);
     expect(onTrip[0]?.tripId).toBe('t-live');
   });
 
   it('treats a duplicate hash as success (consumes pending row, does not insert twice)', async () => {
     const db = await freshDb();
-    // Pre-existing active screenshot with the hash importImage will compute.
+    // Pre-existing active source with the hash importImage will compute.
     await db.runAsync(
-      `INSERT INTO screenshots
-         (id, trip_id, file_path, content_hash, source,
+      `INSERT INTO sources
+         (id, kind, trip_id, file_path, url, content_hash, origin,
           ocr_status, extraction_status, captured_at,
           owner_id, created_at, updated_at)
-       VALUES ('seed', NULL, '/sandbox/seed.jpg', 'sha-of:/appgroup/dup.jpg', 'share',
+       VALUES ('seed', 'screenshot', NULL, '/sandbox/seed.jpg', NULL, 'sha-of:/appgroup/dup.jpg', 'share',
                'pending', 'pending', '2026-05-04T09:00:00Z',
                ?, '2026-05-04T09:00:00Z', '2026-05-04T09:00:00Z')`,
       ownerId,
@@ -188,10 +189,9 @@ describe('ingestPendingImports', () => {
     const fs = makeFs();
     await ingestPendingImports(db, { ownerId, storageDir: '/sandbox', fs });
 
-    const rows = await listScreenshots(db, { tripId: null });
+    const rows = await listSources(db, { tripId: null });
     expect(rows).toHaveLength(1); // still just 'seed', no second row
     expect(await db.getAllAsync('SELECT * FROM pending_imports')).toEqual([]);
-    // The duplicate path skipped move entirely.
     expect(fs.move).not.toHaveBeenCalled();
   });
 });
