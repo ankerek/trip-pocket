@@ -18,6 +18,9 @@ export type PlaceTileData = {
   latitude: number | null;
   longitude: number | null;
   formatted_address: string | null;
+  /** Trip name. Optional — only the global feed surfaces it; trip detail
+   *  filters by trip_id and would just show the same chip on every tile. */
+  trip_name?: string | null;
 };
 
 const CATEGORY_ICON: Record<NonNullable<PlaceTileData['category']>, string> = {
@@ -66,6 +69,16 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
             />
           </View>
         )}
+        {place.trip_name ? (
+          <View
+            className="absolute left-2 top-2 rounded-full px-2 py-0.5"
+            style={{ backgroundColor: 'rgba(15, 23, 42, 0.7)' }}
+          >
+            <Text className="text-[11px] font-medium text-white" numberOfLines={1}>
+              {place.trip_name}
+            </Text>
+          </View>
+        ) : null}
         {/* Bottom-aligned dark scrim with the place name. */}
         <View className="absolute inset-x-0 bottom-0 px-2 py-2"
               style={{ backgroundColor: 'rgba(15, 23, 42, 0.55)' }}>

@@ -18,14 +18,18 @@ import { useDatabase } from '@/components/useDatabase';
 
 // Global places feed: every live place, regardless of trip. Tiles render
 // photo + name overlay (PlaceTile). Untriaged places live alongside trip
-// places — the trip-detail screen filters by trip_id.
-const PLACES_SQL = `SELECT id, name, city, category, photo_name,
-                           rating, price_level,
-                           external_place_id, enrichment_status,
-                           latitude, longitude, formatted_address
-                      FROM places
-                     WHERE deleted_at IS NULL
-                  ORDER BY enriched_at DESC NULLS LAST, created_at DESC`;
+// places — the trip-detail screen filters by trip_id. The LEFT JOIN brings
+// in the trip name so the tile can show a top-left trip chip; soft-deleted
+// trips collapse to NULL (chip hidden), which is the right outcome.
+const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category, p.photo_name,
+                           p.rating, p.price_level,
+                           p.external_place_id, p.enrichment_status,
+                           p.latitude, p.longitude, p.formatted_address,
+                           t.name AS trip_name
+                      FROM places p
+                 LEFT JOIN trips t ON t.id = p.trip_id AND t.deleted_at IS NULL
+                     WHERE p.deleted_at IS NULL
+                  ORDER BY p.enriched_at DESC NULLS LAST, p.created_at DESC`;
 
 // Inbox: sources with no trip and not yet attached to any place. These are
 // the "no-place yet" tiles — manual sources the user chose, plus
@@ -45,7 +49,8 @@ const INBOX_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
                  ORDER BY s.captured_at DESC`;
 
 export default function Places() {
-  const places = useLiveQuery<PlaceTileData>(PLACES_SQL, [], ['places']);
+  // Subscribed to 'trips' too: rename a trip and the chips refresh in place.
+  const places = useLiveQuery<PlaceTileData>(PLACES_SQL, [], ['places', 'trips']);
   const inbox = useLiveQuery<GridItem>(INBOX_SQL, [], ['sources', 'place_sources']);
 
   const headerRight = () => (
