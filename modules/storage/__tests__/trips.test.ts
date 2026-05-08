@@ -7,7 +7,7 @@ import {
   renameTrip,
   softDeleteTrip,
 } from '../trips';
-import { insertScreenshot, listScreenshots } from '../screenshots';
+import { insertSource, listSources } from '../sources';
 
 const ownerId = '00000000-0000-0000-0000-000000000001';
 
@@ -70,21 +70,21 @@ describe('trips repository', () => {
   it('softDeleteTrip nulls trip_id on members and marks the trip deleted', async () => {
     const db = await freshDb();
     await createTrip(db, { id: 't1', name: 'Japan', ownerId });
-    await insertScreenshot(db, {
+    await insertSource(db, {
       id: 's1',
       tripId: 't1',
       filePath: '/x/s1.jpg',
       contentHash: 'h-s1',
-      source: 'manual',
+      origin: 'manual',
       capturedAt: '2026-05-04T10:00:00Z',
       ownerId,
     });
-    await insertScreenshot(db, {
+    await insertSource(db, {
       id: 's2',
       tripId: 't1',
       filePath: '/x/s2.jpg',
       contentHash: 'h-s2',
-      source: 'manual',
+      origin: 'manual',
       capturedAt: '2026-05-04T10:00:01Z',
       ownerId,
     });
@@ -94,24 +94,24 @@ describe('trips repository', () => {
     const trips = await listTrips(db);
     expect(trips).toEqual([]);
 
-    const inbox = await listScreenshots(db, { tripId: null });
+    const inbox = await listSources(db, { tripId: null });
     expect(inbox.map((r) => r.id).sort()).toEqual(['s1', 's2']);
   });
 
-  it('softDeleteTrip leaves already-soft-deleted screenshots untouched', async () => {
+  it('softDeleteTrip leaves already-soft-deleted sources untouched', async () => {
     const db = await freshDb();
     await createTrip(db, { id: 't1', name: 'Japan', ownerId });
-    await insertScreenshot(db, {
+    await insertSource(db, {
       id: 's1',
       tripId: 't1',
       filePath: '/x/s1.jpg',
       contentHash: 'h-s1',
-      source: 'manual',
+      origin: 'manual',
       capturedAt: '2026-05-04T10:00:00Z',
       ownerId,
     });
     await db.runAsync(
-      'UPDATE screenshots SET deleted_at = ? WHERE id = ?',
+      'UPDATE sources SET deleted_at = ? WHERE id = ?',
       '2026-05-04T11:00:00Z',
       's1',
     );
@@ -119,7 +119,7 @@ describe('trips repository', () => {
     await softDeleteTrip(db, 't1');
 
     const row = await db.getFirstAsync<{ trip_id: string | null; deleted_at: string | null }>(
-      'SELECT trip_id, deleted_at FROM screenshots WHERE id = ?',
+      'SELECT trip_id, deleted_at FROM sources WHERE id = ?',
       's1',
     );
     expect(row?.trip_id).toBe('t1');

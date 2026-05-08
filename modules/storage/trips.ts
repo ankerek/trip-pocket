@@ -92,8 +92,18 @@ export async function renameTrip(db: Database, input: UpdateTripNameInput): Prom
 export async function softDeleteTrip(db: Database, id: string): Promise<void> {
   const now = new Date().toISOString();
   await db.withTransactionAsync(async () => {
+    // Untriage every source and place that pointed at this trip; the trip
+    // row itself is soft-deleted. Members remain alive and reachable from
+    // the global Places feed (places.trip_id IS NULL = "Untriaged").
     await db.runAsync(
-      `UPDATE screenshots
+      `UPDATE sources
+          SET trip_id = NULL, updated_at = ?
+        WHERE trip_id = ? AND deleted_at IS NULL`,
+      now,
+      id,
+    );
+    await db.runAsync(
+      `UPDATE places
           SET trip_id = NULL, updated_at = ?
         WHERE trip_id = ? AND deleted_at IS NULL`,
       now,
@@ -106,6 +116,7 @@ export async function softDeleteTrip(db: Database, id: string): Promise<void> {
       id,
     );
   });
-  notifyChange('screenshots');
+  notifyChange('sources');
+  notifyChange('places');
   notifyChange('trips');
 }
