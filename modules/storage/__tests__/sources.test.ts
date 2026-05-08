@@ -176,6 +176,70 @@ describe('sources additions', () => {
     expect((await getSource(db, 'a'))?.tripId).toBeNull();
   });
 
+  it('assignSourceTrip cascades to untriaged linked places', async () => {
+    const db = await freshDb();
+    await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+    await createTrip(db, { id: 't2', name: 'Lisbon', ownerId });
+    await insertSource(db, {
+      id: 's1',
+      tripId: null,
+      filePath: '/x/s1.jpg',
+      contentHash: 'h-s1',
+      origin: 'manual',
+      capturedAt: '2026-05-04T10:00:00Z',
+      ownerId,
+    });
+    // Two places linked to s1 — one untriaged, one already in another trip.
+    const now = '2026-05-08T10:00:00.000Z';
+    await db.runAsync(
+      `INSERT INTO places (id, trip_id, name, city, normalized_key,
+                           enrichment_status, owner_id, created_at, updated_at)
+       VALUES ('p1', NULL, 'Maru Tonkatsu', 'Tokyo', 'maru-tokyo', 'pending', ?, ?, ?)`,
+      ownerId,
+      now,
+      now,
+    );
+    await db.runAsync(
+      `INSERT INTO places (id, trip_id, name, city, normalized_key,
+                           enrichment_status, owner_id, created_at, updated_at)
+       VALUES ('p2', 't2', 'Pasteis', 'Lisbon', 'pasteis-lisbon', 'pending', ?, ?, ?)`,
+      ownerId,
+      now,
+      now,
+    );
+    await db.runAsync(
+      `INSERT INTO place_sources (place_id, source_id, extracted_at,
+                                  extraction_model, owner_id, created_at, updated_at)
+       VALUES ('p1', 's1', ?, 'gemini', ?, ?, ?)`,
+      now,
+      ownerId,
+      now,
+      now,
+    );
+    await db.runAsync(
+      `INSERT INTO place_sources (place_id, source_id, extracted_at,
+                                  extraction_model, owner_id, created_at, updated_at)
+       VALUES ('p2', 's1', ?, 'gemini', ?, ?, ?)`,
+      now,
+      ownerId,
+      now,
+      now,
+    );
+
+    await assignSourceTrip(db, 's1', 't1');
+
+    // The untriaged place follows the source.
+    const p1 = await db.getFirstAsync<{ trip_id: string | null }>(
+      `SELECT trip_id FROM places WHERE id = 'p1'`,
+    );
+    expect(p1?.trip_id).toBe('t1');
+    // The already-triaged place stays where it was — we never yank.
+    const p2 = await db.getFirstAsync<{ trip_id: string | null }>(
+      `SELECT trip_id FROM places WHERE id = 'p2'`,
+    );
+    expect(p2?.trip_id).toBe('t2');
+  });
+
   it('softDeleteSource sets deleted_at and removes the row from listings', async () => {
     const db = await freshDb();
     await insertSource(db, {

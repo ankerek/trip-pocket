@@ -28,17 +28,15 @@ const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category, p.photo_name,
                      WHERE p.deleted_at IS NULL
                   ORDER BY p.enriched_at DESC NULLS LAST, p.created_at DESC`;
 
+// "Untriaged" means the user hasn't decided which trip the source
+// belongs to yet — it's independent of whether AI extraction has
+// produced a place. We keep the screenshot in the Inbox until the user
+// explicitly assigns a trip (or until they explicitly skip and we
+// surface a "you have N skipped items" follow-up — future work).
 const INBOX_COUNT_SQL = `SELECT COUNT(*) AS n
                            FROM sources s
-                      LEFT JOIN (
-                             SELECT ps.source_id, COUNT(*) AS pc
-                               FROM place_sources ps
-                              WHERE ps.deleted_at IS NULL
-                           GROUP BY ps.source_id
-                           ) p ON p.source_id = s.id
                           WHERE s.deleted_at IS NULL
-                            AND s.trip_id IS NULL
-                            AND COALESCE(p.pc, 0) = 0`;
+                            AND s.trip_id IS NULL`;
 
 const TRIPS_SQL = `SELECT t.id, t.name,
                           COUNT(p.id) AS place_count
@@ -62,7 +60,7 @@ export default function Pocket() {
   const inboxCountRows = useLiveQuery<InboxCount>(
     INBOX_COUNT_SQL,
     [],
-    ['sources', 'place_sources'],
+    ['sources'],
   );
   const tripRows = useLiveQuery<TripRow>(TRIPS_SQL, [], ['trips', 'places']);
 

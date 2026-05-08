@@ -159,13 +159,38 @@ export async function assignSourceTrip(
   tripId: string | null,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE sources SET trip_id = ?, updated_at = ? WHERE id = ?`,
-    tripId,
-    now,
-    sourceId,
-  );
+  let movedPlaces = false;
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE sources SET trip_id = ?, updated_at = ? WHERE id = ?`,
+      tripId,
+      now,
+      sourceId,
+    );
+    // Mirror movePlaceToTrip's cascade in the opposite direction: when a
+    // source gets triaged into a trip, pull its untriaged extracted
+    // places along with it. Bound to tripId !== null + place.trip_id IS
+    // NULL so we never yank a place out of a trip the user explicitly
+    // placed it in.
+    if (tripId !== null) {
+      const result = await db.runAsync(
+        `UPDATE places
+            SET trip_id = ?, updated_at = ?
+          WHERE trip_id IS NULL
+            AND deleted_at IS NULL
+            AND id IN (
+              SELECT place_id FROM place_sources
+               WHERE source_id = ? AND deleted_at IS NULL
+            )`,
+        tripId,
+        now,
+        sourceId,
+      );
+      movedPlaces = result.changes > 0;
+    }
+  });
   notifyChange('sources');
+  if (movedPlaces) notifyChange('places');
   notifyChange('trips');
 }
 
