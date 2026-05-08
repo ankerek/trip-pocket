@@ -178,6 +178,7 @@ export default function PlaceDetail() {
           {place.city ? (
             <Text className="mt-0.5 text-base text-slate-500">{place.city}</Text>
           ) : null}
+          {place.category ? <CategoryChip category={place.category} /> : null}
           {place.rating !== null ? (
             <Text className="mt-1 text-sm text-slate-500">
               ★ {place.rating.toFixed(1)}
@@ -315,6 +316,25 @@ export default function PlaceDetail() {
         }}
       />
     </>
+  );
+}
+
+// Keyed off the LLM categories the extractor writes today. DB column is a
+// plain string, so unrecognised values render no chip — defensive.
+const CATEGORY_META: Record<string, { icon: string; label: string }> = {
+  food: { icon: 'fork.knife', label: 'Food' },
+  activity: { icon: 'figure.walk', label: 'Activity' },
+  place: { icon: 'mappin.circle', label: 'Place' },
+};
+
+function CategoryChip({ category }: { category: string }) {
+  const meta = CATEGORY_META[category];
+  if (!meta) return null;
+  return (
+    <View className="mt-2 flex-row items-center gap-1 self-start rounded-full bg-slate-100 px-2.5 py-1">
+      <Icon name={meta.icon} size={12} tintColor="#475569" />
+      <Text className="text-xs font-medium text-slate-700">{meta.label}</Text>
+    </View>
   );
 }
 
