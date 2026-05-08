@@ -173,6 +173,17 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen
+          name="settings"
+          options={{
+            headerShown: true,
+            presentation: 'formSheet',
+            sheetGrabberVisible: true,
+            sheetAllowedDetents: [0.5, 1.0],
+            title: 'Settings',
+            ...SHARED_HEADER_OPTIONS,
+          }}
+        />
+        <Stack.Screen
           name="places/[id]"
           options={{ headerShown: true, ...SHARED_HEADER_OPTIONS }}
         />
