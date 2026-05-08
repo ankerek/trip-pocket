@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from '@/tw';
+import { useEffect, useMemo, useState } from 'react';
+import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
@@ -28,12 +29,15 @@ const TRIP_PLACES_SQL = `SELECT id, name, city, category, photo_name,
                           WHERE trip_id = ? AND deleted_at IS NULL
                        ORDER BY enriched_at DESC NULLS LAST, created_at DESC`;
 
+type ViewMode = 'grid' | 'map';
+
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
   const [trip, setTrip] = useState<Trip | null | 'loading'>('loading');
   const [tab, setTab] = useState<'photos' | 'places'>('places');
+  const [view, setView] = useState<ViewMode>('grid');
 
   const sources = useLiveQuery<GridItem>(
     TRIP_SOURCES_SQL,
@@ -59,20 +63,31 @@ export default function TripDetail() {
     };
   }, [db, id]);
 
+  // Cover photo: highest-rated enriched place with a photo, falling back
+  // to the first place with a photo.
+  const coverPhotoUrl = useMemo(() => {
+    if (!places) return null;
+    const ranked = [...places]
+      .filter((p) => p.photo_name)
+      .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+    return ranked[0] ? buildCoverUrl(ranked[0].photo_name) : null;
+  }, [places]);
+
   if (trip === 'loading' || sources === null || places === null) return null;
 
   if (trip === null) {
     return (
       <>
         <Stack.Screen options={{ title: '' }} />
-        <View className="flex-1 items-center justify-center bg-white">
-          <Text className="text-base text-slate-500">Trip not found.</Text>
+        <View className="flex-1 items-center justify-center bg-bg">
+          <Text className="text-base text-text-muted">Trip not found.</Text>
         </View>
       </>
     );
   }
 
   const empty = sources.length === 0 && places.length === 0;
+  const categories = countCategories(places);
 
   return (
     <>
@@ -89,7 +104,7 @@ export default function TripDetail() {
                 accessibilityRole="button"
                 accessibilityLabel="Edit trip"
               >
-                <Icon name="pencil" size={22} tintColor="#0f172a" />
+                <Icon name="ellipsis" size={22} tintColor="#0c4a6e" />
               </Pressable>
             </View>
           ),
@@ -98,34 +113,76 @@ export default function TripDetail() {
       {empty ? (
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
-          className="flex-1 bg-white"
+          className="flex-1 bg-bg"
           contentContainerClassName="flex-1 items-center justify-center px-8"
         >
-          <Text className="text-center text-base text-slate-500">
-            No places in this trip yet — add some from the Places tab.
+          <Text className="text-center text-base text-text-muted">
+            No places in this trip yet — add some from Pocket.
           </Text>
         </ScrollView>
       ) : (
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
-          className="flex-1 bg-white"
+          className="flex-1 bg-bg"
+          contentContainerClassName="pb-24"
         >
-          <TabToggle
-            tab={tab}
-            onChange={setTab}
-            placesCount={places.length}
-            sourcesCount={sources.length}
-          />
-          {tab === 'places' ? (
-            <View className="flex-row flex-wrap p-2">
-              {places.map((p) => (
-                <View key={p.id} className="w-1/2 p-1">
-                  <PlaceTile place={p} />
-                </View>
-              ))}
+          {/* Cover photo header — spec §4.5 */}
+          {coverPhotoUrl ? (
+            <Image
+              source={{ uri: coverPhotoUrl }}
+              style={{
+                width: '100%',
+                aspectRatio: 16 / 9,
+                backgroundColor: '#e2e8f0',
+              }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
+            />
+          ) : null}
+
+          {/* Stats row */}
+          <View className="px-4 pb-2 pt-4 flex-row flex-wrap gap-2">
+            <Stat label={`${places.length} place${places.length === 1 ? '' : 's'}`} />
+            {categories.food > 0 ? <Stat label={`🍴 ${categories.food}`} /> : null}
+            {categories.activity > 0 ? <Stat label={`🥾 ${categories.activity}`} /> : null}
+            {categories.place > 0 ? <Stat label={`📍 ${categories.place}`} /> : null}
+          </View>
+
+          {/* View toggle — Grid | Map. Map is "Coming soon" v1 (spec §4.5). */}
+          <ViewToggle view={view} onChange={setView} />
+
+          {view === 'map' ? (
+            <View className="mx-4 mt-2 items-center justify-center rounded-2xl py-12"
+                  style={{ backgroundColor: 'rgba(15,23,42,0.04)' }}>
+              <Icon name="map" size={28} tintColor="#94a3b8" />
+              <Text
+                className="mt-2 text-text-muted"
+                style={{ fontSize: 13, fontWeight: '500' }}
+              >
+                Map view coming soon
+              </Text>
             </View>
           ) : (
-            <PlaceGrid data={sources} />
+            <>
+              <SubTabToggle
+                tab={tab}
+                onChange={setTab}
+                placesCount={places.length}
+                sourcesCount={sources.length}
+              />
+              {tab === 'places' ? (
+                <View className="flex-row flex-wrap px-2.5 pt-1">
+                  {places.map((p) => (
+                    <View key={p.id} className="w-1/2 p-1">
+                      <PlaceTile place={p} />
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <PlaceGrid data={sources} />
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -133,34 +190,26 @@ export default function TripDetail() {
   );
 }
 
-function TabToggle({
-  tab,
-  onChange,
-  placesCount,
-  sourcesCount,
-}: {
-  tab: 'photos' | 'places';
-  onChange: (next: 'photos' | 'places') => void;
-  placesCount: number;
-  sourcesCount: number;
-}) {
+function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
-    <View className="flex-row gap-1 px-4 py-3">
-      <TabButton
-        label={`Places · ${placesCount}`}
-        active={tab === 'places'}
-        onPress={() => onChange('places')}
-      />
-      <TabButton
-        label={`Sources · ${sourcesCount}`}
-        active={tab === 'photos'}
-        onPress={() => onChange('photos')}
+    <View
+      className="mx-4 mt-2 flex-row rounded-full p-1"
+      style={{
+        backgroundColor: 'rgba(15,23,42,0.06)',
+      }}
+      accessibilityRole="tablist"
+    >
+      <ToggleSegment label="Grid" active={view === 'grid'} onPress={() => onChange('grid')} />
+      <ToggleSegment
+        label="Map"
+        active={view === 'map'}
+        onPress={() => onChange('map')}
       />
     </View>
   );
 }
 
-function TabButton({
+function ToggleSegment({
   label,
   active,
   onPress,
@@ -172,15 +221,123 @@ function TabButton({
   return (
     <Pressable
       onPress={onPress}
-      className={`flex-1 items-center rounded-full px-4 py-2 ${
-        active ? 'bg-slate-900' : 'bg-slate-100'
-      }`}
-      accessibilityRole="button"
+      accessibilityRole="tab"
       accessibilityState={{ selected: active }}
+      accessibilityLabel={label}
+      className="flex-1 items-center rounded-full py-2"
+      style={{
+        backgroundColor: active ? '#ffffff' : 'transparent',
+      }}
     >
-      <Text className={`text-sm font-medium ${active ? 'text-white' : 'text-slate-700'}`}>
+      <Text
+        style={{
+          fontSize: 13,
+          fontWeight: active ? '600' : '500',
+          color: active ? '#0c4a6e' : '#475569',
+        }}
+      >
         {label}
       </Text>
     </Pressable>
   );
+}
+
+function SubTabToggle({
+  tab,
+  onChange,
+  placesCount,
+  sourcesCount,
+}: {
+  tab: 'photos' | 'places';
+  onChange: (next: 'photos' | 'places') => void;
+  placesCount: number;
+  sourcesCount: number;
+}) {
+  return (
+    <View className="flex-row gap-2 px-4 py-3">
+      <SubTabButton
+        label={`Places · ${placesCount}`}
+        active={tab === 'places'}
+        onPress={() => onChange('places')}
+      />
+      <SubTabButton
+        label={`Sources · ${sourcesCount}`}
+        active={tab === 'photos'}
+        onPress={() => onChange('photos')}
+      />
+    </View>
+  );
+}
+
+function SubTabButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      className="flex-1 items-center rounded-full px-4 py-2"
+      style={{
+        backgroundColor: active ? '#0c4a6e' : 'rgba(15,23,42,0.06)',
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 13,
+          fontWeight: active ? '600' : '500',
+          color: active ? '#f8fafc' : '#475569',
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function Stat({ label }: { label: string }) {
+  return (
+    <View
+      className="rounded-full px-3 py-1"
+      style={{ backgroundColor: 'rgba(15,23,42,0.06)' }}
+    >
+      <Text
+        style={{
+          fontSize: 12,
+          fontWeight: '600',
+          color: '#475569',
+          fontVariant: ['tabular-nums'],
+        }}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+function countCategories(places: readonly PlaceTileData[]): {
+  food: number;
+  activity: number;
+  place: number;
+} {
+  const out = { food: 0, activity: 0, place: 0 };
+  for (const p of places) {
+    if (p.category === 'food') out.food += 1;
+    else if (p.category === 'activity') out.activity += 1;
+    else if (p.category === 'place') out.place += 1;
+  }
+  return out;
+}
+
+function buildCoverUrl(photoName: string | null): string | null {
+  if (!photoName) return null;
+  const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
+  if (!base) return null;
+  return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=675`;
 }

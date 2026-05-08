@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { FlatList, Image, Pressable, Text, View } from '@/tw';
+import { Image, Pressable, Text, View } from '@/tw';
+import { FlatList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
 import {
@@ -37,11 +38,7 @@ export default function Trips() {
   const router = useRouter();
   const db = useDatabase();
 
-  const tick = useLiveQuery<{ v: number }>(
-    `SELECT 0 AS v`,
-    [],
-    ['trips', 'places'],
-  );
+  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['trips', 'places']);
 
   const [rows, setRows] = useState<TripRowData[] | null>(null);
 
@@ -80,8 +77,10 @@ export default function Trips() {
     return (
       <>
         <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
-        <View className="flex-1 items-center justify-center bg-white">
-          <Text className="text-base text-slate-500">No trips yet — tap + to create one.</Text>
+        <View className="flex-1 items-center justify-center bg-bg">
+          <Text className="text-base text-text-muted">
+            No trips yet — tap + to create one.
+          </Text>
         </View>
       </>
     );
@@ -92,29 +91,35 @@ export default function Trips() {
       <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
       <FlatList
         contentInsetAdjustmentBehavior="automatic"
-        className="bg-white"
+        style={{ flex: 1, backgroundColor: '#ffffff' }}
         data={rows}
         keyExtractor={(r) => r.trip.id}
-        contentContainerClassName="p-2"
+        contentContainerStyle={{ padding: 14, paddingBottom: 96 }}
+        windowSize={10}
         renderItem={({ item }) => (
           <Pressable
             onPress={() => router.push(`/trips/${item.trip.id}`)}
-            className="mb-3 rounded-xl bg-slate-50 p-3"
+            className="mb-3 overflow-hidden rounded-2xl"
+            style={{
+              backgroundColor: '#f8fafc',
+              borderWidth: 1,
+              borderColor: 'rgba(15,23,42,0.06)',
+            }}
             accessibilityRole="button"
-            accessibilityLabel={item.trip.name}
+            accessibilityLabel={`${item.trip.name}, ${item.count} place${item.count === 1 ? '' : 's'}`}
           >
-            <View className="flex-row items-baseline justify-between">
+            <View className="px-4 pt-3 pb-2 flex-row items-baseline justify-between">
               <Text
-                className="flex-1 pr-2 text-base font-semibold text-slate-900"
+                className="flex-1 pr-2"
                 numberOfLines={1}
+                style={{ fontSize: 17, fontWeight: '600', color: '#0c4a6e' }}
               >
                 {item.trip.name}
               </Text>
               <Text
-                className="text-sm text-slate-500"
-                style={{ fontVariant: ['tabular-nums'] }}
+                style={{ fontSize: 13, color: '#94a3b8', fontVariant: ['tabular-nums'] }}
               >
-                {item.count}
+                {item.count} place{item.count === 1 ? '' : 's'}
               </Text>
             </View>
             <FlatList
@@ -122,11 +127,10 @@ export default function Trips() {
               horizontal
               keyExtractor={(p) => p.id}
               showsHorizontalScrollIndicator={false}
-              contentContainerClassName="mt-2"
+              contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 14, gap: 6 }}
               renderItem={({ item: p }) => (
                 <Pressable
                   onPress={() => router.push(`/places/${p.id}`)}
-                  className="mr-2"
                   accessibilityRole="button"
                   accessibilityLabel={p.name}
                 >
@@ -134,7 +138,12 @@ export default function Trips() {
                 </Pressable>
               )}
               ListEmptyComponent={
-                <Text className="mt-2 text-xs text-slate-400">No places yet</Text>
+                <Text
+                  className="px-4 pb-3"
+                  style={{ fontSize: 12, color: '#94a3b8' }}
+                >
+                  No places yet
+                </Text>
               }
             />
           </Pressable>
@@ -145,21 +154,33 @@ export default function Trips() {
 }
 
 function PreviewThumb({ place }: { place: TripPreviewPlace }) {
-  // Built lazily so we can fall back gracefully when photo_name is null
-  // (pre-enrichment) — show a soft tile with the place initial.
   const photoUri = buildPhotoUri(place.photo_name);
   if (photoUri) {
     return (
       <Image
         source={{ uri: photoUri }}
-        className="h-20 w-16 rounded-md bg-slate-200"
+        style={{
+          width: 72,
+          height: 90,
+          borderRadius: 10,
+          backgroundColor: '#e2e8f0',
+        }}
         contentFit="cover"
+        cachePolicy="memory-disk"
       />
     );
   }
   return (
-    <View className="h-20 w-16 items-center justify-center rounded-md bg-slate-200">
-      <Text className="text-base font-semibold text-slate-500">
+    <View
+      style={{
+        width: 72,
+        height: 90,
+        borderRadius: 10,
+        backgroundColor: '#e2e8f0',
+      }}
+      className="items-center justify-center"
+    >
+      <Text style={{ fontSize: 16, fontWeight: '600', color: '#94a3b8' }}>
         {place.name?.charAt(0)?.toUpperCase() ?? '?'}
       </Text>
     </View>
@@ -168,11 +189,10 @@ function PreviewThumb({ place }: { place: TripPreviewPlace }) {
 
 function buildPhotoUri(photoName: string | null): string | null {
   if (!photoName) return null;
-  // Lazy require keeps this file zero-cost on platforms without expo-constants.
   const Constants = require('expo-constants').default;
   const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
   if (!base) return null;
-  return `${base.replace(/\/$/, '')}/${photoName}?w=128&h=160`;
+  return `${base.replace(/\/$/, '')}/${photoName}?w=144&h=180`;
 }
 
 function HeaderPlusButton() {
@@ -183,8 +203,9 @@ function HeaderPlusButton() {
       className="px-3"
       accessibilityRole="button"
       accessibilityLabel="Add new trip"
+      hitSlop={8}
     >
-      <Icon name="plus" size={22} tintColor="#0f172a" />
+      <Icon name="plus" size={22} tintColor="#0c4a6e" />
     </Pressable>
   );
 }
