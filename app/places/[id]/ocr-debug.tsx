@@ -14,13 +14,21 @@ type DebugPlace = {
   name: string;
   city: string;
   address: string | null;
-  apple_maps_url: string | null;
+  enrichment_status: 'pending' | 'enriched' | 'not-found' | 'failed';
+  external_place_id: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
-const DEBUG_PLACES_SQL = `SELECT id, name, city, address, apple_maps_url
-                            FROM extracted_places
-                           WHERE screenshot_id = ? AND deleted_at IS NULL
-                        ORDER BY created_at ASC`;
+const DEBUG_PLACES_SQL = `SELECT ep.id, ep.name, ep.city, ep.address,
+                                 ep.enrichment_status,
+                                 ep.external_place_id,
+                                 pe.latitude, pe.longitude
+                            FROM extracted_places ep
+                       LEFT JOIN place_enrichments pe
+                                 ON pe.external_place_id = ep.external_place_id
+                           WHERE ep.screenshot_id = ? AND ep.deleted_at IS NULL
+                        ORDER BY ep.created_at ASC`;
 
 export default function OcrDebugSheet() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -111,7 +119,8 @@ function ExtractedPlacesSection({ places }: { places: DebugPlace[] | null }) {
             <Text selectable className="text-xs text-slate-500">
               city: {p.city || '—'}
               {p.address ? `\naddress: ${p.address}` : ''}
-              {`\nsource: ${p.apple_maps_url ? 'apple_maps_url' : 'search-fallback'}`}
+              {`\nenrichment: ${p.enrichment_status}`}
+              {p.external_place_id ? `\nplace_id: ${p.external_place_id}` : ''}
             </Text>
             <Text selectable className="font-mono text-xs text-slate-700">
               {getMapsUrl(p)}

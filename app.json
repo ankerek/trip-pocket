@@ -15,7 +15,8 @@
         "com.apple.security.application-groups": ["group.com.trippocket.shared"]
       },
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": ["comgooglemaps"]
       },
       "appleTeamId": "WL5ALL46C4"
     },
@@ -64,6 +65,8 @@
     "extra": {
       "router": {},
       "extractionProxyUrl": "https://trip-pocket-extract-proxy.ankerek.workers.dev/extract",
+      "enrichmentProxyUrl": "https://trip-pocket-extract-proxy.ankerek.workers.dev/enrich",
+      "photoProxyUrlBase": "https://trip-pocket-extract-proxy.ankerek.workers.dev/photo",
       "eas": {
         "projectId": "2dee30ac-eb35-4cc6-80d7-4e6a664237b5",
         "build": {

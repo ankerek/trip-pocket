@@ -22,40 +22,47 @@ const TRIP_GRID_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_stat
                         WHERE s.deleted_at IS NULL AND s.trip_id = ?
                      ORDER BY s.captured_at DESC`;
 
-// Distinct places across the trip's screenshots. The GROUP BY key:
-//   (LOWER(name), LOWER(TRIM(city)), LOWER(TRIM(COALESCE(address, ''))),
-//    COALESCE(apple_maps_url, ''))
+// Distinct places across the trip's screenshots. Venue-aware GROUP BY:
+//   COALESCE(external_place_id, OCR-key)
+// Resolved rows (post-enrichment) collapse by their Google Places venue.
+// Unresolved rows fall back to the OCR-key (name | city | address) used
+// pre-enrichment. The two coexist while a trip is being enriched.
 //
-// Both `address` and `apple_maps_url` are in the key for the same reason:
-// disambiguating two same-named venues in the same city (e.g. two
-// Starbucks in Tokyo). Pre-enrichment, `apple_maps_url` is always NULL
-// and `address` carries the signal — distinct addresses keep distinct
-// rows; rows with no address (both NULL → '') merge by name+city.
-// Post-enrichment (v1.x), `apple_maps_url` becomes non-null and adds
-// further precision; the COALESCE keeps mixed groups working.
-//
-// MIN(id), MAX(formatted_address) etc. are arbitrary picks — within a
-// group, address and apple_maps_url are part of the key (same value
-// across rows), so MAX() of the others picks an arbitrary representative.
+// LEFT JOIN against place_enrichments brings in the venue-level data
+// (photo, blurb, rating, lat/lng, etc.) — NULL for unresolved rows.
+// MAX() on per-row fields picks an arbitrary representative within the
+// group; on enrichment fields it's a no-op (PK join → constant within group).
 const TRIP_PLACES_SQL = `SELECT
                            MIN(ep.id) AS id,
-                           ep.name,
-                           ep.city,
+                           MAX(ep.name) AS name,
+                           MAX(ep.city) AS city,
                            MAX(ep.address) AS address,
-                           ep.category,
-                           MAX(ep.formatted_address) AS formatted_address,
-                           ep.apple_maps_url,
+                           MAX(ep.category) AS category,
+                           MAX(ep.external_place_id) AS external_place_id,
+                           MAX(ep.enrichment_status) AS enrichment_status,
+                           MAX(pe.formatted_address) AS formatted_address,
+                           MAX(pe.latitude) AS latitude,
+                           MAX(pe.longitude) AS longitude,
+                           MAX(pe.photo_name) AS photo_name,
+                           MAX(pe.description) AS description,
+                           MAX(pe.rating) AS rating,
+                           MAX(pe.price_level) AS price_level,
+                           MAX(pe.external_url) AS external_url,
                            COUNT(DISTINCT ep.screenshot_id) AS source_count,
                            MAX(ep.created_at) AS last_seen
                          FROM extracted_places ep
                          JOIN screenshots s ON s.id = ep.screenshot_id
+                    LEFT JOIN place_enrichments pe
+                              ON pe.external_place_id = ep.external_place_id
                          WHERE s.trip_id = ?
                            AND s.deleted_at IS NULL
                            AND ep.deleted_at IS NULL
-                         GROUP BY LOWER(ep.name),
-                                  LOWER(TRIM(ep.city)),
-                                  LOWER(TRIM(COALESCE(ep.address, ''))),
-                                  COALESCE(ep.apple_maps_url, '')
+                         GROUP BY COALESCE(
+                                    ep.external_place_id,
+                                    LOWER(ep.name) || '|' ||
+                                    LOWER(TRIM(ep.city)) || '|' ||
+                                    LOWER(TRIM(COALESCE(ep.address, '')))
+                                  )
                          ORDER BY last_seen DESC`;
 
 type TripPlaceRow = PlaceRowData & { last_seen: string };
