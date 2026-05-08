@@ -3,6 +3,9 @@
 .AppleDouble
 .LSOverride
 
+# Visual brainstorming companion
+.superpowers/
+
 # Editors / IDEs
 .vscode/
 .idea/
