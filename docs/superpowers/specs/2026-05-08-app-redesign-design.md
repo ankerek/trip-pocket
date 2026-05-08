@@ -211,3 +211,27 @@ Both first-class. Tab bar and headers use native `BlurView` (`systemMaterial` li
 8. **Accessibility pass.** Reduced motion, dynamic type, contrast audit.
 
 Each phase is independently shippable; phases 1–4 deliver the library wow, 5 delivers the capture wow, 6–8 polish.
+
+## 13. Addendum — UX validation (ui-ux-pro-max)
+
+These items came out of running the design through `ui-ux-pro-max` and are now binding.
+
+- **Lists must virtualize.** `app/(tabs)/(places)/index.tsx` currently renders the places grid with `ScrollView` + `.map()`. Phase 3 replaces this with `FlatList` (or `FlashList` if added) with `keyExtractor={(p) => p.id}`, `windowSize={5}`, `removeClippedSubviews`, and `numColumns={2}`. Same change for the trip list when length warrants.
+- **Image sizing must be explicit.** Every `expo-image` instance needs explicit `style={{ width, height }}` (or aspect-ratio reserved at the parent) and `cachePolicy="memory-disk"`. No bare `<Image source={uri} />`. Tile parents get `aspect-ratio: 3/4` and the image fills it with `contentFit="cover"`.
+- **Reduced motion is a first-class branch, not a graceful degradation.** Use `useReducedMotion()` (Reanimated) on every animated component. Truth table:
+  - Shared-element morph → fade crossfade (180ms ease.out)
+  - Parallax banner → static
+  - Stagger reveals → simultaneous fade
+  - Spring overshoot → linear ease.out
+- **Animate ≤ 2 elements at once.** The triage swipe must not animate sheet content while the card slides; only the card moves, then content fades in.
+- **Photo-overlay contrast.** Place name text on tiles must hit 4.5:1 even on bright photos. Implement with a fixed bottom gradient (`linear-gradient(180deg, transparent 55%, rgba(0,0,0,0.55) 100%)`) and 600-weight white text. Verify on a test set of 10 high-luminance images during phase 3.
+- **No emoji as icons** anywhere in production UI. Replace any current emoji with SF Symbols via `Icon.tsx`. Country chips on trips may use the unicode flag glyph since it's a content character, not a UI icon.
+- **Easing direction.** Entering elements use `ease.out`; exiting elements use `ease.in`. The Reanimated spring presets in MASTER are the shared-element/sheet defaults — fall back to ease curves only on reduced motion.
+- **Cursor and focus** are N/A on native iOS but become required if the web build (`react-native-web`) is exposed. Track as a follow-up if web ships.
+
+## 14. Validated against
+
+- `docs/superpowers/specs/2026-05-08-app-redesign-design.md` (this file) — source of truth
+- `design-system/trip-pocket/MASTER.md` — token-level reference for implementation
+- `ui-ux-pro-max` skill output — accessibility, list virtualization, image sizing, reduced-motion rules incorporated above
+
