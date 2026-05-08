@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
-import { Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
+import { Alert, ScrollView } from 'react-native';
+import { Pressable, Text, TextInput, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
@@ -44,7 +44,7 @@ export default function EditTrip() {
 
   if (load.trip === null) {
     return (
-      <SafeAreaView className="flex-1 items-center justify-center bg-white">
+      <>
         <Stack.Screen
           options={{
             headerLeft: () => (
@@ -53,15 +53,18 @@ export default function EditTrip() {
                 className="px-3"
                 accessibilityRole="button"
                 accessibilityLabel="Cancel"
+                hitSlop={8}
               >
-                <Text className="text-base text-slate-600">Cancel</Text>
+                <Text style={{ fontSize: 16, color: '#475569' }}>Cancel</Text>
               </Pressable>
             ),
             headerRight: () => null,
           }}
         />
-        <Text className="text-base text-slate-500">Trip not found.</Text>
-      </SafeAreaView>
+        <View className="flex-1 items-center justify-center bg-bg">
+          <Text className="text-base text-text-muted">Trip not found.</Text>
+        </View>
+      </>
     );
   }
 
@@ -99,10 +102,6 @@ export default function EditTrip() {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
               }
               await softDeleteTrip(db, id);
-              // Pop twice: first this modal, then the trip detail screen behind it.
-              // Assumes we were opened from /trips/[id] (the only entry path in v0.1).
-              // If a future deep link opens this modal directly, the second back() will
-              // pop to whatever was below — usually still acceptable, but worth revisiting.
               router.back();
               setTimeout(() => router.back(), 0);
             } catch (err) {
@@ -115,7 +114,7 @@ export default function EditTrip() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <>
       <Stack.Screen
         options={{
           headerLeft: () => (
@@ -124,8 +123,9 @@ export default function EditTrip() {
               className="px-3"
               accessibilityRole="button"
               accessibilityLabel="Cancel"
+              hitSlop={8}
             >
-              <Text className="text-base text-slate-600">Cancel</Text>
+              <Text style={{ fontSize: 16, color: '#475569' }}>Cancel</Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -136,13 +136,14 @@ export default function EditTrip() {
               accessibilityRole="button"
               accessibilityLabel="Save"
               accessibilityState={{ disabled: !canSave }}
+              hitSlop={8}
             >
               <Text
-                className={
-                  canSave
-                    ? 'text-base font-semibold text-blue-600'
-                    : 'text-base font-semibold text-slate-300'
-                }
+                style={{
+                  fontSize: 16,
+                  fontWeight: '600',
+                  color: canSave ? '#14b8a6' : '#cbd5e1',
+                }}
               >
                 Save
               </Text>
@@ -150,26 +151,59 @@ export default function EditTrip() {
           ),
         }}
       />
-      <View className="p-4">
+      <ScrollView
+        className="flex-1 bg-bg"
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 32 }}
+      >
+        <Text
+          className="text-text-muted mb-2"
+          style={{ fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' }}
+        >
+          Trip name
+        </Text>
         <TextInput
           value={name}
           onChangeText={setName}
           placeholder="Trip name"
-          className="rounded-md border border-slate-200 px-3 py-3 text-base"
+          placeholderTextColor="#94a3b8"
           returnKeyType="done"
           onSubmitEditing={onSave}
+          style={{
+            fontSize: 17,
+            color: '#0c4a6e',
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+            borderRadius: 12,
+            backgroundColor: '#f8fafc',
+            borderWidth: 1,
+            borderColor: 'rgba(15,23,42,0.06)',
+          }}
         />
-      </View>
-      <View className="mt-auto p-4">
+
+        <View style={{ height: 24 }} />
+
         <Pressable
           onPress={onDelete}
-          className="rounded-md border border-red-300 px-3 py-3"
           accessibilityRole="button"
           accessibilityLabel="Delete trip"
+          style={{
+            paddingVertical: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: 'rgba(220,38,38,0.30)',
+            backgroundColor: 'rgba(254,242,242,0.6)',
+          }}
         >
-          <Text className="text-center text-base font-semibold text-red-600">Delete trip</Text>
+          <Text
+            className="text-center"
+            style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}
+          >
+            Delete trip
+          </Text>
         </Pressable>
-      </View>
-    </SafeAreaView>
+      </ScrollView>
+    </>
   );
 }
