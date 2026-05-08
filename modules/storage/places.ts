@@ -181,14 +181,38 @@ export async function movePlaceToTrip(
   tripId: string | null,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE places SET trip_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-    tripId,
-    now,
-    placeId,
-  );
+  let movedSources = false;
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE places SET trip_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+      tripId,
+      now,
+      placeId,
+    );
+    // Auto-pull untriaged sources into the trip with the place. Bound to
+    // tripId !== null and source.trip_id IS NULL so we never yank a source
+    // out of a trip the user explicitly placed it in, and never push sources
+    // back to Inbox when the user just unassigned a place.
+    if (tripId !== null) {
+      const result = await db.runAsync(
+        `UPDATE sources
+            SET trip_id = ?, updated_at = ?
+          WHERE trip_id IS NULL
+            AND deleted_at IS NULL
+            AND id IN (
+              SELECT source_id FROM place_sources
+               WHERE place_id = ? AND deleted_at IS NULL
+            )`,
+        tripId,
+        now,
+        placeId,
+      );
+      movedSources = result.changes > 0;
+    }
+  });
   notifyChange('places');
   notifyChange('trips');
+  if (movedSources) notifyChange('sources');
 }
 
 export async function softDeletePlace(db: Database, id: string): Promise<void> {
