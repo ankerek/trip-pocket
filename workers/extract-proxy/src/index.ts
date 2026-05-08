@@ -4,6 +4,8 @@ import {
   type ExtractionResponse,
 } from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
+import { handleEnrich } from './enrich';
+import { handlePhoto } from './photo';
 
 export interface RateLimitBinding {
   limit(args: { key: string }): Promise<{ success: boolean }>;
@@ -11,6 +13,7 @@ export interface RateLimitBinding {
 
 export interface Env {
   GEMINI_API_KEY: string;
+  GOOGLE_PLACES_API_KEY: string;
   CF_ACCOUNT_ID: string;
   AI_GATEWAY_NAME: string;
   CF_AIG_TOKEN: string;
@@ -177,6 +180,15 @@ function extractCandidateText(geminiBody: unknown): string | null {
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
-    return handleExtract(request, env);
+    return route(request, env);
   },
 };
+
+async function route(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  if (path === '/extract') return handleExtract(request, env);
+  if (path === '/enrich') return handleEnrich(request, env);
+  if (path.startsWith('/photo/')) return handlePhoto(request, env);
+  return errorResponse('not-found', 404);
+}
