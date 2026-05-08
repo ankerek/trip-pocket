@@ -278,7 +278,38 @@ These items came out of running the design through `ui-ux-pro-max` and are now b
 - **Easing direction.** Entering elements use `ease.out`; exiting elements use `ease.in`. The Reanimated spring presets in MASTER are the shared-element/sheet defaults — fall back to ease curves only on reduced motion.
 - **Web (out of scope).** Cursor styles, focus rings, View Transitions API, and any `react-native-web` surfacing are deferred. If a web build ships later, treat web a11y/cursor work as a separate spec.
 
-## 14. Validated against
+## 14. Implementation outcome
+
+What landed in this redesign branch (commits `7a14a17` through phase 7+8):
+
+| Phase | Status | Notes |
+| ----- | ------ | ----- |
+| 1. Theme + tokens | ✅ shipped | `global.css` `@theme` + `tw/theme.ts` JS mirror, light + dark via `prefers-color-scheme`. |
+| 2. Tab bar + FAB + Settings | ✅ shipped | Custom JS tab bar replaces `NativeTabs`; `expo-blur` `systemMaterial`; settings is a `formSheet` modal at `/settings`. |
+| 3. Pocket home | ✅ shipped | `FlatList` numColumns 2 with `removeClippedSubviews=false`; Inbox banner; filter pills; pull-to-refresh wired to `runForegroundIngest`; Dynamic Type ≥XL collapses to 1 column. |
+| 4a. Shared-element spike | ✅ resolved | Outcome: native push + `expo-image` memory-disk cache (option 3). Custom morph deferred to future enhancement. |
+| 4b. Place detail | ✅ shipped | Hero photo, Teal CTA, Sea text, restyled metadata card and source strip. |
+| 5. Triage flow | ✅ shipped (auto-snap) | Full-screen modal at `/triage`, horizontal `FlatList` pager, AI-extracted card, `KeyboardAvoidingView`. **Drag-to-snap deferred** — see §11. |
+| 6. Trips | ✅ shipped | Trip list with restyled cards; trip detail with cover photo, stat chips, Grid/Map view toggle (Map = "Coming soon" placeholder). |
+| 7. Motion polish | ✅ partial | `useReducedMotion()` on `CaptureFAB`; system-native push transitions; `slide_from_bottom` for the triage modal. **Deferred:** Inbox-banner parallax-to-collapsed-chip; tab-switch content stagger; custom pull-to-refresh indicator art; triage drag-to-snap. These are tracked as motion follow-ups, not blockers. |
+| 8. Accessibility | ✅ verified inline | Acceptance criteria from §9 implemented as the components were built (`accessibilityViewIsModal` on triage, `accessibilityRole`/`accessibilityLabel`/`accessibilityHint` on every interactive element added, Dynamic Type 1-column reflow, photo-overlay recipe at §9.2 alpha 0.45→0.55). **Pending device verification:** VoiceOver order on the custom tab bar with FAB; reduced-motion across all animated paths; Dynamic Type at AX1+ on Place detail. |
+
+### What still needs a build to verify
+
+- `expo-blur` is a new native dep — first build after this branch must rebuild native code (`npx expo run:ios`).
+- The custom tab bar replaces `NativeTabs`. VoiceOver order, safe-area on notched / home-indicator devices, and rotation behavior need a device pass.
+- The triage modal's `accessibilityViewIsModal` flag is set but background-content hiding is delegated to the OS — confirm with VoiceOver that the underlying tabs are correctly silenced.
+- Photo-overlay contrast was implemented to spec but the 10-photo fixture set (§9.2) hasn't been generated yet.
+
+### Follow-up enhancements (post-redesign roadmap, not in this spec)
+
+- JS snapshot/overlay shared-element morph (option 2 from §5).
+- Triage drag-to-snap with three explicit detents.
+- Inbox banner parallax + collapsed-chip variant.
+- Custom pull-to-refresh artwork (Teal arc that draws as the user pulls).
+- Tab-switch stagger.
+
+## 15. Validated against
 
 - `docs/superpowers/specs/2026-05-08-app-redesign-design.md` (this file) — source of truth
 - `design-system/trip-pocket/MASTER.md` — token-level reference for implementation
