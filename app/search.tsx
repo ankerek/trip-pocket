@@ -28,11 +28,11 @@ const SEARCH_SQL = `
          s.file_path   AS file_path,
          s.trip_id     AS trip_id,
          t.name        AS trip_name,
-         snippet(screenshots_fts, 1, char(2), char(3), '...', 16) AS snippet
-    FROM screenshots_fts
-    JOIN screenshots s ON s.id = screenshots_fts.screenshot_id
+         snippet(sources_fts, 1, char(2), char(3), '...', 16) AS snippet
+    FROM sources_fts
+    JOIN sources s ON s.id = sources_fts.source_id
     LEFT JOIN trips t ON t.id = s.trip_id AND t.deleted_at IS NULL
-   WHERE screenshots_fts MATCH ?
+   WHERE sources_fts MATCH ?
      AND s.deleted_at IS NULL
      AND (? IS NULL OR s.trip_id = ?)
 ORDER BY rank
@@ -68,7 +68,7 @@ export default function Search() {
   );
 
   const trips = useLiveQuery<TripChipRow>(TRIPS_SQL, [], ['trips']);
-  const rows = useLiveQuery<ResultRow>(SEARCH_SQL, params, ['screenshots', 'trips']);
+  const rows = useLiveQuery<ResultRow>(SEARCH_SQL, params, ['sources', 'trips']);
 
   const trimmed = input.trim();
   const tooShort = match === null && trimmed.length > 0;
@@ -154,10 +154,10 @@ export default function Search() {
           ItemSeparatorComponent={() => <View className="h-px bg-slate-100" />}
           renderItem={({ item }) => (
             <Pressable
-              onPress={() => router.push(`/places/${item.id}`)}
+              onPress={() => router.push(`/sources/${item.id}`)}
               className="flex-row items-center gap-3 py-2"
               accessibilityRole="button"
-              accessibilityLabel={`Open screenshot${item.trip_name ? ` in ${item.trip_name}` : ''}`}
+              accessibilityLabel={`Open source${item.trip_name ? ` in ${item.trip_name}` : ''}`}
             >
               <Image
                 source={item.file_path}

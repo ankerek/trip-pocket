@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { ScrollView, Text, View } from '@/tw';
 import { useLocalSearchParams } from 'expo-router';
 import {
-  getScreenshot,
+  getSource,
   useLiveQuery,
-  type Screenshot,
+  type Source,
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { getMapsUrl } from '@/components/PlaceRow';
@@ -12,7 +12,7 @@ import { getMapsUrl } from '@/components/PlaceRow';
 type DebugPlace = {
   id: string;
   name: string;
-  city: string;
+  city: string | null;
   address: string | null;
   enrichment_status: 'pending' | 'enriched' | 'not-found' | 'failed';
   external_place_id: string | null;
@@ -20,43 +20,44 @@ type DebugPlace = {
   longitude: number | null;
 };
 
-const DEBUG_PLACES_SQL = `SELECT ep.id, ep.name, ep.city, ep.address,
-                                 ep.enrichment_status,
-                                 ep.external_place_id,
-                                 pe.latitude, pe.longitude
-                            FROM extracted_places ep
-                       LEFT JOIN place_enrichments pe
-                                 ON pe.external_place_id = ep.external_place_id
-                           WHERE ep.screenshot_id = ? AND ep.deleted_at IS NULL
-                        ORDER BY ep.created_at ASC`;
+const DEBUG_PLACES_SQL = `SELECT p.id, p.name, p.city,
+                                 ps.extracted_address AS address,
+                                 p.enrichment_status,
+                                 p.external_place_id,
+                                 p.latitude, p.longitude
+                            FROM place_sources ps
+                            JOIN places p ON p.id = ps.place_id
+                           WHERE ps.source_id = ? AND ps.deleted_at IS NULL
+                             AND p.deleted_at IS NULL
+                        ORDER BY ps.extracted_at ASC`;
 
 export default function OcrDebugSheet() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const db = useDatabase();
-  const [screenshot, setScreenshot] = useState<Screenshot | null>(null);
+  const [source, setSource] = useState<Source | null>(null);
 
   // Re-read when OCR completes in the background.
-  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['screenshots']);
+  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['sources']);
   const places = useLiveQuery<DebugPlace>(
     DEBUG_PLACES_SQL,
     id ? [id] : [],
-    ['extracted_places'],
+    ['place_sources', 'places'],
   );
 
   useEffect(() => {
     let cancelled = false;
     if (!db || !id) return;
-    getScreenshot(db, id).then((s) => {
-      if (!cancelled) setScreenshot(s);
+    getSource(db, id).then((s) => {
+      if (!cancelled) setSource(s);
     });
     return () => {
       cancelled = true;
     };
   }, [db, id, tick]);
 
-  if (!screenshot) return null;
+  if (!source) return null;
 
-  const ocr = screenshot.ocrText ?? '';
+  const ocr = source.ocrText ?? '';
   const charCount = [...ocr].length;
 
   return (
@@ -64,19 +65,20 @@ export default function OcrDebugSheet() {
       className="flex-1 bg-white"
       contentContainerClassName="px-4 py-3 gap-3"
     >
-      <Field label="ID" value={screenshot.id} mono />
-      <Field label="Source" value={screenshot.source} />
-      <Field label="Captured" value={screenshot.capturedAt} />
-      <Field label="OCR status" value={screenshot.ocrStatus} />
+      <Field label="ID" value={source.id} mono />
+      <Field label="Kind" value={source.kind} />
+      <Field label="Origin" value={source.origin} />
+      <Field label="Captured" value={source.capturedAt} />
+      <Field label="OCR status" value={source.ocrStatus} />
       <View className="gap-1">
         <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
           OCR text · {charCount} chars
         </Text>
-        {screenshot.ocrStatus === 'pending' ? (
+        {source.ocrStatus === 'pending' ? (
           <Text className="text-sm italic text-slate-500">
             OCR pending — pull down to refresh after a few seconds.
           </Text>
-        ) : screenshot.ocrStatus === 'failed' ? (
+        ) : source.ocrStatus === 'failed' ? (
           <Text className="text-sm italic text-red-600">
             OCR failed (3 retries exhausted).
           </Text>
@@ -90,7 +92,10 @@ export default function OcrDebugSheet() {
           </Text>
         )}
       </View>
-      <Field label="File path" value={screenshot.filePath} mono small />
+      {source.filePath ? (
+        <Field label="File path" value={source.filePath} mono small />
+      ) : null}
+      {source.url ? <Field label="URL" value={source.url} small /> : null}
       <ExtractedPlacesSection places={places} />
     </ScrollView>
   );
@@ -123,7 +128,14 @@ function ExtractedPlacesSection({ places }: { places: DebugPlace[] | null }) {
               {p.external_place_id ? `\nplace_id: ${p.external_place_id}` : ''}
             </Text>
             <Text selectable className="font-mono text-xs text-slate-700">
-              {getMapsUrl(p)}
+              {getMapsUrl({
+                name: p.name,
+                city: p.city ?? '',
+                address: p.address,
+                latitude: p.latitude,
+                longitude: p.longitude,
+                external_place_id: p.external_place_id,
+              })}
             </Text>
           </View>
         ))

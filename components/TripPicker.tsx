@@ -3,9 +3,10 @@ import { Alert, Modal } from 'react-native';
 import { FlatList, Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
 import * as Crypto from 'expo-crypto';
 import {
-  assignTrip,
+  assignSourceTrip,
   createTrip,
   listTrips,
+  movePlaceToTrip,
   useLiveQuery,
   type Trip,
 } from '@/modules/storage';
@@ -13,20 +14,21 @@ import { getOrCreateOwnerId } from '@/modules/capture';
 import { useDatabase } from './useDatabase';
 
 export type TripPickerMode = 'assign' | 'move';
+export type TripPickerEntityKind = 'source' | 'place';
 
 export function TripPicker(props: {
   visible: boolean;
-  screenshotId: string | null;
+  entityId: string | null;
+  entityKind: TripPickerEntityKind;
   mode: TripPickerMode;
   onClose: (result: { tripName: string } | null) => void;
 }) {
-  const { visible, screenshotId, mode, onClose } = props;
+  const { visible, entityId, entityKind, mode, onClose } = props;
   const db = useDatabase();
   const [stage, setStage] = useState<'list' | 'create'>('list');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [name, setName] = useState('');
 
-  // Refresh trips when shown or when underlying data changes.
   const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['trips']);
 
   useEffect(() => {
@@ -47,10 +49,18 @@ export function TripPicker(props: {
     }
   }, [visible]);
 
+  const assignTo = async (tripId: string): Promise<void> => {
+    if (!db || !entityId) return;
+    if (entityKind === 'source') {
+      await assignSourceTrip(db, entityId, tripId);
+    } else {
+      await movePlaceToTrip(db, entityId, tripId);
+    }
+  };
+
   const choose = async (trip: Trip) => {
-    if (!db || !screenshotId) return;
     try {
-      await assignTrip(db, screenshotId, trip.id);
+      await assignTo(trip.id);
       onClose({ tripName: trip.name });
     } catch (err) {
       Alert.alert('Could not assign trip', String(err));
@@ -58,14 +68,14 @@ export function TripPicker(props: {
   };
 
   const trimmed = name.trim();
-  const canSaveCreate = trimmed.length > 0 && db !== null && screenshotId !== null;
+  const canSaveCreate = trimmed.length > 0 && db !== null && entityId !== null;
 
   const saveCreate = async () => {
-    if (!db || !screenshotId || !canSaveCreate) return;
+    if (!db || !entityId || !canSaveCreate) return;
     try {
       const newId = Crypto.randomUUID();
       await createTrip(db, { id: newId, name: trimmed, ownerId: getOrCreateOwnerId() });
-      await assignTrip(db, screenshotId, newId);
+      await assignTo(newId);
       onClose({ tripName: trimmed });
     } catch (err) {
       Alert.alert('Could not create trip', String(err));

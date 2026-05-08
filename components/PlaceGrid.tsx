@@ -2,7 +2,7 @@ import { Alert } from 'react-native';
 import { Image, Pressable, View } from '@/tw';
 import { Link, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { softDeleteScreenshot } from '@/modules/storage';
+import { softDeleteSource } from '@/modules/storage';
 import { useDatabase } from './useDatabase';
 import { thumbnailBadge } from './thumbnailBadge';
 import { PinBadge } from './PinBadge';
@@ -36,7 +36,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
 
   const confirmDelete = (id: string) => {
     Alert.alert(
-      'Delete this place?',
+      'Delete this source?',
       "This can't be undone.",
       [
         { text: 'Cancel', style: 'cancel' },
@@ -48,7 +48,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
             if (process.env.EXPO_OS === 'ios') {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
-            await softDeleteScreenshot(db, id);
+            await softDeleteSource(db, id);
           },
         },
       ],
@@ -65,7 +65,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
           place_count: item.place_count ?? 0,
         });
         return (
-        <Link key={item.id} href={`/places/${item.id}`} asChild>
+        <Link key={item.id} href={`/sources/${item.id}`} asChild>
           <Link.Trigger>
             <Pressable
               className="w-1/2 p-1"
@@ -109,7 +109,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
             <Link.MenuAction
               title="Show OCR text"
               icon="info.circle"
-              onPress={() => router.push(`/places/${item.id}/ocr-debug`)}
+              onPress={() => router.push(`/sources/${item.id}/ocr-debug`)}
             />
             <Link.MenuAction
               title="Delete"
