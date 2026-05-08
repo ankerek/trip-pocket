@@ -1,4 +1,5 @@
 import { Stack } from 'expo-router';
+import { HeaderProfile } from '@/components/HeaderProfile';
 
 export default function PlacesStack() {
   return (
@@ -11,9 +12,10 @@ export default function PlacesStack() {
         headerLargeTitle: true,
         headerBlurEffect: 'systemMaterial',
         headerBackButtonDisplayMode: 'minimal',
+        headerLeft: () => <HeaderProfile />,
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Places' }} />
+      <Stack.Screen name="index" options={{ title: 'Pocket' }} />
     </Stack>
   );
 }

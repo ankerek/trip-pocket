@@ -1,4 +1,5 @@
 import { Stack } from 'expo-router';
+import { HeaderProfile } from '@/components/HeaderProfile';
 
 export default function TripsStack() {
   return (
@@ -11,6 +12,7 @@ export default function TripsStack() {
         headerLargeTitle: true,
         headerBlurEffect: 'systemMaterial',
         headerBackButtonDisplayMode: 'minimal',
+        headerLeft: () => <HeaderProfile />,
       }}
     >
       <Stack.Screen name="index" options={{ title: 'Trips' }} />
