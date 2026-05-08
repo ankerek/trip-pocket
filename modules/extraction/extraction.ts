@@ -4,19 +4,17 @@ import { notifyChange } from '@/modules/storage';
 export type ExtractedPlaceInput = {
   name: string;
   city: string;
+  // Street address from the OCR text, verbatim (or empty string when none).
+  // Persisted on the row and used by PlaceRow's tap-to-Maps fallback to
+  // build a precise `?q=name, address` search URL — and as the input to
+  // the v1.x place-enrichment call when that ships.
+  address: string;
   category: 'place' | 'food' | 'activity';
 };
 
 export type ExtractionResult = {
   places: ExtractedPlaceInput[];
   model: string;
-};
-
-export type GeocodeResult = {
-  latitude: number;
-  longitude: number;
-  formattedAddress: string;
-  appleMapsUrl: string;
 };
 
 export type ExtractionErrorKind =
@@ -36,7 +34,6 @@ export class ExtractionError extends Error {
 }
 
 export type ExtractionRunner = (ocrText: string) => Promise<ExtractionResult>;
-export type GeocoderRunner = (name: string, city: string) => Promise<GeocodeResult | null>;
 
 export type Extractor = {
   enqueueExtraction(screenshotId: string): void;
@@ -52,7 +49,6 @@ export type Extractor = {
 export type CreateExtractorOptions = {
   db: Database;
   extract: ExtractionRunner;
-  geocode: GeocoderRunner;
   ownerId: string;
   maxRetries?: number;
   /** Deferred-retry timer. Default: globalThis.setTimeout. Tests inject. */
@@ -144,45 +140,40 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       return classifyFailure(id, classification);
     }
 
-    // Per-call dedup: drop case-insensitive name + trimmed-city duplicates
-    // before INSERT. LLMs occasionally repeat in list mode; this keeps
-    // place_count honest.
+    // Per-call dedup: drop case-insensitive name + trimmed-city + trimmed-address
+    // duplicates before INSERT. LLMs occasionally repeat in list mode; this
+    // keeps place_count honest. Address is part of the key so two distinct
+    // venues with the same name in the same city aren't collapsed.
     const seen = new Set<string>();
     const distinct = result.places.filter((p) => {
-      const key = `${p.name.toLowerCase()}::${p.city.trim().toLowerCase()}`;
+      const key = `${p.name.toLowerCase()}::${p.city.trim().toLowerCase()}::${p.address.trim().toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
 
-    // Geocode sequentially. A failure / null leaves coords NULL; tap-to-Maps
-    // falls back to the query-string URL.
-    const geocoded = await Promise.all(
-      distinct.map(async (p) => ({
-        place: p,
-        geo: await safeGeocode(opts.geocode, p.name, p.city),
-      })),
-    );
-
+    // Geocoding is intentionally skipped at this stage: Apple's CLGeocoder /
+    // MKLocalSearch APIs proved unreliable for non-English-script countries
+    // (Japanese addresses fail routinely). Tap-to-Maps falls back to a
+    // search-URL deep link built from name + address (or city) — Apple Maps'
+    // consumer app resolves it correctly. Real coords land later via the
+    // v1.x place-enrichment feature; see
+    // docs/superpowers/specs/2026-05-08-place-enrichment-design.md.
     const ts = getNow();
     try {
       await opts.db.withTransactionAsync(async () => {
-        for (const { place, geo } of geocoded) {
+        for (const place of distinct) {
           await opts.db.runAsync(
             `INSERT INTO extracted_places (
-               id, screenshot_id, name, city, category,
-               latitude, longitude, formatted_address, apple_maps_url,
+               id, screenshot_id, name, city, address, category,
                extraction_model, owner_id, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             uuid(),
             id,
             place.name,
             place.city,
+            place.address,
             place.category,
-            geo?.latitude ?? null,
-            geo?.longitude ?? null,
-            geo?.formattedAddress ?? null,
-            geo?.appleMapsUrl ?? null,
             result.model,
             opts.ownerId,
             ts,
@@ -272,18 +263,6 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
   }
 
   return { enqueueExtraction, runExtractionSweep, runStartupRecovery, _awaitIdle };
-}
-
-async function safeGeocode(
-  geocode: GeocoderRunner,
-  name: string,
-  city: string,
-): Promise<GeocodeResult | null> {
-  try {
-    return await geocode(name, city);
-  } catch {
-    return null;
-  }
 }
 
 function defaultUuid(): string {

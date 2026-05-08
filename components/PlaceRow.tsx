@@ -6,6 +6,8 @@ export type PlaceRowData = {
   id: string;
   name: string;
   city: string;
+  /** OCR-extracted street address. NULL when the source text didn't include one. */
+  address: string | null;
   category: 'place' | 'food' | 'activity';
   formatted_address: string | null;
   apple_maps_url: string | null;
@@ -24,15 +26,14 @@ const CATEGORY_ICON: Record<PlaceRowData['category'], string> = {
  *   - the screenshot detail's places-found sheet (one screenshot's places)
  *   - the trip detail's Places tab (distinct places across the trip)
  *
- * Tapping always tries the geocoded apple_maps_url first, then falls back
- * to a `?q=name+city` query-string deep link when the geocoder missed.
+ * Tapping uses `apple_maps_url` when populated (filled by future v1.x
+ * place enrichment), and otherwise falls back to a search-URL deep link
+ * built from name + the most precise location signal we have — the OCR
+ * address when present, the city otherwise. Apple Maps' consumer app
+ * resolves the search server-side and pins correctly.
  */
 export function PlaceRow({ place }: { place: PlaceRowData }) {
-  const url =
-    place.apple_maps_url ||
-    `https://maps.apple.com/?q=${encodeURIComponent(
-      [place.name, place.city].filter(Boolean).join(', '),
-    )}`;
+  const url = place.apple_maps_url || buildSearchUrl(place);
   const subtitle = buildSubtitle(place);
 
   return (
@@ -62,11 +63,20 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
   );
 }
 
+function buildSearchUrl(place: PlaceRowData): string {
+  const locationHint = place.address?.trim() || place.city;
+  const query = [place.name, locationHint].filter(Boolean).join(', ');
+  return `https://maps.apple.com/?q=${encodeURIComponent(query)}`;
+}
+
 function buildSubtitle(place: PlaceRowData): string {
   const sourceFragment =
     place.source_count !== undefined && place.source_count > 1
       ? `${place.source_count} screenshots`
       : null;
-  const locationFragment = place.formatted_address || place.city || null;
+  // Preference order: enriched formatted_address (filled by v1.x enrichment),
+  // OCR-extracted street address, plain city. The first non-empty wins.
+  const locationFragment =
+    place.formatted_address || place.address?.trim() || place.city || null;
   return [locationFragment, sourceFragment].filter(Boolean).join(' · ');
 }

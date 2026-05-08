@@ -33,7 +33,6 @@ import {
   provideExtractor,
   type Extractor,
 } from '@/modules/extraction';
-import { geocodePlace } from '@/modules/apple-geocoder';
 import { recognizeText } from '@/modules/vision-ocr';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
@@ -98,7 +97,6 @@ export default function RootLayout() {
             // loudly, the dev fixes app.config.ts, no silent breakage.
             proxyUrl ?? '',
           ),
-        geocode: geocodePlace,
         ownerId,
         uuid: Crypto.randomUUID,
       });

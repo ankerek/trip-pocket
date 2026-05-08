@@ -7,6 +7,7 @@ import { z } from 'zod';
 export const placeSchema = z.object({
   name: z.string().min(1),
   city: z.string(),  // empty string allowed — LLM signals truly ambiguous
+  address: z.string(),  // empty string when text has no street address
   category: z.enum(['place', 'food', 'activity']),
 });
 

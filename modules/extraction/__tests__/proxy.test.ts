@@ -22,7 +22,7 @@ describe('extractFromProxy', () => {
   it('returns parsed places + model on 200 with valid body', async () => {
     globalThis.fetch = jest.fn(async () =>
       jsonResp(200, {
-        places: [{ name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' }],
+        places: [{ name: 'Maru Tonkatsu', city: 'Tokyo', address: '', category: 'food' }],
         model: 'gemini-2.5-flash-lite',
       }),
     ) as unknown as typeof fetch;
