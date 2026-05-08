@@ -93,19 +93,9 @@ export default function Triage() {
     listRef.current?.scrollToIndex({ index: next, animated: true });
   }, [index, items, router]);
 
-  const onSaveSkip = () => {
+  const onSkip = () => {
     if (process.env.EXPO_OS === 'ios') {
       Haptics.selectionAsync().catch(() => {});
-    }
-    advanceOrClose();
-  };
-
-  const onSaveWithoutTrip = () => {
-    // Source already has trip_id NULL; treating "save without trip" as a
-    // pure advance keeps the column unchanged but still clears the user's
-    // mental queue.
-    if (process.env.EXPO_OS === 'ios') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     }
     advanceOrClose();
   };
@@ -195,8 +185,7 @@ export default function Triage() {
             source={current}
             extracted={extractedBySource[current.id] ?? null}
             onPickTrip={() => setPickerVisible(true)}
-            onSaveSkip={onSaveSkip}
-            onSaveWithoutTrip={onSaveWithoutTrip}
+            onSkip={onSkip}
           />
         </KeyboardAvoidingView>
 
@@ -282,14 +271,12 @@ function TriageSheet({
   source: _source,
   extracted,
   onPickTrip,
-  onSaveSkip,
-  onSaveWithoutTrip,
+  onSkip,
 }: {
   source: Source;
   extracted: ExtractedPlace | null;
   onPickTrip: () => void;
-  onSaveSkip: () => void;
-  onSaveWithoutTrip: () => void;
+  onSkip: () => void;
 }) {
   return (
     <View
@@ -362,94 +349,58 @@ function TriageSheet({
           </>
         )}
 
-        <View className="mt-4">
-          <FieldRow label="Trip" value="Choose a trip" onPress={onPickTrip} />
-        </View>
-
+        {/* Picking a trip is the save action — TripPicker calls
+            assignSourceTrip on selection and we auto-advance to the
+            next item in the onClose handler. There is no separate
+            "save" button because there is no separate save step. */}
         <View className="mt-4">
           <Pressable
-            onPress={onSaveSkip}
+            onPress={onPickTrip}
             accessibilityRole="button"
-            accessibilityLabel="Save and next"
-            className="rounded-2xl items-center justify-center"
-            style={{ backgroundColor: '#14b8a6', paddingVertical: 14 }}
+            accessibilityLabel="Choose a trip"
+            accessibilityHint="Picking a trip saves this screenshot and moves to the next"
+            className="flex-row items-center justify-between rounded-2xl px-4 py-4"
+            style={{
+              backgroundColor: '#14b8a6',
+            }}
           >
-            <Text style={{ fontSize: 15, fontWeight: '600', color: '#ffffff' }}>
-              Save & next →
-            </Text>
+            <View className="flex-row items-center gap-2">
+              <Icon name="folder.fill" size={16} tintColor="#ffffff" />
+              <Text style={{ fontSize: 15, fontWeight: '600', color: '#ffffff' }}>
+                Choose a trip
+              </Text>
+            </View>
+            <Icon name="chevron.right" size={14} tintColor="rgba(255,255,255,0.85)" />
           </Pressable>
 
-          <View className="mt-2 flex-row gap-2">
-            <Pressable
-              onPress={onSaveWithoutTrip}
-              accessibilityRole="button"
-              accessibilityLabel="Save without trip"
-              className="flex-1 rounded-2xl items-center justify-center"
-              style={{
-                paddingVertical: 12,
-                backgroundColor: 'rgba(15,23,42,0.04)',
-                borderWidth: 1,
-                borderColor: 'rgba(15,23,42,0.06)',
-              }}
-            >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#0c4a6e' }}>
-                Save without trip
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={onSaveSkip}
-              accessibilityRole="button"
-              accessibilityLabel="Skip"
-              className="flex-1 rounded-2xl items-center justify-center"
-              style={{
-                paddingVertical: 12,
-                backgroundColor: 'rgba(15,23,42,0.04)',
-                borderWidth: 1,
-                borderColor: 'rgba(15,23,42,0.06)',
-              }}
-            >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569' }}>
-                Skip for now
-              </Text>
-            </Pressable>
-          </View>
+          <Text
+            className="text-text-muted mt-2 px-1"
+            style={{ fontSize: 12, lineHeight: 16 }}
+          >
+            Saves automatically when you pick a trip.
+          </Text>
+
+          <Pressable
+            onPress={onSkip}
+            accessibilityRole="button"
+            accessibilityLabel="Skip for now"
+            accessibilityHint="Leaves this screenshot in the inbox and goes to the next"
+            className="mt-3 rounded-2xl items-center justify-center"
+            style={{
+              paddingVertical: 12,
+              backgroundColor: 'rgba(15,23,42,0.04)',
+              borderWidth: 1,
+              borderColor: 'rgba(15,23,42,0.06)',
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#475569' }}>
+              Skip for now
+            </Text>
+          </Pressable>
         </View>
       </ScrollView>
     </View>
   );
 }
 
-function FieldRow({
-  label,
-  value,
-  onPress,
-}: {
-  label: string;
-  value: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${label}, ${value}`}
-      className="flex-row items-center justify-between rounded-2xl px-3.5 py-3"
-      style={{
-        backgroundColor: 'rgba(15,23,42,0.04)',
-        borderWidth: 1,
-        borderColor: 'rgba(15,23,42,0.06)',
-      }}
-    >
-      <Text className="text-text-muted" style={{ fontSize: 13 }}>
-        {label}
-      </Text>
-      <View className="flex-row items-center gap-1">
-        <Text className="text-text" style={{ fontSize: 14, fontWeight: '500' }}>
-          {value}
-        </Text>
-        <Icon name="chevron.right" size={14} tintColor="#94a3b8" />
-      </View>
-    </Pressable>
-  );
-}
 
