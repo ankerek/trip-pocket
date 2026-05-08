@@ -1,6 +1,6 @@
 import '../global.css';
 import { Stack } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
 import {
   DarkTheme,
@@ -15,12 +15,11 @@ import {
   type Database,
 } from '@/modules/storage';
 import {
-  ingestPendingImports,
   getOrCreateOwnerId,
   getAppGroupContainerUri,
   getStorageDirectory,
-  createImportFs,
   cleanupOrphanSources,
+  runForegroundIngest,
 } from '@/modules/capture';
 import {
   createProcessor,
@@ -63,7 +62,6 @@ export default function RootLayout() {
     extractor: Extractor;
     enricher: Enricher;
   } | null>(null);
-  const ingesting = useRef(false);
   const colorScheme = useColorScheme();
 
   useEffect(() => {
@@ -140,29 +138,12 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!ctx) return;
-    const run = async () => {
-      if (ingesting.current) return;
-      ingesting.current = true;
-      try {
-        await ingestPendingImports(ctx.db, {
-          ownerId: ctx.ownerId,
-          storageDir: ctx.storageDirUri,
-          fs: createImportFs(),
-        });
-        // Catch any 'pending' rows the share extension dropped while the
-        // app was closed, plus anything left mid-OCR by the previous
-        // session. Mid-session sweeps deliberately skip 'failed'.
-        await ctx.processor.runOcrSweep();
-        // Same posture for extraction: catch rows whose OCR finished in
-        // a prior session but whose extraction never landed.
-        await ctx.extractor.runExtractionSweep();
-      } finally {
-        ingesting.current = false;
-      }
-    };
-    run();
+    // Foreground ingest is now a singleton helper (modules/capture/
+    // runForegroundIngest) so pull-to-refresh in (places)/index.tsx can
+    // share the same in-flight mutex. See spec §4.1.
+    void runForegroundIngest(ctx.db);
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
-      if (s === 'active') run();
+      if (s === 'active') void runForegroundIngest(ctx.db);
     });
     return () => sub.remove();
   }, [ctx]);
