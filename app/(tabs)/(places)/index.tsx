@@ -1,73 +1,121 @@
-import { Alert } from 'react-native';
-import { Pressable, ScrollView, Text, View } from '@/tw';
+import { useMemo, useState } from 'react';
+import {
+  PixelRatio,
+  RefreshControl,
+  useWindowDimensions,
+} from 'react-native';
+import { FlatList, Text, View } from '@/tw';
 import { Stack } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
-import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { SearchButton } from '@/components/SearchButton';
-import { Icon } from '@/components/Icon';
-import * as ImagePicker from 'expo-image-picker';
-import * as Haptics from 'expo-haptics';
-import {
-  createImportFs,
-  getOrCreateOwnerId,
-  getStorageDirectory,
-  importImage,
-} from '@/modules/capture';
+import { InboxBanner } from '@/components/InboxBanner';
+import { FilterPills, type FilterOption } from '@/components/FilterPills';
 import { useDatabase } from '@/components/useDatabase';
+import { runForegroundIngest } from '@/modules/capture';
 
 // Global places feed: every live place, regardless of trip. Tiles render
-// photo + name overlay (PlaceTile). Untriaged places live alongside trip
-// places — the trip-detail screen filters by trip_id. The LEFT JOIN brings
-// in the trip name so the tile can show a top-left trip chip; soft-deleted
-// trips collapse to NULL (chip hidden), which is the right outcome.
+// photo + name overlay (PlaceTile). Untriaged sources surface as the
+// Inbox banner — the count comes from a separate query so the header
+// stays stable while places stream in.
 const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category, p.photo_name,
                            p.rating, p.price_level,
                            p.external_place_id, p.enrichment_status,
                            p.latitude, p.longitude, p.formatted_address,
-                           t.name AS trip_name
+                           t.name AS trip_name, p.trip_id
                       FROM places p
                  LEFT JOIN trips t ON t.id = p.trip_id AND t.deleted_at IS NULL
                      WHERE p.deleted_at IS NULL
                   ORDER BY p.enriched_at DESC NULLS LAST, p.created_at DESC`;
 
-// Inbox: sources with no trip and not yet attached to any place. These are
-// the "no-place yet" tiles — manual sources the user chose, plus
-// in-flight pipeline rows. Slice 1 keeps them in a separate Inbox section
-// to match the share-flow expectation; slice 2 blends them into the main
-// feed with a "no-place" visual treatment.
-const INBOX_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
-                          COALESCE(p.place_count, 0) AS place_count
-                     FROM sources s
-                LEFT JOIN (
-                       SELECT ps.source_id, COUNT(*) AS place_count
-                         FROM place_sources ps
-                        WHERE ps.deleted_at IS NULL
-                     GROUP BY ps.source_id
-                     ) p ON p.source_id = s.id
-                    WHERE s.deleted_at IS NULL AND s.trip_id IS NULL
-                 ORDER BY s.captured_at DESC`;
+const INBOX_COUNT_SQL = `SELECT COUNT(*) AS n
+                           FROM sources s
+                      LEFT JOIN (
+                             SELECT ps.source_id, COUNT(*) AS pc
+                               FROM place_sources ps
+                              WHERE ps.deleted_at IS NULL
+                           GROUP BY ps.source_id
+                           ) p ON p.source_id = s.id
+                          WHERE s.deleted_at IS NULL
+                            AND s.trip_id IS NULL
+                            AND COALESCE(p.pc, 0) = 0`;
 
-export default function Places() {
-  // Subscribed to 'trips' too: rename a trip and the chips refresh in place.
-  const places = useLiveQuery<PlaceTileData>(PLACES_SQL, [], ['places', 'trips']);
-  const inbox = useLiveQuery<GridItem>(INBOX_SQL, [], ['sources', 'place_sources']);
+const TRIPS_SQL = `SELECT t.id, t.name,
+                          COUNT(p.id) AS place_count
+                     FROM trips t
+                LEFT JOIN places p ON p.trip_id = t.id AND p.deleted_at IS NULL
+                    WHERE t.deleted_at IS NULL
+                 GROUP BY t.id
+                 ORDER BY t.created_at DESC`;
 
-  const headerRight = () => (
-    <View className="flex-row items-center">
-      <SearchButton />
-      <HeaderPlusButton />
-    </View>
+type PlaceRow = PlaceTileData & { trip_id: string | null };
+type InboxCount = { n: number };
+type TripRow = { id: string; name: string; place_count: number };
+
+const ALL_FILTER_ID = '__all__';
+const UNTRIAGED_FILTER_ID = '__untriaged__';
+
+export default function Pocket() {
+  const db = useDatabase();
+  const places = useLiveQuery<PlaceRow>(PLACES_SQL, [], ['places', 'trips']);
+  const inboxCountRows = useLiveQuery<InboxCount>(
+    INBOX_COUNT_SQL,
+    [],
+    ['sources', 'place_sources'],
   );
+  const tripRows = useLiveQuery<TripRow>(TRIPS_SQL, [], ['trips', 'places']);
 
-  if (places === null || inbox === null) return null;
+  const [filter, setFilter] = useState<string>(ALL_FILTER_ID);
+  const [refreshing, setRefreshing] = useState(false);
 
-  if (places.length === 0 && inbox.length === 0) {
+  // Dynamic Type reflow — at body XL+ collapse to 1 column with 4:5 tiles
+  // (spec §9.5).
+  const { width } = useWindowDimensions();
+  const fontScale = PixelRatio.getFontScale();
+  const numColumns = fontScale >= 1.35 ? 1 : 2;
+
+  const inboxCount = inboxCountRows?.[0]?.n ?? 0;
+
+  const filterOptions = useMemo<FilterOption[]>(() => {
+    const opts: FilterOption[] = [{ id: ALL_FILTER_ID, label: 'All' }];
+    if (inboxCount > 0) {
+      opts.push({ id: UNTRIAGED_FILTER_ID, label: 'Untriaged', count: inboxCount });
+    }
+    for (const t of tripRows ?? []) {
+      opts.push({ id: t.id, label: t.name, count: t.place_count });
+    }
+    return opts;
+  }, [tripRows, inboxCount]);
+
+  const filteredPlaces = useMemo(() => {
+    if (!places) return null;
+    if (filter === ALL_FILTER_ID) return places;
+    if (filter === UNTRIAGED_FILTER_ID) {
+      return places.filter((p) => !p.trip_id);
+    }
+    return places.filter((p) => p.trip_id === filter);
+  }, [places, filter]);
+
+  const headerRight = () => <SearchButton />;
+
+  const onRefresh = async () => {
+    if (!db) return;
+    setRefreshing(true);
+    try {
+      await runForegroundIngest(db);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  if (filteredPlaces === null || inboxCountRows === null) return null;
+
+  if (filteredPlaces.length === 0 && inboxCount === 0 && filter === ALL_FILTER_ID) {
     return (
       <>
         <Stack.Screen options={{ headerRight }} />
-        <View className="flex-1 items-center justify-center bg-white">
-          <Text className="px-8 text-center text-base text-slate-500">
+        <View className="flex-1 items-center justify-center bg-bg">
+          <Text className="px-8 text-center text-base text-text-muted">
             No places yet — share a screenshot from Photos.
           </Text>
         </View>
@@ -78,109 +126,66 @@ export default function Places() {
   return (
     <>
       <Stack.Screen options={{ headerRight }} />
-      <ScrollView
+      <FlatList
         contentInsetAdjustmentBehavior="automatic"
-        className="bg-white"
-      >
-        {inbox.length > 0 ? (
+        className="bg-bg"
+        data={filteredPlaces}
+        keyExtractor={keyExtractor}
+        numColumns={numColumns}
+        // Force a re-mount when columns change; FlatList disallows toggling
+        // numColumns without a key change.
+        key={`grid-${numColumns}`}
+        // Spec §13: removeClippedSubviews OFF on the grid so source tiles
+        // remain mounted during shared-element transitions (phase 4).
+        removeClippedSubviews={false}
+        windowSize={5}
+        contentContainerClassName="pb-24"
+        columnWrapperStyle={
+          numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined
+        }
+        ItemSeparatorComponent={GridGap}
+        ListHeaderComponent={
           <View>
-            <Text className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Inbox · {inbox.length}
-            </Text>
-            <PlaceGrid data={inbox} />
+            <InboxBanner count={inboxCount} onPress={() => setFilter(UNTRIAGED_FILTER_ID)} />
+            <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
           </View>
-        ) : null}
-        {places.length > 0 ? (
-          <View>
-            <Text className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Places · {places.length}
+        }
+        ListEmptyComponent={
+          <View className="px-8 pt-12">
+            <Text className="text-center text-base text-text-muted">
+              {filter === UNTRIAGED_FILTER_ID
+                ? 'Nothing to triage.'
+                : 'No places yet for this filter.'}
             </Text>
-            <View className="flex-row flex-wrap p-2">
-              {places.map((p) => (
-                <View key={p.id} className="w-1/2 p-1">
-                  <PlaceTile place={p} />
-                </View>
-              ))}
-            </View>
           </View>
-        ) : null}
-      </ScrollView>
+        }
+        renderItem={({ item }) => (
+          <View
+            style={{
+              flex: 1 / numColumns,
+              maxWidth: numColumns === 1 ? width - 28 : undefined,
+              paddingHorizontal: numColumns === 1 ? 14 : 0,
+            }}
+          >
+            <PlaceTile place={item} />
+          </View>
+        )}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#14b8a6"
+          />
+        }
+      />
     </>
   );
 }
 
-function HeaderPlusButton() {
-  const db = useDatabase();
-  const onPress = async () => {
-    if (!db) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true,
-      selectionLimit: 20,
-    });
-    if (result.canceled) return;
+function keyExtractor(item: PlaceRow): string {
+  return item.id;
+}
 
-    let imported = 0;
-    let skipped = 0;
-    let failed = 0;
-    const storage = getStorageDirectory().uri;
-    const ownerId = getOrCreateOwnerId();
-    const now = new Date().toISOString();
-    const fs = createImportFs();
-
-    const queue = [...result.assets];
-    const next = async () => {
-      while (queue.length > 0) {
-        const asset = queue.shift();
-        if (!asset) return;
-        try {
-          const r = await importImage(db, {
-            sourceUri: asset.uri,
-            origin: 'manual',
-            ownerId,
-            capturedAt: now,
-            transfer: 'copy',
-            storageDir: storage,
-            fs,
-          });
-          if (r.status === 'imported') imported += 1;
-          else skipped += 1;
-        } catch (err) {
-          console.warn('[camera-roll] import failed', err);
-          failed += 1;
-        }
-      }
-    };
-    const workers: Promise<void>[] = [];
-    for (let i = 0; i < 4; i += 1) workers.push(next());
-    await Promise.all(workers);
-
-    if (process.env.EXPO_OS === 'ios') {
-      const haptic =
-        failed > 0 && imported === 0
-          ? Haptics.NotificationFeedbackType.Error
-          : imported > 0
-            ? Haptics.NotificationFeedbackType.Success
-            : Haptics.NotificationFeedbackType.Warning;
-      Haptics.notificationAsync(haptic).catch(() => {});
-    }
-
-    const messageParts: string[] = [];
-    if (imported > 0) messageParts.push(`Imported ${imported}`);
-    if (skipped > 0) messageParts.push(`skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}`);
-    if (failed > 0) messageParts.push(`${failed} failed`);
-    const message = messageParts.join(' · ');
-    Alert.alert(message || 'Nothing to import');
-  };
-
-  return (
-    <Pressable
-      onPress={onPress}
-      className="px-3"
-      accessibilityRole="button"
-      accessibilityLabel="Add screenshots from camera roll"
-    >
-      <Icon name="plus" size={22} tintColor="#0f172a" />
-    </Pressable>
-  );
+function GridGap() {
+  return <View style={{ height: 6 }} />;
 }

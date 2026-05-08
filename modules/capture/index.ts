@@ -9,3 +9,4 @@ export {
   type ImportImageResult,
 } from './importImage';
 export { createImportFs, sha256OfBytes } from './importFsRuntime';
+export { runForegroundIngest } from './runForegroundIngest';
