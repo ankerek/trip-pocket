@@ -2,7 +2,7 @@ import { openDatabase, runMigrations, type Database } from '../db';
 import { migrations } from '../migrations';
 import { createTrip } from '../trips';
 import { insertSource, getSource } from '../sources';
-import { movePlaceToTrip, normalizePlaceKey } from '../places';
+import { countPlacesByTrip, movePlaceToTrip, normalizePlaceKey, softDeletePlace } from '../places';
 import { linkPlaceSource } from '../place_sources';
 
 const ownerId = '00000000-0000-0000-0000-000000000001';
@@ -195,5 +195,53 @@ describe('movePlaceToTrip — sources follow the place', () => {
 
     // The junction was already gone; source stays untriaged.
     expect((await getSource(db, 's-detached'))?.tripId).toBeNull();
+  });
+});
+
+describe('countPlacesByTrip', () => {
+  it('returns counts grouped by trip_id', async () => {
+    const db = await freshDb();
+    await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+    await createTrip(db, { id: 't2', name: 'Lisbon', ownerId });
+    await seedPlace(db, 'p1', 'A', 'Tokyo', 't1');
+    await seedPlace(db, 'p2', 'B', 'Tokyo', 't1');
+    await seedPlace(db, 'p3', 'C', 'Tokyo', 't1');
+    await seedPlace(db, 'p4', 'D', 'Lisbon', 't2');
+
+    const counts = await countPlacesByTrip(db);
+
+    expect(counts).toEqual({ t1: 3, t2: 1 });
+  });
+
+  it('excludes places with null trip_id', async () => {
+    const db = await freshDb();
+    await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+    await seedPlace(db, 'p1', 'A', 'Tokyo', 't1');
+    await seedPlace(db, 'p-untriaged', 'X', 'Anywhere', null);
+
+    const counts = await countPlacesByTrip(db);
+
+    expect(counts).toEqual({ t1: 1 });
+  });
+
+  it('excludes soft-deleted places', async () => {
+    const db = await freshDb();
+    await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+    await seedPlace(db, 'p1', 'A', 'Tokyo', 't1');
+    await seedPlace(db, 'p2', 'B', 'Tokyo', 't1');
+    await softDeletePlace(db, 'p2');
+
+    const counts = await countPlacesByTrip(db);
+
+    expect(counts).toEqual({ t1: 1 });
+  });
+
+  it('omits trips with no places (rather than returning zero)', async () => {
+    const db = await freshDb();
+    await createTrip(db, { id: 't-empty', name: 'Empty', ownerId });
+
+    const counts = await countPlacesByTrip(db);
+
+    expect(counts).toEqual({});
   });
 });
