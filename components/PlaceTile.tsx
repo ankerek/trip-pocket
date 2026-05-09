@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { Image, Pressable, Text, View } from '@/tw';
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Icon } from './Icon';
 import { TripChip } from './TripChip';
 import { getEnricher } from '@/modules/enrichment';
@@ -84,14 +85,27 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
         ) : null}
 
         {/*
-          Spec §9.2 — single overlay recipe. Bottom 45% of the tile
-          fades from transparent to rgba(0,0,0,0.55). White name with a
-          1px text shadow holds 4.5:1 even on high-luminance photos.
+          Spec §9.2 — overlay recipe upgraded from a solid alpha to a real
+          LinearGradient (transparent → 0.65). The gradient + text shadow
+          keep the white title at 4.5:1 against high-luminance photos
+          while fading cleanly into the image instead of leaving a hard
+          edge. Same recipe as the place-detail hero.
         */}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.65)']}
+          locations={[0, 1]}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '55%',
+          }}
+        />
         <View
           pointerEvents="none"
-          className="absolute inset-x-0 bottom-0 px-2.5 pb-2 pt-8"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+          className="absolute inset-x-0 bottom-0 px-2.5 pb-2"
         >
           <Text
             numberOfLines={2}
