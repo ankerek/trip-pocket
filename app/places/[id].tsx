@@ -25,6 +25,9 @@ const HEADER_OPTIONS = {
   headerTransparent: true,
   headerShadowVisible: false,
   headerLargeTitleShadowVisible: false,
+  // Override the root stack's systemMaterial blur — we want the hero photo
+  // visible behind the back button, not a frosted bar on top of it.
+  headerBlurEffect: 'none',
   headerBackButtonDisplayMode: 'minimal',
 } as const;
 

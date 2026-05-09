@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
@@ -86,110 +87,190 @@ export default function TripDetail() {
   }
 
   const empty = sources.length === 0 && places.length === 0;
-  const categories = countCategories(places);
+  const screenOptions = {
+    title: '',
+    headerTransparent: true,
+    headerLargeTitle: false,
+    headerShadowVisible: false,
+    // Disable the parent stack's systemMaterial blur so the hero photo
+    // shows through under the back/ellipsis instead of a frosted bar.
+    headerBlurEffect: 'none' as const,
+    headerBackButtonDisplayMode: 'minimal' as const,
+    headerRight: () => (
+      <Pressable
+        onPress={() => router.push(`/trips/${trip.id}/edit`)}
+        className="px-3"
+        accessibilityRole="button"
+        accessibilityLabel="Edit trip"
+      >
+        <Icon name="ellipsis" size={22} tintColor="#0c4a6e" />
+      </Pressable>
+    ),
+  };
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: trip.name,
-          headerLargeTitle: true,
-          headerRight: () => (
-            <Pressable
-              onPress={() => router.push(`/trips/${trip.id}/edit`)}
-              className="px-3"
-              accessibilityRole="button"
-              accessibilityLabel="Edit trip"
-            >
-              <Icon name="ellipsis" size={22} tintColor="#0c4a6e" />
-            </Pressable>
-          ),
+      <Stack.Screen options={screenOptions} />
+      <ScrollView
+        contentInsetAdjustmentBehavior="never"
+        className="flex-1 bg-bg"
+        contentContainerStyle={{ paddingBottom: 120 }}
+      >
+        <TripHero
+          name={trip.name}
+          coverPhotoUrl={coverPhotoUrl}
+          placeCount={places.length}
+        />
+
+        {empty ? (
+          <View className="px-8 pt-12">
+            <Text className="text-center text-base text-text-muted">
+              No places in this trip yet — add some from Pocket.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {/* View toggle — Grid | Map. Map is "Coming soon" v1 (spec §4.5). */}
+            <View className="pt-3">
+              <ViewToggle view={view} onChange={setView} />
+            </View>
+
+            {view === 'map' ? (
+              <View
+                className="mx-4 mt-2 items-center justify-center rounded-2xl py-12"
+                style={{ backgroundColor: 'rgba(15,23,42,0.04)' }}
+              >
+                <Icon name="map" size={28} tintColor="#94a3b8" />
+                <Text
+                  className="mt-2 text-text-muted"
+                  style={{ fontSize: 13, fontWeight: '500' }}
+                >
+                  Map view coming soon
+                </Text>
+              </View>
+            ) : (
+              <>
+                <SubTabToggle
+                  tab={tab}
+                  onChange={setTab}
+                  placesCount={places.length}
+                  sourcesCount={sources.length}
+                />
+                {tab === 'places' ? (
+                  <View className="flex-row flex-wrap px-2.5 pt-1">
+                    {places.map((p) => (
+                      <View key={p.id} className="w-1/2 p-1">
+                        <PlaceTile place={p} />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <PlaceGrid data={sources} />
+                )}
+              </>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </>
+  );
+}
+
+function TripHero({
+  name,
+  coverPhotoUrl,
+  placeCount,
+}: {
+  name: string;
+  coverPhotoUrl: string | null;
+  placeCount: number;
+}) {
+  return (
+    <View
+      style={{
+        width: '100%',
+        aspectRatio: 4 / 5,
+        backgroundColor: '#e2e8f0',
+        overflow: 'hidden',
+      }}
+    >
+      {coverPhotoUrl ? (
+        <Image
+          source={{ uri: coverPhotoUrl }}
+          style={{ width: '100%', height: '100%' }}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
+          accessibilityIgnoresInvertColors
+        />
+      ) : (
+        <View
+          style={{
+            width: '100%',
+            height: '100%',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Icon name="map" size={48} tintColor="#94a3b8" />
+        </View>
+      )}
+
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.7)']}
+        locations={[0, 0.55, 1]}
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: '65%',
         }}
       />
-      {empty ? (
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          className="flex-1 bg-bg"
-          contentContainerClassName="flex-1 items-center justify-center px-8"
+
+      <View
+        pointerEvents="none"
+        style={{ position: 'absolute', left: 16, right: 16, bottom: 22 }}
+      >
+        <Text
+          numberOfLines={2}
+          style={{
+            fontSize: 30,
+            fontWeight: '700',
+            color: '#ffffff',
+            letterSpacing: -0.6,
+            lineHeight: 34,
+            textShadowColor: 'rgba(0,0,0,0.45)',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 4,
+          }}
         >
-          <Text className="text-center text-base text-text-muted">
-            No places in this trip yet — add some from Pocket.
-          </Text>
-        </ScrollView>
-      ) : (
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          className="flex-1 bg-bg"
-          contentContainerClassName="pb-24"
+          {name}
+        </Text>
+        <Text
+          style={{
+            marginTop: 4,
+            fontSize: 14,
+            fontWeight: '500',
+            color: 'rgba(255,255,255,0.92)',
+            textShadowColor: 'rgba(0,0,0,0.45)',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 3,
+            fontVariant: ['tabular-nums'],
+          }}
         >
-          {/* Cover photo header — spec §4.5 */}
-          {coverPhotoUrl ? (
-            <Image
-              source={{ uri: coverPhotoUrl }}
-              style={{
-                width: '100%',
-                aspectRatio: 16 / 9,
-                backgroundColor: '#e2e8f0',
-              }}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              transition={150}
-            />
-          ) : null}
-
-          {/* Stats row */}
-          <View className="px-4 pb-2 pt-4 flex-row flex-wrap gap-2">
-            <Stat label={`${places.length} place${places.length === 1 ? '' : 's'}`} />
-            {categories.food > 0 ? <Stat label={`🍴 ${categories.food}`} /> : null}
-            {categories.activity > 0 ? <Stat label={`🥾 ${categories.activity}`} /> : null}
-            {categories.place > 0 ? <Stat label={`📍 ${categories.place}`} /> : null}
-          </View>
-
-          {/* View toggle — Grid | Map. Map is "Coming soon" v1 (spec §4.5). */}
-          <ViewToggle view={view} onChange={setView} />
-
-          {view === 'map' ? (
-            <View className="mx-4 mt-2 items-center justify-center rounded-2xl py-12"
-                  style={{ backgroundColor: 'rgba(15,23,42,0.04)' }}>
-              <Icon name="map" size={28} tintColor="#94a3b8" />
-              <Text
-                className="mt-2 text-text-muted"
-                style={{ fontSize: 13, fontWeight: '500' }}
-              >
-                Map view coming soon
-              </Text>
-            </View>
-          ) : (
-            <>
-              <SubTabToggle
-                tab={tab}
-                onChange={setTab}
-                placesCount={places.length}
-                sourcesCount={sources.length}
-              />
-              {tab === 'places' ? (
-                <View className="flex-row flex-wrap px-2.5 pt-1">
-                  {places.map((p) => (
-                    <View key={p.id} className="w-1/2 p-1">
-                      <PlaceTile place={p} />
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <PlaceGrid data={sources} />
-              )}
-            </>
-          )}
-        </ScrollView>
-      )}
-    </>
+          {placeCount} place{placeCount === 1 ? '' : 's'}
+        </Text>
+      </View>
+    </View>
   );
 }
 
 function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
     <View
-      className="mx-4 mt-2 flex-row rounded-full p-1"
+      className="mx-4 flex-row rounded-full p-1"
       style={{
         backgroundColor: 'rgba(15,23,42,0.06)',
       }}
@@ -297,43 +378,9 @@ function SubTabButton({
   );
 }
 
-function Stat({ label }: { label: string }) {
-  return (
-    <View
-      className="rounded-full px-3 py-1"
-      style={{ backgroundColor: 'rgba(15,23,42,0.06)' }}
-    >
-      <Text
-        style={{
-          fontSize: 12,
-          fontWeight: '600',
-          color: '#475569',
-          fontVariant: ['tabular-nums'],
-        }}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
-function countCategories(places: readonly PlaceTileData[]): {
-  food: number;
-  activity: number;
-  place: number;
-} {
-  const out = { food: 0, activity: 0, place: 0 };
-  for (const p of places) {
-    if (p.category === 'food') out.food += 1;
-    else if (p.category === 'activity') out.activity += 1;
-    else if (p.category === 'place') out.place += 1;
-  }
-  return out;
-}
-
 function buildCoverUrl(photoName: string | null): string | null {
   if (!photoName) return null;
   const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
   if (!base) return null;
-  return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=675`;
+  return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=1500`;
 }
