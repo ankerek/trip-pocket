@@ -4,7 +4,7 @@ import { Image, Pressable, Text, View } from '@/tw';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   getPlace,
@@ -19,17 +19,7 @@ import { useDatabase } from '@/components/useDatabase';
 import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
 import { openInMaps, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
-
-const HEADER_OPTIONS = {
-  title: '',
-  headerTransparent: true,
-  headerShadowVisible: false,
-  headerLargeTitleShadowVisible: false,
-  // Override the root stack's systemMaterial blur — we want the hero photo
-  // visible behind the back button, not a frosted bar on top of it.
-  headerBlurEffect: 'none',
-  headerBackButtonDisplayMode: 'minimal',
-} as const;
+import { DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
 
 type SourceStripItem = {
   source_id: string;
@@ -97,7 +87,7 @@ export default function PlaceDetail() {
   if (state.kind === 'loading') {
     return (
       <View className="flex-1 bg-bg">
-        <Stack.Screen options={HEADER_OPTIONS} />
+        <DetailHeaderOverlay />
       </View>
     );
   }
@@ -105,7 +95,7 @@ export default function PlaceDetail() {
   if (state.place === null) {
     return (
       <View className="flex-1 items-center justify-center bg-bg">
-        <Stack.Screen options={HEADER_OPTIONS} />
+        <DetailHeaderOverlay />
         <Text className="text-base text-text-muted">Place not found.</Text>
       </View>
     );
@@ -169,7 +159,6 @@ export default function PlaceDetail() {
 
   return (
     <>
-      <Stack.Screen options={HEADER_OPTIONS} />
       <ScrollView
         className="flex-1 bg-bg"
         contentInsetAdjustmentBehavior="never"
@@ -455,6 +444,7 @@ export default function PlaceDetail() {
           </Pressable>
         </View>
       </ScrollView>
+      <DetailHeaderOverlay />
 
       <TripPicker
         visible={pickerVisible}

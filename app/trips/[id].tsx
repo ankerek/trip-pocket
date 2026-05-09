@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from '@/tw';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
@@ -8,6 +8,10 @@ import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { Icon } from '@/components/Icon';
+import {
+  DetailHeaderIconButton,
+  DetailHeaderOverlay,
+} from '@/components/DetailHeaderOverlay';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
                                  COALESCE(p.place_count, 0) AS place_count
@@ -73,13 +77,27 @@ export default function TripDetail() {
     return ranked[0] ? buildCoverUrl(ranked[0].photo_name) : null;
   }, [places]);
 
-  if (trip === 'loading' || sources === null || places === null) return null;
+  const headerRight = (
+    <DetailHeaderIconButton
+      icon="ellipsis"
+      accessibilityLabel="Edit trip"
+      onPress={() => router.push(`/trips/${id}/edit`)}
+    />
+  );
+
+  if (trip === 'loading' || sources === null || places === null) {
+    return (
+      <View className="flex-1 bg-bg">
+        <DetailHeaderOverlay right={headerRight} />
+      </View>
+    );
+  }
 
   if (trip === null) {
     return (
       <>
-        <Stack.Screen options={{ title: '' }} />
         <View className="flex-1 items-center justify-center bg-bg">
+          <DetailHeaderOverlay right={headerRight} />
           <Text className="text-base text-text-muted">Trip not found.</Text>
         </View>
       </>
@@ -87,30 +105,9 @@ export default function TripDetail() {
   }
 
   const empty = sources.length === 0 && places.length === 0;
-  const screenOptions = {
-    title: '',
-    headerTransparent: true,
-    headerLargeTitle: false,
-    headerShadowVisible: false,
-    // Disable the parent stack's systemMaterial blur so the hero photo
-    // shows through under the back/ellipsis instead of a frosted bar.
-    headerBlurEffect: 'none' as const,
-    headerBackButtonDisplayMode: 'minimal' as const,
-    headerRight: () => (
-      <Pressable
-        onPress={() => router.push(`/trips/${trip.id}/edit`)}
-        className="px-3"
-        accessibilityRole="button"
-        accessibilityLabel="Edit trip"
-      >
-        <Icon name="ellipsis" size={22} tintColor="#0c4a6e" />
-      </Pressable>
-    ),
-  };
 
   return (
     <>
-      <Stack.Screen options={screenOptions} />
       <ScrollView
         contentInsetAdjustmentBehavior="never"
         className="flex-1 bg-bg"
@@ -172,6 +169,7 @@ export default function TripDetail() {
           </>
         )}
       </ScrollView>
+      <DetailHeaderOverlay right={headerRight} />
     </>
   );
 }

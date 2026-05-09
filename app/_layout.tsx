@@ -38,6 +38,7 @@ import {
   provideEnricher,
   type Enricher,
 } from '@/modules/enrichment';
+import { DETAIL_ROUTE_OPTIONS } from '@/lib/navigation/detailHeaderOptions';
 import { recognizeText } from '@/modules/vision-ocr';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
@@ -174,7 +175,7 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="places/[id]"
-          options={{ headerShown: true, ...SHARED_HEADER_OPTIONS }}
+          options={DETAIL_ROUTE_OPTIONS}
         />
         <Stack.Screen
           name="search"
@@ -186,7 +187,7 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="trips/[id]"
-          options={{ headerShown: true, ...SHARED_HEADER_OPTIONS }}
+          options={DETAIL_ROUTE_OPTIONS}
         />
         <Stack.Screen
           name="trips/new"
