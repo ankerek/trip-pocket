@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Alert, ScrollView, ToastAndroid } from 'react-native';
 import { Image, Pressable, Text, View } from '@/tw';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -12,7 +14,7 @@ import {
   type Place,
 } from '@/modules/storage';
 import { Icon } from '@/components/Icon';
-import { CategoryChip } from '@/components/CategoryChip';
+import { TripChip } from '@/components/TripChip';
 import { useDatabase } from '@/components/useDatabase';
 import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
 import { openInMaps, type MapTarget } from '@/lib/openInMaps';
@@ -33,10 +35,13 @@ type SourceStripItem = {
   trip_name: string | null;
 };
 
+const TRIP_NAME_SQL = `SELECT name FROM trips WHERE id = ? AND deleted_at IS NULL LIMIT 1`;
+
 export default function PlaceDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
+  const insets = useSafeAreaInsets();
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerMode, setPickerMode] = useState<TripPickerMode>('assign');
   const [state, setState] = useState<
@@ -44,6 +49,9 @@ export default function PlaceDetail() {
   >({ kind: 'loading' });
 
   const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['places']);
+
+  const placeForQueries = state.kind === 'loaded' ? state.place : null;
+  const tripIdForQuery = placeForQueries?.tripId ?? null;
 
   const sources = useLiveQuery<SourceStripItem>(
     `SELECT ps.source_id, s.file_path, s.trip_id, t.name AS trip_name
@@ -56,6 +64,13 @@ export default function PlaceDetail() {
     id ? [id] : [],
     ['place_sources', 'sources', 'trips'],
   );
+
+  const tripRows = useLiveQuery<{ name: string }>(
+    TRIP_NAME_SQL,
+    tripIdForQuery ? [tripIdForQuery] : [],
+    ['trips'],
+  );
+  const tripName = tripIdForQuery ? (tripRows?.[0]?.name ?? null) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -154,93 +169,173 @@ export default function PlaceDetail() {
       <Stack.Screen options={HEADER_OPTIONS} />
       <ScrollView
         className="flex-1 bg-bg"
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={{ paddingBottom: 32 }}
       >
-        {/* Hero photo. Continuity with the grid tile comes from the
-            expo-image memory-disk cache + the 150ms transition on both
-            ends — see spec §5 spike outcome. */}
-        {photoUrl ? (
-          <Image
-            source={{ uri: photoUrl }}
-            className="aspect-[4/3] w-full"
-            style={{ backgroundColor: '#e2e8f0' }}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={150}
-          />
-        ) : (
-          <View
-            className="aspect-[4/3] w-full items-center justify-center"
-            style={{ backgroundColor: '#e2e8f0' }}
-          >
-            <Icon name="mappin.circle" size={48} tintColor="#94a3b8" />
-          </View>
-        )}
+        {/* Full-bleed hero. Photo extends behind the transparent nav header,
+            with bottom corners rounded to read as a "card" against the body. */}
+        <View
+          style={{
+            width: '100%',
+            aspectRatio: 4 / 5,
+            backgroundColor: '#e2e8f0',
+            overflow: 'hidden',
+          }}
+        >
+          {photoUrl ? (
+            <Image
+              source={{ uri: photoUrl }}
+              style={{ width: '100%', height: '100%' }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
+              accessibilityIgnoresInvertColors
+            />
+          ) : (
+            <View
+              style={{
+                width: '100%',
+                height: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Icon name="mappin.circle" size={48} tintColor="#94a3b8" />
+            </View>
+          )}
 
-        {/* Title block — spec §4.3. */}
-        <View className="px-4 pb-2 pt-5">
-          <Text
-            className="text-text"
-            style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4 }}
-          >
-            {place.name}
-          </Text>
-          {place.city ? (
-            <Text className="mt-1 text-base text-text-muted">{place.city}</Text>
+          {/* Real gradient — fades from transparent at the photo's
+              vertical midpoint down to ~0.7 alpha at the bottom so the
+              title and meta row keep 4.5:1 contrast against any photo. */}
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.7)']}
+            locations={[0, 0.55, 1]}
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: '65%',
+            }}
+          />
+
+          {/* Trip chip — top-right, aligned with the back button. */}
+          {tripName ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: insets.top + 8,
+                right: 14,
+              }}
+            >
+              <TripChip name={tripName} variant="overlay" />
+            </View>
           ) : null}
 
-          <View className="mt-3 flex-row flex-wrap items-center gap-2">
-            {place.rating !== null ? <Stat label={`★ ${place.rating.toFixed(1)}`} /> : null}
-            {place.priceLevel !== null && place.priceLevel > 0 ? (
-              <Stat label={'$'.repeat(place.priceLevel)} />
+          {/* Title stack — sits at the bottom of the photo over the dark
+              overlay. Category chip → name → meta row. */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: 16,
+              right: 16,
+              bottom: 22,
+            }}
+          >
+            {place.category ? (
+              <View style={{ alignSelf: 'flex-start', marginBottom: 10 }}>
+                <OverlayCategoryChip category={place.category} />
+              </View>
             ) : null}
-            {place.category ? <CategoryChip category={place.category} /> : null}
+            <Text
+              style={{
+                fontSize: 30,
+                fontWeight: '700',
+                color: '#ffffff',
+                letterSpacing: -0.6,
+                lineHeight: 34,
+                textShadowColor: 'rgba(0,0,0,0.45)',
+                textShadowOffset: { width: 0, height: 1 },
+                textShadowRadius: 4,
+              }}
+            >
+              {place.name}
+            </Text>
+            <HeroMetaRow
+              city={place.city}
+              rating={place.rating}
+              priceLevel={place.priceLevel}
+            />
           </View>
         </View>
 
-        {/* Primary CTA — Teal, full-width per spec §4.3. */}
-        <View className="px-4 pb-3 pt-1">
+        {/* Side-by-side primary actions. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            paddingHorizontal: 14,
+            paddingTop: 14,
+            gap: 8,
+          }}
+        >
           <Pressable
             onPress={onOpenInMaps}
             accessibilityRole="button"
             accessibilityLabel="Open in Maps"
-            className="flex-row items-center justify-center gap-2 rounded-2xl py-3.5"
-            style={{ backgroundColor: '#14b8a6' }}
+            style={{
+              flex: 1,
+              flexDirection: 'row',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 12,
+              borderRadius: 14,
+              backgroundColor: '#14b8a6',
+            }}
           >
-            <Icon name="map.fill" size={18} tintColor="#ffffff" />
+            <Icon name="map.fill" size={16} tintColor="#ffffff" />
             <Text
-              style={{ fontSize: 15, fontWeight: '600', color: '#ffffff', letterSpacing: -0.2 }}
+              style={{ fontSize: 14, fontWeight: '600', color: '#ffffff' }}
             >
-              Open in Maps
+              Maps
             </Text>
           </Pressable>
           <Pressable
             onPress={() => onAssignTrip(inTrip ? 'move' : 'assign')}
             accessibilityRole="button"
             accessibilityLabel={inTrip ? 'Move to trip' : 'Add to trip'}
-            className="mt-2 flex-row items-center justify-center gap-2 rounded-2xl py-3"
             style={{
-              backgroundColor: 'rgba(15,23,42,0.04)',
+              flex: 1,
+              flexDirection: 'row',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 12,
+              borderRadius: 14,
+              backgroundColor: 'rgba(15,23,42,0.06)',
               borderWidth: 1,
               borderColor: 'rgba(15,23,42,0.06)',
             }}
           >
             <Icon name="folder" size={16} tintColor="#0c4a6e" />
             <Text style={{ fontSize: 14, fontWeight: '600', color: '#0c4a6e' }}>
-              {inTrip ? 'Move to another trip' : 'Add to a trip'}
+              {inTrip ? 'Move trip' : 'Add to trip'}
             </Text>
           </Pressable>
         </View>
 
         {place.description ? (
-          <View className="px-4 pb-4 pt-2">
+          <View className="px-4 pb-4 pt-4">
             <Text className="text-[15px] leading-5 text-text">{place.description}</Text>
           </View>
         ) : null}
 
         {/* Metadata block. */}
         <View
-          className="mx-4 mt-2 overflow-hidden rounded-2xl"
+          className="mx-4 mt-4 overflow-hidden rounded-2xl"
           style={{
             backgroundColor: 'rgba(15,23,42,0.025)',
             borderWidth: 1,
@@ -315,8 +410,8 @@ export default function PlaceDetail() {
           ))}
         </ScrollView>
 
-        {/* Footer destructive actions, separated. */}
-        <View className="px-4 pb-12 pt-4">
+        {/* Footer destructive actions. */}
+        <View className="px-4 pb-4 pt-4">
           {inTrip ? (
             <Pressable
               onPress={onUnassign}
@@ -380,23 +475,73 @@ export default function PlaceDetail() {
   );
 }
 
-function Stat({ label }: { label: string }) {
+const CATEGORY_META: Record<string, { icon: string; label: string }> = {
+  food: { icon: 'fork.knife', label: 'Food' },
+  activity: { icon: 'figure.walk', label: 'Activity' },
+  place: { icon: 'mappin.circle', label: 'Place' },
+};
+
+// Photo-aware category pill — translucent dark fill with white text/icon
+// for legibility against any image. Mirrors PlaceTile's overlay convention.
+function OverlayCategoryChip({ category }: { category: string }) {
+  const meta = CATEGORY_META[category];
+  if (!meta) return null;
   return (
     <View
-      className="rounded-full px-2.5 py-1"
-      style={{ backgroundColor: 'rgba(15,23,42,0.06)' }}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 9,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+      }}
     >
+      <Icon name={meta.icon} size={11} tintColor="#ffffff" />
       <Text
         style={{
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: '600',
-          color: '#475569',
-          fontVariant: ['tabular-nums'],
+          color: '#ffffff',
+          letterSpacing: 0.1,
         }}
       >
-        {label}
+        {meta.label}
       </Text>
     </View>
+  );
+}
+
+function HeroMetaRow({
+  city,
+  rating,
+  priceLevel,
+}: {
+  city: string | null;
+  rating: number | null;
+  priceLevel: number | null;
+}) {
+  const parts: string[] = [];
+  if (city) parts.push(city);
+  if (rating !== null) parts.push(`★ ${rating.toFixed(1)}`);
+  if (priceLevel !== null && priceLevel > 0) parts.push('$'.repeat(priceLevel));
+  if (parts.length === 0) return null;
+  return (
+    <Text
+      style={{
+        marginTop: 4,
+        fontSize: 14,
+        fontWeight: '500',
+        color: 'rgba(255,255,255,0.92)',
+        textShadowColor: 'rgba(0,0,0,0.45)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+        fontVariant: ['tabular-nums'],
+      }}
+    >
+      {parts.join('   ·   ')}
+    </Text>
   );
 }
 
@@ -443,7 +588,7 @@ function buildPhotoUrl(photoName: string | null): string | null {
   if (!photoName) return null;
   const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
   if (!base) return null;
-  return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=900`;
+  return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=1500`;
 }
 
 function toMapTarget(place: Place): MapTarget {
