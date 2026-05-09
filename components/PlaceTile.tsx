@@ -3,6 +3,7 @@ import { Image, Pressable, Text, View } from '@/tw';
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { Icon } from './Icon';
+import { TripChip } from './TripChip';
 import { getEnricher } from '@/modules/enrichment';
 
 export type PlaceTileData = {
@@ -77,17 +78,8 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
         )}
 
         {place.trip_name ? (
-          <View
-            className="absolute left-2 top-2 rounded-full px-2 py-0.5"
-            style={{ backgroundColor: 'rgba(255,255,255,0.85)' }}
-          >
-            <Text
-              className="text-[11px] font-semibold"
-              numberOfLines={1}
-              style={{ color: '#0c4a6e' }}
-            >
-              {place.trip_name}
-            </Text>
+          <View className="absolute left-2 top-2">
+            <TripChip name={place.trip_name} variant="overlay" />
           </View>
         ) : null}
 
