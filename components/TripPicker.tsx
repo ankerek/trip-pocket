@@ -22,8 +22,14 @@ export function TripPicker(props: {
   entityKind: TripPickerEntityKind;
   mode: TripPickerMode;
   onClose: (result: { tripName: string } | null) => void;
+  /**
+   * Forwarded to assignSourceTrip when entityKind === 'source'. Lets the
+   * triage flow pass per-place deselections without splitting the assign
+   * call across two sites. Ignored for entityKind === 'place'.
+   */
+  assignOptions?: { excludePlaceIds?: string[] };
 }) {
-  const { visible, entityId, entityKind, mode, onClose } = props;
+  const { visible, entityId, entityKind, mode, onClose, assignOptions } = props;
   const db = useDatabase();
   const [stage, setStage] = useState<'list' | 'create'>('list');
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -52,7 +58,7 @@ export function TripPicker(props: {
   const assignTo = async (tripId: string): Promise<void> => {
     if (!db || !entityId) return;
     if (entityKind === 'source') {
-      await assignSourceTrip(db, entityId, tripId);
+      await assignSourceTrip(db, entityId, tripId, assignOptions);
     } else {
       await movePlaceToTrip(db, entityId, tripId);
     }

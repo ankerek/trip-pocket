@@ -389,6 +389,165 @@ describe('sources additions', () => {
     expect(counts).toEqual({ t1: 1, t2: 1 });
   });
 
+  describe('assignSourceTrip with excludePlaceIds', () => {
+    const seedSourceWithPlaces = async (
+      db: Database,
+      sourceId: string,
+      placeIds: { id: string; tripId?: string | null }[],
+    ): Promise<void> => {
+      const now = '2026-05-08T10:00:00.000Z';
+      await insertSource(db, {
+        id: sourceId,
+        tripId: null,
+        filePath: `/x/${sourceId}.jpg`,
+        contentHash: `h-${sourceId}`,
+        origin: 'manual',
+        capturedAt: now,
+        ownerId,
+      });
+      for (const { id, tripId } of placeIds) {
+        // Insert the place if it doesn't exist yet (multi-source tests share a place).
+        const existing = await db.getFirstAsync<{ id: string }>(
+          `SELECT id FROM places WHERE id = ?`,
+          id,
+        );
+        if (!existing) {
+          await db.runAsync(
+            `INSERT INTO places (id, trip_id, name, city, normalized_key,
+                                  enrichment_status, owner_id, created_at, updated_at)
+             VALUES (?, ?, 'Place ' || ?, 'Tokyo', 'p-' || ?, 'pending', ?, ?, ?)`,
+            id,
+            tripId ?? null,
+            id,
+            id,
+            ownerId,
+            now,
+            now,
+          );
+        }
+        await db.runAsync(
+          `INSERT INTO place_sources (place_id, source_id, extracted_at,
+                                       extraction_model, owner_id, created_at, updated_at)
+           VALUES (?, ?, ?, 'gemini', ?, ?, ?)`,
+          id,
+          sourceId,
+          now,
+          ownerId,
+          now,
+          now,
+        );
+      }
+    };
+
+    it('soft-deletes a single-linked deselected place and its link', async () => {
+      const db = await freshDb();
+      await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+      await seedSourceWithPlaces(db, 's1', [{ id: 'p1' }]);
+
+      await assignSourceTrip(db, 's1', 't1', { excludePlaceIds: ['p1'] });
+
+      const link = await db.getFirstAsync<{ deleted_at: string | null }>(
+        `SELECT deleted_at FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
+      );
+      expect(link?.deleted_at).not.toBeNull();
+      const place = await db.getFirstAsync<{ deleted_at: string | null; trip_id: string | null }>(
+        `SELECT deleted_at, trip_id FROM places WHERE id = 'p1'`,
+      );
+      expect(place?.deleted_at).not.toBeNull();
+      expect(place?.trip_id).toBeNull();
+      const source = await getSource(db, 's1');
+      expect(source?.tripId).toBe('t1');
+    });
+
+    it('breaks only the link when a deselected place has another live source', async () => {
+      const db = await freshDb();
+      await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+      await seedSourceWithPlaces(db, 'sA', [{ id: 'p1' }]);
+      await seedSourceWithPlaces(db, 'sB', [{ id: 'p1' }]);
+
+      await assignSourceTrip(db, 'sA', 't1', { excludePlaceIds: ['p1'] });
+
+      const linkA = await db.getFirstAsync<{ deleted_at: string | null }>(
+        `SELECT deleted_at FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
+      );
+      const linkB = await db.getFirstAsync<{ deleted_at: string | null }>(
+        `SELECT deleted_at FROM place_sources WHERE source_id = 'sB' AND place_id = 'p1'`,
+      );
+      expect(linkA?.deleted_at).not.toBeNull();
+      expect(linkB?.deleted_at).toBeNull();
+      const place = await db.getFirstAsync<{ deleted_at: string | null; trip_id: string | null }>(
+        `SELECT deleted_at, trip_id FROM places WHERE id = 'p1'`,
+      );
+      expect(place?.deleted_at).toBeNull();
+      expect(place?.trip_id).toBeNull();
+    });
+
+    it('preserves a deselected place that already belongs to another trip', async () => {
+      const db = await freshDb();
+      await createTrip(db, { id: 'tOld', name: 'Old', ownerId });
+      await createTrip(db, { id: 'tNew', name: 'New', ownerId });
+      // p1 is already in tOld via sB; sA is the source being triaged into tNew.
+      await seedSourceWithPlaces(db, 'sB', [{ id: 'p1', tripId: 'tOld' }]);
+      await seedSourceWithPlaces(db, 'sA', [{ id: 'p1' }]);
+      // assignSourceTrip is being called on sA, NOT moving p1 (multi-link guard).
+
+      await assignSourceTrip(db, 'sA', 'tNew', { excludePlaceIds: ['p1'] });
+
+      const linkA = await db.getFirstAsync<{ deleted_at: string | null }>(
+        `SELECT deleted_at FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
+      );
+      expect(linkA?.deleted_at).not.toBeNull();
+      const place = await db.getFirstAsync<{ deleted_at: string | null; trip_id: string | null }>(
+        `SELECT deleted_at, trip_id FROM places WHERE id = 'p1'`,
+      );
+      expect(place?.deleted_at).toBeNull();
+      expect(place?.trip_id).toBe('tOld');
+    });
+
+    it('ignores excludePlaceIds when tripId is null (Remove from trip path)', async () => {
+      const db = await freshDb();
+      await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+      await seedSourceWithPlaces(db, 's1', [{ id: 'p1' }]);
+      await assignSourceTrip(db, 's1', 't1');
+
+      await assignSourceTrip(db, 's1', null, { excludePlaceIds: ['p1'] });
+
+      const link = await db.getFirstAsync<{ deleted_at: string | null }>(
+        `SELECT deleted_at FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
+      );
+      expect(link?.deleted_at).toBeNull();
+      const place = await db.getFirstAsync<{ deleted_at: string | null }>(
+        `SELECT deleted_at FROM places WHERE id = 'p1'`,
+      );
+      expect(place?.deleted_at).toBeNull();
+    });
+
+    it('notifies places subscribers on a delete-only path (no places moved)', async () => {
+      const db = await freshDb();
+      provideDatabase(db);
+      await createTrip(db, { id: 't1', name: 'Japan', ownerId });
+      // Two places: p1 will be kept and moved to t1; p2 will be deselected
+      // and (single-linked, no trip) soft-deleted. notifyChange('places')
+      // must fire because p2 was deleted, even though p1 also moved.
+      await seedSourceWithPlaces(db, 's1', [{ id: 'p1' }, { id: 'p2' }]);
+
+      const placesHook = renderHook(() =>
+        useLiveQuery<{ n: number }>(
+          'SELECT COUNT(*) AS n FROM places WHERE deleted_at IS NULL',
+          [],
+          ['places'],
+        ),
+      );
+      await waitFor(() => expect(placesHook.result.current?.[0]?.n).toBe(2));
+
+      await act(async () => {
+        await assignSourceTrip(db, 's1', 't1', { excludePlaceIds: ['p2'] });
+      });
+
+      await waitFor(() => expect(placesHook.result.current?.[0]?.n).toBe(1));
+    });
+  });
+
   it('assignSourceTrip invalidates both sources and trips subscribers (via useLiveQuery)', async () => {
     const db = await freshDb();
     provideDatabase(db);
