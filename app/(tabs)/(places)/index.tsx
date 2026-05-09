@@ -8,7 +8,7 @@ import { FlatList, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import { useLiveQuery } from '@/modules/storage';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
-import { SearchButton } from '@/components/SearchButton';
+import { HeaderCaptureButton } from '@/components/HeaderCaptureButton';
 import { InboxBanner } from '@/components/InboxBanner';
 import { FilterPills, type FilterOption } from '@/components/FilterPills';
 import { useDatabase } from '@/components/useDatabase';
@@ -95,7 +95,7 @@ export default function Pocket() {
     return places.filter((p) => p.trip_id === filter);
   }, [places, filter]);
 
-  const headerRight = () => <SearchButton />;
+  const headerRight = () => <HeaderCaptureButton />;
 
   const onRefresh = async () => {
     if (!db) return;

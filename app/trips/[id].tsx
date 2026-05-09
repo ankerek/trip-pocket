@@ -6,7 +6,6 @@ import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
-import { SearchButton } from '@/components/SearchButton';
 import { Icon } from '@/components/Icon';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
@@ -96,17 +95,14 @@ export default function TripDetail() {
           title: trip.name,
           headerLargeTitle: true,
           headerRight: () => (
-            <View className="flex-row items-center">
-              <SearchButton />
-              <Pressable
-                onPress={() => router.push(`/trips/${trip.id}/edit`)}
-                className="px-3"
-                accessibilityRole="button"
-                accessibilityLabel="Edit trip"
-              >
-                <Icon name="ellipsis" size={22} tintColor="#0c4a6e" />
-              </Pressable>
-            </View>
+            <Pressable
+              onPress={() => router.push(`/trips/${trip.id}/edit`)}
+              className="px-3"
+              accessibilityRole="button"
+              accessibilityLabel="Edit trip"
+            >
+              <Icon name="ellipsis" size={22} tintColor="#0c4a6e" />
+            </Pressable>
           ),
         }}
       />
