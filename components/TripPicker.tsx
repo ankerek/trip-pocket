@@ -1,9 +1,24 @@
 import { useEffect, useState } from 'react';
-import { Alert, Modal } from 'react-native';
-import { FlatList, Pressable, SafeAreaView, Text, TextInput, View } from '@/tw';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  StyleSheet,
+} from 'react-native';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
+import { Pressable, Text, TextInput, View } from '@/tw';
 import {
   assignSourceTrip,
+  countPlacesByTrip,
   createTrip,
   listTrips,
   movePlaceToTrip,
@@ -15,6 +30,8 @@ import { useDatabase } from './useDatabase';
 
 export type TripPickerMode = 'assign' | 'move';
 export type TripPickerEntityKind = 'source' | 'place';
+
+type TripWithCount = Trip & { placeCount: number };
 
 export function TripPicker(props: {
   visible: boolean;
@@ -31,29 +48,55 @@ export function TripPicker(props: {
 }) {
   const { visible, entityId, entityKind, mode, onClose, assignOptions } = props;
   const db = useDatabase();
-  const [stage, setStage] = useState<'list' | 'create'>('list');
-  const [trips, setTrips] = useState<Trip[]>([]);
+  const insets = useSafeAreaInsets();
+
+  const [internalVisible, setInternalVisible] = useState(false);
+  const [trips, setTrips] = useState<TripWithCount[]>([]);
+  const [creatingNew, setCreatingNew] = useState(false);
   const [name, setName] = useState('');
 
-  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['trips']);
+  // Tick on either trips or places change so place counts stay accurate
+  // if data shifts while the sheet is mounted.
+  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['trips', 'places']);
+
+  const progress = useSharedValue(0);
 
   useEffect(() => {
-    let cancelled = false;
+    if (visible) {
+      setInternalVisible(true);
+      progress.value = withSpring(1, { damping: 22, stiffness: 240, mass: 0.8 });
+    } else if (internalVisible) {
+      progress.value = withTiming(0, { duration: 220 }, (finished) => {
+        if (finished) runOnJS(setInternalVisible)(false);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      setCreatingNew(false);
+      setName('');
+    }
+  }, [visible]);
+
+  useEffect(() => {
     if (!db || !visible) return;
-    listTrips(db).then((rows) => {
-      if (!cancelled) setTrips(rows);
+    let cancelled = false;
+    Promise.all([listTrips(db), countPlacesByTrip(db)]).then(([list, counts]) => {
+      if (cancelled) return;
+      const merged: TripWithCount[] = list.map((t) => ({
+        ...t,
+        placeCount: counts[t.id] ?? 0,
+      }));
+      setTrips(merged);
+      // Empty state: skip straight to the create form.
+      if (merged.length === 0) setCreatingNew(true);
     });
     return () => {
       cancelled = true;
     };
   }, [db, visible, tick]);
-
-  useEffect(() => {
-    if (!visible) {
-      setStage('list');
-      setName('');
-    }
-  }, [visible]);
 
   const assignTo = async (tripId: string): Promise<void> => {
     if (!db || !entityId) return;
@@ -64,7 +107,7 @@ export function TripPicker(props: {
     }
   };
 
-  const choose = async (trip: Trip) => {
+  const choose = async (trip: TripWithCount) => {
     try {
       await assignTo(trip.id);
       onClose({ tripName: trip.name });
@@ -74,10 +117,10 @@ export function TripPicker(props: {
   };
 
   const trimmed = name.trim();
-  const canSaveCreate = trimmed.length > 0 && db !== null && entityId !== null;
+  const canSave = trimmed.length > 0 && db !== null && entityId !== null;
 
   const saveCreate = async () => {
-    if (!db || !entityId || !canSaveCreate) return;
+    if (!db || !entityId || !canSave) return;
     try {
       const newId = Crypto.randomUUID();
       await createTrip(db, { id: newId, name: trimmed, ownerId: getOrCreateOwnerId() });
@@ -88,100 +131,214 @@ export function TripPicker(props: {
     }
   };
 
+  const handleBackdropPress = () => {
+    if (creatingNew && trips.length > 0) {
+      setCreatingNew(false);
+      setName('');
+    } else {
+      onClose(null);
+    }
+  };
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+  }));
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - progress.value) * 600 }],
+  }));
+
+  const title = mode === 'assign' ? 'Add to trip' : 'Move to trip';
+
   return (
     <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
+      visible={internalVisible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
       onRequestClose={() => onClose(null)}
     >
-      <SafeAreaView className="flex-1 bg-white">
-        <View className="flex-row items-center justify-between border-b border-slate-200 p-4">
+      <View style={StyleSheet.absoluteFillObject}>
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFillObject,
+            { backgroundColor: 'rgba(15,23,42,0.42)' },
+            backdropStyle,
+          ]}
+        >
           <Pressable
-            onPress={() => onClose(null)}
+            style={{ flex: 1 }}
+            onPress={handleBackdropPress}
             accessibilityRole="button"
-            accessibilityLabel="Cancel"
-          >
-            <Text className="text-base text-slate-600">Cancel</Text>
-          </Pressable>
-          <Text className="text-base font-semibold text-slate-900">
-            {stage === 'list' ? (mode === 'assign' ? 'Add to trip' : 'Move to trip') : 'New trip'}
-          </Text>
-          {stage === 'create' ? (
-            <Pressable
-              onPress={saveCreate}
-              disabled={!canSaveCreate}
-              accessibilityRole="button"
-              accessibilityLabel="Save"
-              accessibilityState={{ disabled: !canSaveCreate }}
-            >
-              <Text
-                className={
-                  canSaveCreate
-                    ? 'text-base font-semibold text-blue-600'
-                    : 'text-base font-semibold text-slate-300'
-                }
-              >
-                Save
-              </Text>
-            </Pressable>
-          ) : (
-            <View style={{ width: 50 }} />
-          )}
-        </View>
-
-        {stage === 'list' ? (
-          <FlatList
-            data={trips}
-            keyExtractor={(t) => t.id}
-            ListHeaderComponent={
-              <Pressable
-                onPress={() => setStage('create')}
-                className="border-b border-slate-100 p-4"
-                accessibilityRole="button"
-                accessibilityLabel="Create new trip"
-              >
-                <Text className="text-base font-semibold text-blue-600">+ Create new trip</Text>
-              </Pressable>
-            }
-            renderItem={({ item }) => (
-              <Pressable
-                onPress={() => choose(item)}
-                className="border-b border-slate-100 p-4"
-                accessibilityRole="button"
-                accessibilityLabel={item.name}
-              >
-                <Text className="text-base text-slate-900">{item.name}</Text>
-              </Pressable>
-            )}
-            ListEmptyComponent={
-              <Text className="p-4 text-sm text-slate-400">
-                No trips yet — tap "Create new trip".
-              </Text>
-            }
+            accessibilityLabel="Dismiss"
           />
-        ) : (
-          <View className="p-4">
-            <TextInput
-              autoFocus
-              value={name}
-              onChangeText={setName}
-              placeholder="Trip name (e.g. Japan)"
-              className="rounded-md border border-slate-200 px-3 py-3 text-base"
-              returnKeyType="done"
-              onSubmitEditing={saveCreate}
+        </Animated.View>
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+          pointerEvents="box-none"
+        >
+          <Animated.View
+            accessibilityViewIsModal
+            style={[
+              {
+                backgroundColor: '#ffffff',
+                borderTopLeftRadius: 22,
+                borderTopRightRadius: 22,
+                paddingTop: 8,
+                paddingBottom: insets.bottom + 16,
+                shadowColor: '#000',
+                shadowOpacity: 0.18,
+                shadowRadius: 24,
+                shadowOffset: { width: 0, height: -8 },
+                elevation: 24,
+              },
+              sheetStyle,
+            ]}
+          >
+            <View
+              className="self-center"
+              style={{
+                width: 40,
+                height: 5,
+                borderRadius: 999,
+                backgroundColor: '#e2e8f0',
+                marginTop: 4,
+                marginBottom: 12,
+              }}
             />
-            <Pressable
-              onPress={() => setStage('list')}
-              className="mt-3"
-              accessibilityRole="button"
-              accessibilityLabel="Back to trip list"
-            >
-              <Text className="text-sm text-slate-500">← Back to trip list</Text>
-            </Pressable>
-          </View>
-        )}
-      </SafeAreaView>
+            <Text className="text-center text-[15px] font-bold text-slate-900">{title}</Text>
+
+            <View className="mt-2">
+              {creatingNew ? (
+                <CreateForm
+                  name={name}
+                  onChangeName={setName}
+                  canSave={canSave}
+                  onSave={saveCreate}
+                />
+              ) : (
+                <CreateRow onPress={() => setCreatingNew(true)} />
+              )}
+              {trips.map((t) => (
+                <TripRow
+                  key={t.id}
+                  trip={t}
+                  mode={mode}
+                  onPress={() => choose(t)}
+                />
+              ))}
+            </View>
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
+}
+
+function TripRow(props: {
+  trip: TripWithCount;
+  mode: TripPickerMode;
+  onPress: () => void;
+}) {
+  const { trip, mode, onPress } = props;
+  const hint = mode === 'assign' ? 'Adds to this trip' : 'Moves to this trip';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={trip.name}
+      accessibilityHint={hint}
+      className="flex-row items-center border-t border-slate-100 active:bg-slate-50"
+      style={{ paddingVertical: 15, paddingHorizontal: 20 }}
+    >
+      <Text className="flex-1 text-[15px] font-medium text-slate-900" numberOfLines={1}>
+        {trip.name}
+      </Text>
+      <Text className="text-[13px] font-medium text-slate-400">
+        {formatCount(trip.placeCount)}
+      </Text>
+    </Pressable>
+  );
+}
+
+function CreateRow(props: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={props.onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Create new trip"
+      className="flex-row items-center active:bg-slate-50"
+      style={{ paddingVertical: 15, paddingHorizontal: 20, gap: 10 }}
+    >
+      <View
+        className="items-center justify-center bg-blue-100"
+        style={{ width: 22, height: 22, borderRadius: 999 }}
+      >
+        <Text className="text-[15px] font-bold leading-none text-blue-600">+</Text>
+      </View>
+      <Text className="text-[15px] font-semibold text-blue-600">New trip</Text>
+    </Pressable>
+  );
+}
+
+function CreateForm(props: {
+  name: string;
+  onChangeName: (v: string) => void;
+  canSave: boolean;
+  onSave: () => void;
+}) {
+  const { name, onChangeName, canSave, onSave } = props;
+  return (
+    <View
+      className="flex-row items-center bg-slate-50"
+      style={{
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        gap: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderColor: '#e2e8f0',
+      }}
+    >
+      <TextInput
+        autoFocus
+        value={name}
+        onChangeText={onChangeName}
+        placeholder="Trip name"
+        returnKeyType="done"
+        onSubmitEditing={onSave}
+        accessibilityLabel="New trip name"
+        className="flex-1 bg-white text-[15px] text-slate-900"
+        style={{
+          borderWidth: 1,
+          borderColor: '#cbd5e1',
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+        }}
+      />
+      <Pressable
+        onPress={onSave}
+        disabled={!canSave}
+        accessibilityRole="button"
+        accessibilityLabel="Save trip"
+        accessibilityState={{ disabled: !canSave }}
+        style={{
+          backgroundColor: canSave ? '#2563eb' : '#cbd5e1',
+          borderRadius: 10,
+          paddingHorizontal: 14,
+          paddingVertical: 9,
+        }}
+      >
+        <Text className="text-[14px] font-bold text-white">Save</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function formatCount(n: number): string {
+  if (n === 0) return 'No places';
+  if (n === 1) return '1 place';
+  return `${n} places`;
 }

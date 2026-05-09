@@ -307,3 +307,15 @@ export async function findCollidingByExternalId(
   );
   return row ? rowToPlace(row) : null;
 }
+
+export async function countPlacesByTrip(db: Database): Promise<Record<string, number>> {
+  const rows = await db.getAllAsync<{ trip_id: string; n: number }>(
+    `SELECT trip_id, COUNT(*) AS n
+       FROM places
+      WHERE deleted_at IS NULL AND trip_id IS NOT NULL
+   GROUP BY trip_id`,
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.trip_id] = r.n;
+  return out;
+}

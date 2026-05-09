@@ -27,6 +27,7 @@ export {
   setEnrichmentStatus,
   findSoleMatchByNormalizedKey,
   findCollidingByExternalId,
+  countPlacesByTrip,
   normalizePlaceKey,
   type Place,
   type EnrichmentStatus,
