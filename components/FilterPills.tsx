@@ -40,7 +40,10 @@ export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps)
             <Text
               className="text-[13px]"
               style={{
-                fontWeight: active ? '600' : '500',
+                // Constant weight prevents the pill from changing width
+                // when toggling active — bolder glyphs measure wider and
+                // would shift neighboring pills horizontally.
+                fontWeight: '600',
                 color: active ? '#f8fafc' : '#475569',
               }}
             >
