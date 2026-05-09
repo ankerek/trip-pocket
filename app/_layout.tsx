@@ -177,14 +177,7 @@ export default function RootLayout() {
           name="places/[id]"
           options={DETAIL_ROUTE_OPTIONS}
         />
-        <Stack.Screen
-          name="search"
-          options={{
-            headerShown: true,
-            presentation: 'modal',
-            ...SHARED_HEADER_OPTIONS,
-          }}
-        />
+        <Stack.Screen name="sources/[id]" />
         <Stack.Screen
           name="trips/[id]"
           options={DETAIL_ROUTE_OPTIONS}
@@ -208,7 +201,7 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
-          name="places/[id]/ocr-debug"
+          name="sources/[id]/ocr-debug"
           options={{
             headerShown: true,
             presentation: 'formSheet',
@@ -218,7 +211,7 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
-          name="places/[id]/places-found"
+          name="sources/[id]/places-found"
           options={{
             headerShown: true,
             presentation: 'formSheet',
