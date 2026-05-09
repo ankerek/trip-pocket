@@ -18,7 +18,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon
           sf={{ default: 'map', selected: 'map.fill' }}
         />
-        <NativeTabs.Trigger.Label>Trip</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Trips</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="(search)" role="search">

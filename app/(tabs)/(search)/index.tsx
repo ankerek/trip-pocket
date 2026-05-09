@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Pressable,
@@ -7,6 +7,8 @@ import {
   View,
 } from '@/tw';
 import { Stack } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import type { SearchBarCommands } from 'react-native-screens';
 import { useLiveQuery } from '@/modules/storage';
 import { buildFtsMatch } from '@/modules/search';
 import { SearchResultRow, type SearchResultRowData } from '@/components/SearchResultRow';
@@ -42,11 +44,24 @@ export default function Search() {
   const [input, setInput] = useState('');
   const [debounced, setDebounced] = useState('');
   const [tripFilter, setTripFilter] = useState<string | null>(null);
+  const searchBarRef = useRef<SearchBarCommands>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(input), 200);
     return () => clearTimeout(t);
   }, [input]);
+
+  // headerSearchBarOptions.autoFocus is Android-only — iOS needs an
+  // imperative focus call. useFocusEffect fires every time the search tab
+  // gains focus (initial mount + every tab re-entry), and the small delay
+  // lets iOS finish wiring the search bar into the nav header before we
+  // ask it to become first responder.
+  useFocusEffect(
+    useCallback(() => {
+      const t = setTimeout(() => searchBarRef.current?.focus(), 120);
+      return () => clearTimeout(t);
+    }, []),
+  );
 
   const match = useMemo(() => buildFtsMatch(debounced), [debounced]);
   const queryParams = useMemo(
@@ -71,11 +86,11 @@ export default function Search() {
           title: 'Search',
           headerLargeTitle: true,
           headerSearchBarOptions: {
+            ref: searchBarRef,
             placeholder: 'Search places',
             onChangeText: (e) => setInput(e.nativeEvent.text),
             hideWhenScrolling: false,
-            // iOS 26 search-tab UX: the trailing search capsule on the tab
-            // bar morphs into the native UISearchBar when the tab activates.
+            autoFocus: true, // Android only; iOS focus is driven by the ref above.
           },
         }}
       />
