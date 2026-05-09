@@ -15,13 +15,13 @@ Default: **React Native (Expo)**. Switch to native iOS only if a specific MVP fe
 
 ---
 
-## v0.1 — "I can use it daily"
+## v0.1 — "I can use it daily" — ✅ shipped
 
-The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-finding a screenshot inside this app feels meaningfully better than the camera roll. If it doesn't, fix that before adding more.
+The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-finding a screenshot inside this app feels meaningfully better than the camera roll.
 
 **Definition of done:** I'm using it on my own phone every day for a week without going back to Photos for the same task.
 
-**Status (2026-05-07):** code-complete except for empty-state polish. The whole capture loop — share-sheet (with trip picker), camera-roll import, list/grid, detail, trip CRUD, delete — works on device. Day-of-use validation is the remaining gate.
+**Status (2026-05-09):** shipped. The capture loop — share-sheet (with trip picker), camera-roll import, list/grid, detail, trip CRUD, delete — works on device. v0.2 is now the active milestone; the empty-state audit folded into the v0.2 polish pass.
 
 ### Now
 - [x] Expo project set up, dev build running on iPhone, repo bootstrapped.
@@ -38,12 +38,11 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 - [x] **Beyond original scope:** trip picker inside the share extension itself (was deferred from Phase 1 to Phase 2; shipped 2026-05-07). Capture-to-trip is now one tap from Photos.
 
 ### Later (this milestone)
-- [ ] Empty state copy. (Some surfaces have it; needs an audit pass.)
 - [x] Trip rename / delete.
 - [x] Basic settings screen (version, about). (Version shown; "about" copy minimal.)
+- [→] Empty state copy. Carried into v0.2 polish — some surfaces have it, full audit pending.
 
 ### Explicit non-goals for v0.1
-- Auto-detect of new screenshots — deferred to v1.x.
 - OCR — v0.2.
 - Tags — v0.2.
 - AI extraction / Places view — v0.2.
@@ -52,26 +51,38 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 
 ---
 
-## v0.2 — "Full MVP, feature-complete"
+## v0.2 — "Full MVP, feature-complete" — 🟢 in progress
 
 Everything PRODUCT.md calls "at launch". The app is feature-complete for the wedge — *save it before it's lost* — plus the AI extraction layer that turns screenshots into usable places. Not yet polished for strangers.
 
 **Definition of done:** every "at launch" bullet from PRODUCT.md works end-to-end, capture-to-saved-in-trip is under ~5 seconds, and AI extraction reliably produces a tappable place for the obvious cases (single restaurant or POI in a screenshot).
 
-**Scope:**
-- On-device OCR (Apple Vision via native module if needed).
-- AI extraction pipeline: thin server-side proxy to an LLM, called from the app per screenshot, results stored locally in `extracted_places`. The same call doubles as a "is this travel?" classifier — an empty result means the screenshot is noise, not content.
-- Place enrichment via Google Places API: on-demand fetch of a real photo, 1–2 sentence narrative, rating, hours, price level, and lat/lng the first time a user opens an extracted place. Google Places for facts + Gemini for the narrative, both routed through the existing extract proxy. Free for everyone — this is the magic-moment value prop, not a premium gate. Also replaces the OCR-address search-URL deep link with proper pinned coords. Full design in `docs/superpowers/specs/2026-05-08-place-enrichment-design.md`.
-- Search across OCR text + trip names + tags + extracted place names.
-- Manual tagging: place / food / activity.
-- Trip detail view with grouping/filtering by tag.
-- Per-screenshot "place detected" badge; tap → opens Google or Apple Maps.
-- Per-trip "Places" tab listing distinct extracted names.
-- Performance pass: list scrolling, image loading.
+**Status (2026-05-09):** core pipeline is shipped end-to-end on device. OCR, AI extraction, enrichment, photo proxy, search, places-first home, triage, per-trip Places tab, per-source places-found sheet, Maps deep-link — all live. Two design changes vs. the original plan:
+- Schema collapsed to a places-first shape (`places` + `place_sources` junction + generalised `sources`) before any users existed; FTS5 indexes the place document, not the source document.
+- `places.category` is populated by the AI extractor rather than asked of the user, so the "manual tagging" deliverable is partial — the categorisation works, but there's no tag editor in the UI yet.
 
-**Sequencing inside v0.2:** OCR ships first (also unlocks search). Then AI extraction (also unlocks the Places tab and per-screenshot badge). Then place enrichment, which depends on extraction landing first. The remaining items — manual tagging, trip-detail filtering, performance pass — are independent and slot in alongside whenever convenient.
+**Shipped:**
+- [x] On-device OCR via Apple Vision (`modules/vision-ocr/`, Swift Expo Module).
+- [x] AI extraction pipeline: Cloudflare Worker proxy fronting Gemini 2.5 Flash-Lite via Cloudflare AI Gateway. Empty result = noise classifier.
+- [x] Place enrichment: Google Places + Gemini narrative through the same proxy (`/enrich`), plus a `/photo/:name` image proxy for resized venue photos. Lat/lng populates Maps deep-links.
+- [x] FTS5 search across place name, city, description, `place_sources.raw_text` (capped 2 KB per source), and `extracted_address`. Trip-filter chips on the search screen.
+- [x] Per-source "place detected" badge in the source-detail toolbar; tap opens the places-found sheet.
+- [x] Per-trip "Places" tab with grid layout, plus a sibling "Sources" sub-tab.
+- [x] Maps deep-link with installed-app detection (`comgooglemaps` URL scheme; falls back to Apple Maps).
+- [x] Cloudflare Worker tests + DB / extraction / enrichment / search Jest coverage.
+- [x] **Beyond original scope:** app redesign — Sea+Teal palette, dark mode, iOS 26 NativeTabs (liquid glass), full-bleed hero details, FilterPills (All / Untriaged / per-trip) on the home grid, places-first feed.
+- [x] **Beyond original scope:** triage flow — full-screen pager modal that walks new sources one at a time, picking-a-trip auto-saves and advances. (Triage redesign approved 2026-05-09 — see "In flight" below.)
 
-**Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall).
+**In flight:**
+- [ ] Triage redesign — multi-place selection per source, default-on with deselect-to-drop, swipe-down-to-dismiss. Spec: `docs/superpowers/specs/2026-05-09-triage-redesign-design.md`.
+- [ ] Empty-state audit across the app (carried over from v0.1).
+- [ ] Performance pass on list scrolling and image loading. Photo proxy is in place, virtualization is wired, but no formal measurement pass yet.
+
+**Open / cut:**
+- Manual tagging UI: AI-set categories cover the launch-promise behaviour. Decision pending — ship a tag editor, or formally cut and lean on AI categories for v1.0.
+- Trip detail filtering by tag/category: deferred until the manual-tagging decision lands. Trip detail's "Map" view is currently a "coming soon" placeholder (full map is v1.x).
+
+**Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall). Endpoints live: `POST /extract`, `POST /enrich`, `GET /photo/:name`. Privacy posture: never logs OCR text or LLM bodies; logs only HTTP status, latency, and error class.
 
 ---
 
@@ -120,7 +131,6 @@ Public. Paid from day one.
 
 Sequenced post-launch based on what users actually ask for. Order here is a guess, not a commitment.
 
-- **Auto-detect new screenshots in background**, **gated by the AI classifier**: only screenshots that yield ≥1 extracted place surface in Inbox; the rest are recorded for dedup but stay hidden. Raw auto-detect (every screenshot into Inbox) was rejected — without the classifier, Inbox becomes a junk drawer, not an inbox. Deferred from v0.2: PhotoKit observers + background fetch are a meaningful platform lift, and share-sheet capture already covers the daily-use loop.
 - Smart suggestions on top of extracted places ("Looks like a café in Tokyo", auto-tagging).
 - In-app map view of saved places (uses the lat/lng populated by v0.2 place enrichment).
 - Cloud sync across devices (CloudKit while iOS-only; revisit if Android happens).
@@ -148,5 +158,6 @@ Restated from PRODUCT.md so they stay loud:
 - Server-side product logic. The AI proxy is a stateless LLM passthrough; product features live on the device.
 - Social or sharing features.
 - Booking integrations.
+- Background screenshot auto-detect. Share-sheet capture is the capture path. PhotoKit observers + background fetch are a meaningful platform lift for an inbox we'd then need an AI classifier to keep clean — and the share sheet already gets capture down to one extra tap. Not a tarpit worth entering.
 
 Each of these is a tarpit. The wedge is *save it before it's lost*.

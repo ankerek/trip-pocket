@@ -24,7 +24,7 @@ Trip Pocket is the layer in between social media and any planner you eventually 
 
 Trip Pocket is a dedicated inbox for travel screenshots, with an AI layer that turns those screenshots into places you can actually use.
 
-The default capture path is invisible: keep screenshotting on Instagram or TikTok like you always do, and Trip Pocket surfaces new screenshots when you open the app, ready to be sorted into a trip. When you want to be deliberate, you can also send a screenshot in via the share sheet, or pull from your camera roll from inside the app.
+The capture path is the iOS share sheet. You see something on Instagram or TikTok, you tap Share → Trip Pocket, you pick a trip, done — one extra tap on top of the screenshot you were going to take anyway. If you've already got a backlog of screenshots in Photos, you can also pull them in from inside the app.
 
 Either way, the screenshot lands in a trip you're collecting (e.g. "Japan 🇯🇵") and gets tagged as a place, food, or activity. AI reads the screenshot and pulls out the place name and city, so a picture of "Maru Tonkatsu, Shibuya" becomes a tappable place — one tap opens Google or Apple Maps. Later, when you're actually planning, everything is there — sorted, scannable, not lost.
 
@@ -46,21 +46,21 @@ The first user is anyone with a camera roll full of screenshots they meant to do
 
 **At launch:**
 
-- Automatic detection of new screenshots in the background, surfaced for review
-- Import via the iOS share sheet
+- Import via the iOS share sheet (with a trip picker inside the extension itself, so capture-to-trip is one tap from Photos)
 - Import from the camera roll inside the app
 - Dedicated storage outside the camera roll
 - Trip collections (e.g. "Japan", "Lisbon weekend")
-- Manual tagging: place / food / activity
+- A places-first home — every screenshot becomes a place tile, filterable by trip or by what's still untriaged
+- A triage flow for sorting new screenshots into trips one at a time
 - On-device OCR so the text inside screenshots is searchable
-- AI extraction of place names and cities from screenshots
+- AI extraction of place names, cities, and category (place / food / activity) from screenshots
+- Rich place cards — a real photo of the venue, a 1–2 sentence summary of what it is, address, rating, and price level, fetched on demand the first time you open a place. The screenshot you saved three months ago becomes "oh right, that's the cozy bakery I wanted to try" without re-opening the original.
 - A "Places" view per trip that lists everything we've found
 - Tap any extracted place to open Google or Apple Maps
-- A clean list view to browse what you've saved
+- Search across place names, cities, descriptions, and the OCR text behind the screenshots that produced them
 
 **Later:**
 
-- Rich place cards — a real photo of the venue, a 1–2 sentence summary of what it is, and metadata like rating and hours, fetched on demand the first time you open a place. The screenshot you saved three months ago becomes "oh right, that's the cozy bakery I wanted to try" without re-opening the original.
 - Smart suggestions ("Looks like a café in Tokyo")
 - An in-app map view of saved places
 - Itinerary generation from saved ideas
