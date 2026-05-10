@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Image, Pressable, Text, View } from '@/tw';
+import { Image, Pressable, Text, View, useCSSVariable } from '@/tw';
 import { FlatList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
@@ -97,7 +97,7 @@ export default function Trips() {
       <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
       <FlatList
         contentInsetAdjustmentBehavior="automatic"
-        style={{ flex: 1, backgroundColor: '#ffffff' }}
+        className="flex-1 bg-bg"
         data={rows}
         keyExtractor={(r) => r.trip.id}
         contentContainerStyle={{ padding: 14, paddingBottom: 96 }}
@@ -105,25 +105,21 @@ export default function Trips() {
         renderItem={({ item }) => (
           <Pressable
             onPress={() => router.push(`/trips/${item.trip.id}`)}
-            className="mb-3 overflow-hidden rounded-2xl"
-            style={{
-              backgroundColor: '#f8fafc',
-              borderWidth: 1,
-              borderColor: 'rgba(15,23,42,0.06)',
-            }}
+            className="mb-3 overflow-hidden rounded-2xl border border-hairline bg-surface"
             accessibilityRole="button"
             accessibilityLabel={`${item.trip.name}, ${item.count} place${item.count === 1 ? '' : 's'}`}
           >
             <View className="px-4 pt-3 pb-2 flex-row items-baseline justify-between">
               <Text
-                className="flex-1 pr-2"
+                className="flex-1 pr-2 text-text"
                 numberOfLines={1}
-                style={{ fontSize: 17, fontWeight: '600', color: '#0c4a6e' }}
+                style={{ fontSize: 17, fontWeight: '600' }}
               >
                 {item.trip.name}
               </Text>
               <Text
-                style={{ fontSize: 13, color: '#94a3b8', fontVariant: ['tabular-nums'] }}
+                className="text-text-muted"
+                style={{ fontSize: 13, fontVariant: ['tabular-nums'] }}
               >
                 {item.count} place{item.count === 1 ? '' : 's'}
               </Text>
@@ -145,8 +141,8 @@ export default function Trips() {
               )}
               ListEmptyComponent={
                 <Text
-                  className="px-4 pb-3"
-                  style={{ fontSize: 12, color: '#94a3b8' }}
+                  className="px-4 pb-3 text-text-muted"
+                  style={{ fontSize: 12 }}
                 >
                   No places yet
                 </Text>
@@ -161,6 +157,7 @@ export default function Trips() {
 
 function PreviewThumb({ place }: { place: TripPreviewPlace }) {
   const photoUri = buildPhotoUri(place.photo_name);
+  const placeholderBg = useCSSVariable('--color-hairline');
   if (photoUri) {
     return (
       <Image
@@ -169,7 +166,7 @@ function PreviewThumb({ place }: { place: TripPreviewPlace }) {
           width: 72,
           height: 90,
           borderRadius: 10,
-          backgroundColor: '#e2e8f0',
+          backgroundColor: placeholderBg,
         }}
         contentFit="cover"
         cachePolicy="memory-disk"
@@ -183,11 +180,14 @@ function PreviewThumb({ place }: { place: TripPreviewPlace }) {
         width: 72,
         height: 90,
         borderRadius: 10,
-        backgroundColor: '#e2e8f0',
+        backgroundColor: placeholderBg,
       }}
       className="items-center justify-center"
     >
-      <Text style={{ fontSize: 16, fontWeight: '600', color: '#94a3b8' }}>
+      <Text
+        className="text-text-muted"
+        style={{ fontSize: 16, fontWeight: '600' }}
+      >
         {place.name?.charAt(0)?.toUpperCase() ?? '?'}
       </Text>
     </View>
@@ -204,6 +204,7 @@ function buildPhotoUri(photoName: string | null): string | null {
 
 function HeaderPlusButton() {
   const router = useRouter();
+  const tint = useCSSVariable('--color-text');
   return (
     <Pressable
       onPress={() => router.push('/trips/new')}
@@ -212,7 +213,7 @@ function HeaderPlusButton() {
       accessibilityLabel="Add new trip"
       hitSlop={8}
     >
-      <Icon name="plus" size={22} tintColor="#0c4a6e" />
+      <Icon name="plus" size={22} tintColor={tint} />
     </Pressable>
   );
 }
