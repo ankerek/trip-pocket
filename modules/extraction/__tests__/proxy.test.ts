@@ -42,7 +42,7 @@ describe('extractFromProxy', () => {
     expect(result.model).toBe('gemini-2.5-flash-lite');
   });
 
-  it('rejects lowercase country_code as a schema violation (treated as retryable)', async () => {
+  it('coerces lowercase country_code to uppercase rather than throwing', async () => {
     globalThis.fetch = jest.fn(async () =>
       jsonResp(200, {
         places: [
@@ -58,9 +58,29 @@ describe('extractFromProxy', () => {
       }),
     ) as unknown as typeof fetch;
 
-    await expect(extractFromProxy('hi', URL)).rejects.toMatchObject({
-      classification: { kind: 'retryable' },
-    });
+    const result = await extractFromProxy('hi', URL);
+    expect(result.places[0]?.country_code).toBe('JP');
+  });
+
+  it('coerces a non-conforming country_code to empty, preserving the place', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      jsonResp(200, {
+        places: [
+          {
+            name: 'X',
+            city: 'Y',
+            address: '',
+            category: 'food',
+            country_code: 'JPN',
+          },
+        ],
+        model: 'gemini-2.5-flash-lite',
+      }),
+    ) as unknown as typeof fetch;
+
+    const result = await extractFromProxy('hi', URL);
+    expect(result.places).toHaveLength(1);
+    expect(result.places[0]?.country_code).toBe('');
   });
 
   it('throws retryable on 200 with malformed body (Zod fails)', async () => {

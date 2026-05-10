@@ -101,10 +101,26 @@ Add `'country_code'` to the per-place `required` array. (Empty string is the "un
 ### `workers/extract-proxy/src/schema.ts` — Zod mirror
 
 ```ts
-country_code: z.string().regex(/^([A-Z]{2})?$/, 'iso-2-uppercase-or-empty'),
+country_code: z.unknown().transform((v) => {
+  if (typeof v !== 'string') return '';
+  const upper = v.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(upper) ? upper : '';
+}),
 ```
 
-Empty string OR exactly two uppercase letters — nothing else. If Gemini ever drifts (lowercase, 3-letter code, full name), Zod rejects and the Worker returns 502; the client retries per existing policy. This is the **only** layer where the format is enforced — downstream code can assume valid input.
+**Lenient per-place coercion.** Any input that isn't a recognisable ISO-2 code becomes empty string:
+
+| Gemini sends | Stored |
+|---|---|
+| `"JP"` | `"JP"` |
+| `"jp"` / `"  jp  "` | `"JP"` (coerced) |
+| `""` | `""` |
+| field missing | `""` |
+| `"JPN"` / `"Japan"` / `"J"` / non-string | `""` |
+
+Empty string normalises to NULL at the storage boundary in `extraction.ts`. Rationale: a single bad apple should never blow up the whole extraction batch — drop the bad value, keep the place, let enrichment fill country authoritatively from Google Places. There is no "loud failure" signal for schema drift in v0.2; if Gemini consistently emits malformed country_code, the symptom is rows with NULL country until enrichment runs. Add Sentry/telemetry coverage when v0.3 lands.
+
+The client's Zod (`modules/extraction/proxy.ts`) applies the same coercion — defense-in-depth for the case where the worker version lags the client.
 
 ### `workers/extract-proxy/src/enrich.ts` — extend field mask + parser
 
@@ -205,9 +221,11 @@ Screenshot OCR text →
 
 | Case | Behavior |
 |---|---|
-| LLM omits `country_code` from a place | Worker Zod-validates the response; missing field → 502 → client retry per existing policy. |
-| LLM emits 3-letter, lowercase, or full name | Zod regex `/^([A-Z]{2})?$/` rejects → 502 → retry. |
+| LLM omits `country_code` from a place | Coerced to empty string by per-place Zod transform → stored as NULL. Place is still saved. |
+| LLM emits lowercase (`"jp"`) | Uppercased and accepted. |
+| LLM emits 3-letter (`"JPN"`), full name (`"Japan"`), 1-char, non-string | Coerced to empty string → stored as NULL. Place is still saved. |
 | LLM emits `""` (ambiguous) | Stored as NULL in `places.country_code`. Place lands in the "Other" bucket until enriched (or until a later same-place extraction fills NULL via asymmetric-fill). |
+| One place in a multi-place batch has a bad country_code | That single place's country_code becomes empty/NULL. All sibling places persist normally. Whole-batch failure is **not** triggered by per-field validation. |
 | Google `addressComponents.country.shortText` is lowercase (CLDR convention says uppercase, but defensive) | Normalise to uppercase in the Worker before serialising the response. Client never sees mixed case. |
 | Same-name + same-city across countries (Cambridge UK + Cambridge MA both "Flour Bakery") | Collide on `normalized_key`; one row wins. Acknowledged limitation, see "Dedup-match path" above. |
 | Google `addressComponents` missing the `country` entry | Rare. Parser returns null; `COALESCE` preserves LLM value. |
@@ -229,7 +247,7 @@ Resolved:
 | Scope of override | Both `city` and `country_code` get the dual-write treatment. Fixes the pre-existing inconsistency where `city` was LLM-only forever. |
 | `not-found` rows | Keep LLM-extracted values (the whole reason for dual-write). |
 | LLM ambiguity sentinel | Empty string from the LLM; stored as NULL in the DB. |
-| Format enforcement | Zod regex `/^([A-Z]{2})?$/` at the proxy boundary. Downstream code assumes uppercase ISO-2 or NULL. Google's `shortText` defensively normalised to uppercase in the Worker. |
+| Format enforcement | **Lenient per-place coercion**, not strict rejection: at the worker and the client, any non-conforming `country_code` becomes empty string (→ NULL downstream). A single bad place never fails the whole batch. Downstream code can assume uppercase ISO-2 or NULL. Google's `shortText` defensively normalised to uppercase in the Worker. |
 | Dedup-match write | Asymmetric fill: replace NULL with non-empty values; never overwrite a non-NULL existing value. |
 | Cross-country same-name+same-city collisions | Acknowledged pre-existing limitation of `normalized_key = name|city`. Affects `country_code` exactly as it affects every other Google-Places-derived column. Out of scope to fix here. |
 | Per-source provenance for country | Out of scope. `place_sources` does not gain an `extracted_country_code` column. |
@@ -250,10 +268,11 @@ Deferred:
 
 **Worker (`workers/extract-proxy/__tests__/`):**
 
-- `extract`: stubbed Gemini returns a place with `country_code: "JP"` → 200 response contains it; Zod validates.
-- `extract`: stubbed Gemini returns 3-letter code → Worker returns 502.
-- `extract`: stubbed Gemini returns lowercase "jp" → Worker returns 502 (regex `/^([A-Z]{2})?$/` rejects).
-- `extract`: stubbed Gemini omits `country_code` → 502.
+- `extract`: stubbed Gemini returns a place with `country_code: "JP"` → 200 response contains it; Zod accepts.
+- `extract`: stubbed Gemini returns lowercase `"jp"` → 200, response contains `"JP"` (coerced).
+- `extract`: stubbed Gemini returns 3-letter code → 200, response contains `""` (per-place coercion). The place is still saved.
+- `extract`: stubbed Gemini omits `country_code` → 200, response contains `""`. The place is still saved.
+- `extract`: one good + one bad country_code in the same batch → both places returned; only the bad one's `country_code` is empty.
 - `enrich`: stubbed Google Places returns `addressComponents` with a `country` entry → response includes `country_code: "JP"`.
 - `enrich`: stubbed Google Places returns `addressComponents` without a `country` entry → response includes `country_code: null`; `city: null` similarly.
 - `enrich`: not-found branch unchanged (no city/country_code in body).

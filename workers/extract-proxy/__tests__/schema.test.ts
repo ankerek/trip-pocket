@@ -90,6 +90,7 @@ describe('extract-proxy schema', () => {
         places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' }],
       });
       expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('FR');
     });
 
     it('accepts empty country_code (LLM signaling truly ambiguous country)', () => {
@@ -97,34 +98,67 @@ describe('extract-proxy schema', () => {
         places: [{ name: 'Cafe', city: '', address: '', category: 'food', country_code: '' }],
       });
       expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('');
     });
 
-    it('rejects lowercase country_code — grouping key would split jp vs JP buckets', () => {
+    it('coerces lowercase country_code to uppercase (keeps the place; never splits grouping buckets)', () => {
       const result = extractionResponseSchema.safeParse({
         places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'jp' }],
       });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('JP');
     });
 
-    it('rejects 3-letter country code', () => {
+    it('coerces 3-letter country code to empty (keeps the place, drops the bad value)', () => {
       const result = extractionResponseSchema.safeParse({
         places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'JPN' }],
       });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('');
     });
 
-    it('rejects 1-character country_code', () => {
+    it('coerces 1-character country_code to empty (keeps the place)', () => {
       const result = extractionResponseSchema.safeParse({
         places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'J' }],
       });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('');
     });
 
-    it('rejects places missing the country_code field', () => {
+    it('coerces full country name to empty (keeps the place)', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'Japan' }],
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('');
+    });
+
+    it('defaults missing country_code to empty (keeps the place — model omission is non-fatal)', () => {
       const result = extractionResponseSchema.safeParse({
         places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food' }],
       });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('');
+    });
+
+    it('trims surrounding whitespace before validating', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: '  fr  ' }],
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('FR');
+    });
+
+    it('keeps surviving places when one place in the batch has a bad country_code', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [
+          { name: 'Good', city: 'Tokyo', address: '', category: 'food', country_code: 'JP' },
+          { name: 'Bad', city: 'Tokyo', address: '', category: 'food', country_code: 'JPN' },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.places[0]?.country_code).toBe('JP');
+      expect(result.data?.places[1]?.country_code).toBe('');
     });
   });
 });

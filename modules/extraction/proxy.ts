@@ -12,11 +12,17 @@ const responseSchema = z.object({
       city: z.string(),
       address: z.string(),
       category: z.enum(['place', 'food', 'activity']),
-      // ISO-3166-1 alpha-2 uppercase, or empty when the LLM couldn't infer.
-      // The worker is the single point of regex enforcement; here we accept
-      // the same surface and treat anything outside it as a schema violation
-      // (which the adapter maps to retryable).
-      country_code: z.string().regex(/^([A-Z]{2})?$/),
+      // Lenient per-place coercion. The worker normalises country_code
+      // already; this is defense-in-depth for the case where the worker
+      // version lags the client. Any non-conforming value (missing,
+      // wrong case, 3-letter, full name, non-string) becomes empty
+      // string. Empty maps to NULL at the storage boundary in
+      // extraction.ts. A single bad apple never blows up the whole batch.
+      country_code: z.unknown().transform((v) => {
+        if (typeof v !== 'string') return '';
+        const upper = v.trim().toUpperCase();
+        return /^[A-Z]{2}$/.test(upper) ? upper : '';
+      }),
     }),
   ),
   model: z.string().min(1),

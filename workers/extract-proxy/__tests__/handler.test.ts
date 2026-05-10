@@ -157,17 +157,18 @@ describe('handleExtract', () => {
     expect(res.status).toBe(502);
   });
 
-  it('returns 502 when Gemini emits lowercase country_code (single point of format enforcement)', async () => {
+  it('coerces lowercase country_code to uppercase (keeps the place rather than failing the batch)', async () => {
     globalThis.fetch = jest.fn(async () =>
       geminiOkResponse([{ name: 'X', city: 'Y', category: 'food', country_code: 'jp' }]),
     ) as unknown as typeof fetch;
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { places: Array<{ country_code: string }> };
+    expect(body.places[0]?.country_code).toBe('JP');
   });
 
-  it('returns 502 when Gemini omits country_code', async () => {
-    // Build the Gemini response directly so we can exclude country_code from one place.
+  it('coerces missing country_code to empty (keeps the place — model omission is non-fatal)', async () => {
     globalThis.fetch = jest.fn(
       async () =>
         new Response(
@@ -191,7 +192,25 @@ describe('handleExtract', () => {
     ) as unknown as typeof fetch;
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { places: Array<{ country_code: string }> };
+    expect(body.places[0]?.country_code).toBe('');
+  });
+
+  it('keeps good places when one place in the batch has a bad country_code (per-place coercion)', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      geminiOkResponse([
+        { name: 'Good', city: 'Tokyo', category: 'food', country_code: 'JP' },
+        { name: 'Bad', city: 'Tokyo', category: 'food', country_code: 'JPN' },
+      ]),
+    ) as unknown as typeof fetch;
+
+    const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { places: Array<{ name: string; country_code: string }> };
+    expect(body.places).toHaveLength(2);
+    expect(body.places[0]?.country_code).toBe('JP');
+    expect(body.places[1]?.country_code).toBe('');
   });
 
   it('returns 502 when Gemini upstream returns 5xx', async () => {

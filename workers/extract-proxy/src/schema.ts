@@ -9,10 +9,18 @@ export const placeSchema = z.object({
   city: z.string(),  // empty string allowed — LLM signals truly ambiguous
   address: z.string(),  // empty string when text has no street address
   category: z.enum(['place', 'food', 'activity']),
-  // ISO 3166-1 alpha-2 uppercase, or empty when the LLM can't infer.
-  // Lowercase or 3-letter codes would split grouping buckets downstream;
-  // the regex is the single point of enforcement.
-  country_code: z.string().regex(/^([A-Z]{2})?$/),
+  // ISO 3166-1 alpha-2. Lenient parser: any non-conforming value (missing,
+  // wrong case, 3-letter, full name, non-string, …) coerces to empty
+  // string. Rationale: a single malformed country_code from the LLM
+  // shouldn't blow up the whole extraction batch — drop the bad value,
+  // keep the place. Empty string normalises to NULL at the storage
+  // boundary, where enrichment can still fill it authoritatively from
+  // Google Places.
+  country_code: z.unknown().transform((v) => {
+    if (typeof v !== 'string') return '';
+    const upper = v.trim().toUpperCase();
+    return /^[A-Z]{2}$/.test(upper) ? upper : '';
+  }),
 });
 
 export const extractionResponseSchema = z.object({
