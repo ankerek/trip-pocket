@@ -9,6 +9,10 @@ export const placeSchema = z.object({
   city: z.string(),  // empty string allowed — LLM signals truly ambiguous
   address: z.string(),  // empty string when text has no street address
   category: z.enum(['place', 'food', 'activity']),
+  // ISO 3166-1 alpha-2 uppercase, or empty when the LLM can't infer.
+  // Lowercase or 3-letter codes would split grouping buckets downstream;
+  // the regex is the single point of enforcement.
+  country_code: z.string().regex(/^([A-Z]{2})?$/),
 });
 
 export const extractionResponseSchema = z.object({

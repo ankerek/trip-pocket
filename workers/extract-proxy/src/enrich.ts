@@ -31,6 +31,11 @@ export const enrichResponseSchema = z.union([
     rating: z.number().nullable(),
     price_level: z.number().int().nullable(),
     external_url: z.string().nullable(),
+    // Both come from Google Places addressComponents. NULL when Google
+    // didn't return the corresponding entry. country_code is uppercase
+    // ISO-2; the worker normalises before serialising.
+    city: z.string().nullable(),
+    country_code: z.string().nullable(),
     model: z.string(),
   }),
   z.object({ status: z.literal('not-found') }),
@@ -124,6 +129,8 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
     rating: details.rating,
     price_level: details.priceLevel,
     external_url: details.googleMapsUri,
+    city: details.city,
+    country_code: details.countryCode,
     model: GEMINI_MODEL,
   };
   return jsonResponse(response);
@@ -181,6 +188,8 @@ type PlaceDetails = {
   displayName: string | null;
   types: string[];
   editorialSummary: string | null;
+  city: string | null;            // addressComponents[type=locality].longText
+  countryCode: string | null;     // addressComponents[type=country].shortText, uppercased
 };
 
 async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails> {
@@ -196,6 +205,7 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
     'googleMapsUri',
     'websiteUri',
     'editorialSummary',
+    'addressComponents',
   ].join(',');
 
   const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
@@ -227,10 +237,15 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
     types?: string[];
     googleMapsUri?: string;
     editorialSummary?: { text?: string };
+    addressComponents?: Array<{ types?: string[]; longText?: string; shortText?: string }>;
   };
   if (typeof obj.id !== 'string') {
     throw new PlacesError(502, 'placeDetails missing id');
   }
+
+  const components = Array.isArray(obj.addressComponents) ? obj.addressComponents : [];
+  const locality = components.find((c) => c.types?.includes('locality'));
+  const country = components.find((c) => c.types?.includes('country'));
 
   return {
     id: obj.id,
@@ -251,6 +266,12 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
     types: Array.isArray(obj.types) ? obj.types.filter((t): t is string => typeof t === 'string') : [],
     editorialSummary:
       typeof obj.editorialSummary?.text === 'string' ? obj.editorialSummary.text : null,
+    city: typeof locality?.longText === 'string' && locality.longText.length > 0
+      ? locality.longText
+      : null,
+    countryCode: typeof country?.shortText === 'string' && country.shortText.length > 0
+      ? country.shortText.toUpperCase()
+      : null,
   };
 }
 

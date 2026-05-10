@@ -9,9 +9,15 @@ function rateLimit(allowed = true) {
 }
 
 function geminiOkResponse(
-  places: Array<{ name: string; city: string; category: string; address?: string }>,
+  places: Array<{
+    name: string;
+    city: string;
+    category: string;
+    address?: string;
+    country_code?: string;
+  }>,
 ) {
-  const padded = places.map((p) => ({ address: '', ...p }));
+  const padded = places.map((p) => ({ address: '', country_code: '', ...p }));
   // Gemini's structure for `responseMimeType: 'application/json'`:
   // candidates[0].content.parts[0].text contains the JSON string.
   return new Response(
@@ -145,6 +151,43 @@ describe('handleExtract', () => {
   it('returns 502 when Gemini response fails Zod validation', async () => {
     globalThis.fetch = jest.fn(async () =>
       geminiOkResponse([{ name: 'X', city: 'Y', category: 'unknown-cat' as 'food' }]),
+    ) as unknown as typeof fetch;
+
+    const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
+    expect(res.status).toBe(502);
+  });
+
+  it('returns 502 when Gemini emits lowercase country_code (single point of format enforcement)', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      geminiOkResponse([{ name: 'X', city: 'Y', category: 'food', country_code: 'jp' }]),
+    ) as unknown as typeof fetch;
+
+    const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
+    expect(res.status).toBe(502);
+  });
+
+  it('returns 502 when Gemini omits country_code', async () => {
+    // Build the Gemini response directly so we can exclude country_code from one place.
+    globalThis.fetch = jest.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        places: [{ name: 'X', city: 'Y', address: '', category: 'food' }],
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
     ) as unknown as typeof fetch;
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());

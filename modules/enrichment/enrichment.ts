@@ -16,6 +16,11 @@ export type EnrichOutcome =
       rating: number | null;
       price_level: number | null;
       external_url: string | null;
+      // Authoritative geographic values from Google Places `addressComponents`.
+      // Null when Google didn't supply the corresponding entry; the COALESCE
+      // write path then preserves the LLM-extracted value.
+      city: string | null;
+      country_code: string | null;
       model: string;
     }
   | { kind: 'not-found' };
@@ -260,11 +265,16 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     outcome: Extract<EnrichOutcome, { kind: 'enriched' }>,
   ): Promise<void> {
     const ts = getNow();
+    // `city` and `country_code` use COALESCE(?, col) so a NULL from Google
+    // never clobbers the LLM-extracted value. Non-null Google values are the
+    // authoritative override (the whole point of dual-write).
     await opts.db.runAsync(
       `UPDATE places
           SET external_place_id = ?, photo_name = ?, description = ?,
               rating = ?, price_level = ?, external_url = ?,
               latitude = ?, longitude = ?, formatted_address = ?,
+              city = COALESCE(?, city),
+              country_code = COALESCE(?, country_code),
               enrichment_status = 'enriched', enriched_at = ?,
               enrichment_model = ?, updated_at = ?
         WHERE id = ?`,
@@ -277,6 +287,8 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       outcome.latitude,
       outcome.longitude,
       outcome.formatted_address,
+      outcome.city,
+      outcome.country_code,
       ts,
       outcome.model,
       ts,

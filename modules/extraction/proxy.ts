@@ -12,6 +12,11 @@ const responseSchema = z.object({
       city: z.string(),
       address: z.string(),
       category: z.enum(['place', 'food', 'activity']),
+      // ISO-3166-1 alpha-2 uppercase, or empty when the LLM couldn't infer.
+      // The worker is the single point of regex enforcement; here we accept
+      // the same surface and treat anything outside it as a schema violation
+      // (which the adapter maps to retryable).
+      country_code: z.string().regex(/^([A-Z]{2})?$/),
     }),
   ),
   model: z.string().min(1),

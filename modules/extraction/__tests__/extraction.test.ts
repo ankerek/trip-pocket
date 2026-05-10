@@ -69,6 +69,7 @@ type PlaceJoin = {
   place_id: string;
   name: string;
   city: string | null;
+  country_code: string | null;
   category: string | null;
   normalized_key: string;
   trip_id: string | null;
@@ -83,7 +84,7 @@ async function getPlacesForSource(
   sourceId: string,
 ): Promise<PlaceJoin[]> {
   return db.getAllAsync<PlaceJoin>(
-    `SELECT p.id AS place_id, p.name, p.city, p.category, p.normalized_key,
+    `SELECT p.id AS place_id, p.name, p.city, p.country_code, p.category, p.normalized_key,
             p.trip_id, p.enrichment_status,
             ps.extracted_address, ps.raw_text, ps.confidence
        FROM place_sources ps
@@ -118,10 +119,11 @@ const okExtract = (
     city: string;
     category: 'place' | 'food' | 'activity';
     address?: string;
+    country_code?: string;
   }>,
 ): ExtractionRunner =>
   jest.fn(async () => ({
-    places: places.map((p) => ({ address: '', ...p })),
+    places: places.map((p) => ({ address: '', country_code: '', ...p })),
     model: 'gemini-2.5-flash-lite',
   }));
 
@@ -217,6 +219,30 @@ describe('createExtractor', () => {
       expect(enrichment[0]?.latitude).toBeNull();
       expect(enrichment[0]?.external_place_id).toBeNull();
       expect(enrichment[0]?.formatted_address).toBeNull();
+    });
+
+    it('persists country_code from the LLM on the new place row, normalising empty string to NULL', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([
+          { name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: 'JP' },
+          { name: 'Mystery', city: '', category: 'place', country_code: '' },
+        ]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const rows = await getPlacesForSource(db, 's1');
+      expect(rows[0]?.name).toBe('Kosoan');
+      expect(rows[0]?.country_code).toBe('JP');
+      expect(rows[1]?.name).toBe('Mystery');
+      expect(rows[1]?.country_code).toBeNull();
     });
 
     it('inherits trip_id from the source onto newly-created places', async () => {
@@ -366,6 +392,94 @@ describe('createExtractor', () => {
         `SELECT enrichment_status FROM places WHERE id = 'p-nf'`,
       );
       expect(place?.enrichment_status).toBe('pending');
+    });
+
+    it('asymmetric-fill: NULL country_code on existing place is filled when new extraction supplies a non-empty value', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             country_code, enrichment_status, owner_id, created_at, updated_at)
+         VALUES ('p-nullcc', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 NULL, 'pending', 'owner-1', ?, ?)`,
+        NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([
+          { name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: 'JP' },
+        ]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const place = await db.getFirstAsync<{ country_code: string | null }>(
+        `SELECT country_code FROM places WHERE id = 'p-nullcc'`,
+      );
+      expect(place?.country_code).toBe('JP');
+    });
+
+    it('asymmetric-fill: existing non-NULL country_code is preserved even when a new extraction disagrees', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             country_code, enrichment_status, owner_id, created_at, updated_at)
+         VALUES ('p-jp', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 'JP', 'pending', 'owner-1', ?, ?)`,
+        NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        // Re-extraction "disagrees" — should NOT overwrite the existing 'JP'.
+        extract: okExtract([
+          { name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: 'KR' },
+        ]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const place = await db.getFirstAsync<{ country_code: string | null }>(
+        `SELECT country_code FROM places WHERE id = 'p-jp'`,
+      );
+      expect(place?.country_code).toBe('JP');
+    });
+
+    it('asymmetric-fill: empty new value does not clobber an existing NULL (still NULL)', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, category, normalized_key,
+                             country_code, enrichment_status, owner_id, created_at, updated_at)
+         VALUES ('p-nullcc', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
+                 NULL, 'pending', 'owner-1', ?, ?)`,
+        NOW, NOW,
+      );
+      await seedSource(db, 's1');
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([
+          { name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: '' },
+        ]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      const place = await db.getFirstAsync<{ country_code: string | null }>(
+        `SELECT country_code FROM places WHERE id = 'p-nullcc'`,
+      );
+      expect(place?.country_code).toBeNull();
     });
 
     it("does NOT reset 'enriched' places when a new source attaches", async () => {

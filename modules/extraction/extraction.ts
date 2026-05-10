@@ -10,6 +10,12 @@ export type ExtractedPlaceInput = {
   // Persisted on the place_sources junction row and used by /enrich as a hint.
   address: string;
   category: 'place' | 'food' | 'activity';
+  // ISO 3166-1 alpha-2 uppercase, or empty when the LLM couldn't infer.
+  // Empty normalises to NULL on the way into `places.country_code`. The
+  // extractor implements asymmetric-fill on dedup-match: NULL columns get
+  // filled with a new non-empty value, but a non-NULL value is never
+  // overwritten by a re-extraction (only by enrichment from Google Places).
+  country_code: string;
 };
 
 export type ExtractionResult = {
@@ -177,6 +183,10 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     sourceTripId: string | null,
     ts: string,
   ): Promise<string> {
+    // Normalise the LLM's empty-string sentinel to NULL at the storage boundary
+    // so SQL has one canonical "unknown" representation.
+    const countryCode = candidate.country_code === '' ? null : candidate.country_code;
+
     const existing = await findSoleMatchByNormalizedKey(
       opts.db,
       normalizedKey,
@@ -193,19 +203,33 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
         ts,
         existing,
       );
+      // Asymmetric fill: only fill NULL country_code, never overwrite a value.
+      // The non-overwrite case is what stops re-extractions with disagreeing
+      // LLM output from flapping the canonical value.
+      if (countryCode !== null) {
+        await opts.db.runAsync(
+          `UPDATE places
+              SET country_code = ?, updated_at = ?
+            WHERE id = ? AND country_code IS NULL`,
+          countryCode,
+          ts,
+          existing,
+        );
+      }
       return existing;
     }
 
     const newId = uuid();
     await opts.db.runAsync(
       `INSERT INTO places (
-         id, trip_id, name, city, category, normalized_key,
+         id, trip_id, name, city, country_code, category, normalized_key,
          enrichment_status, owner_id, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       newId,
       sourceTripId,
       candidate.name,
       candidate.city,
+      countryCode,
       candidate.category,
       normalizedKey,
       opts.ownerId,

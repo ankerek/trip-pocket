@@ -11,6 +11,12 @@ import type { Migration } from '../db';
 // docs/superpowers/specs/2026-05-10-delete-cascade-design.md). Delete is
 // hard. Devs with a pre-2026-05-10 dev DB also need to wipe.
 //
+// `places.country_code` (ISO 3166-1 alpha-2) added per
+// docs/superpowers/specs/2026-05-10-place-country-design.md. Written by
+// the LLM at extraction time and overridden by Google Places at
+// enrichment time. Devs with a pre-2026-05-10-country dev DB need to
+// wipe.
+//
 // Tables, in dependency order:
 //   trips, sources, places, place_sources, tags, pending_imports, meta
 //
@@ -66,6 +72,7 @@ export const init: Migration = {
         trip_id            TEXT,
         name               TEXT NOT NULL,
         city               TEXT,
+        country_code       TEXT,
         category           TEXT,
         normalized_key     TEXT NOT NULL,
 

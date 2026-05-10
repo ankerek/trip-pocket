@@ -32,12 +32,13 @@ describe('extract-proxy schema', () => {
     it('accepts a valid places array', () => {
       const result = extractionResponseSchema.safeParse({
         places: [
-          { name: 'Maru Tonkatsu', city: 'Tokyo', address: '', category: 'food' },
+          { name: 'Maru Tonkatsu', city: 'Tokyo', address: '', category: 'food', country_code: 'JP' },
           {
             name: 'Tsukiji Outer Market',
             city: 'Tokyo',
             address: '5 Chome-2-1 Tsukiji, Chuo City, Tokyo 104-0045, Japan',
             category: 'place',
+            country_code: 'JP',
           },
         ],
       });
@@ -51,7 +52,7 @@ describe('extract-proxy schema', () => {
 
     it('rejects unknown category values', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'X', city: 'Y', address: '', category: 'bogus' }],
+        places: [{ name: 'X', city: 'Y', address: '', category: 'bogus', country_code: '' }],
       });
       expect(result.success).toBe(false);
     });
@@ -65,21 +66,63 @@ describe('extract-proxy schema', () => {
 
     it('accepts empty city string (LLM signaling truly ambiguous location)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Mystery Place', city: '', address: '', category: 'place' }],
+        places: [{ name: 'Mystery Place', city: '', address: '', category: 'place', country_code: '' }],
       });
       expect(result.success).toBe(true);
     });
 
     it('accepts empty address string (LLM signaling no address in OCR)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food' }],
+        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' }],
       });
       expect(result.success).toBe(true);
     });
 
     it('rejects places missing the address field', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Paris', category: 'food' }],
+        places: [{ name: 'Cafe', city: 'Paris', category: 'food', country_code: 'FR' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts a valid uppercase ISO-2 country_code', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts empty country_code (LLM signaling truly ambiguous country)', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: '', address: '', category: 'food', country_code: '' }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects lowercase country_code — grouping key would split jp vs JP buckets', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'jp' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects 3-letter country code', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'JPN' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects 1-character country_code', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'J' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects places missing the country_code field', () => {
+      const result = extractionResponseSchema.safeParse({
+        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food' }],
       });
       expect(result.success).toBe(false);
     });

@@ -8,6 +8,7 @@ export type Place = {
   tripId: string | null;
   name: string;
   city: string | null;
+  countryCode: string | null;
   category: string | null;
   normalizedKey: string;
 
@@ -34,6 +35,7 @@ type Row = {
   trip_id: string | null;
   name: string;
   city: string | null;
+  country_code: string | null;
   category: string | null;
   normalized_key: string;
   external_place_id: string | null;
@@ -54,7 +56,7 @@ type Row = {
 };
 
 const ALL =
-  `id, trip_id, name, city, category, normalized_key,
+  `id, trip_id, name, city, country_code, category, normalized_key,
    external_place_id, photo_name, description, rating, price_level,
    external_url, latitude, longitude, formatted_address,
    enrichment_status, enriched_at, enrichment_model,
@@ -66,6 +68,7 @@ function rowToPlace(r: Row): Place {
     tripId: r.trip_id,
     name: r.name,
     city: r.city,
+    countryCode: r.country_code,
     category: r.category,
     normalizedKey: r.normalized_key,
     externalPlaceId: r.external_place_id,
@@ -95,6 +98,8 @@ export type InsertPlaceInput = {
   tripId: string | null;
   name: string;
   city: string | null;
+  /** ISO 3166-1 alpha-2 uppercase, or null when unknown. */
+  countryCode?: string | null;
   category: string | null;
   ownerId: string;
 };
@@ -104,13 +109,14 @@ export async function insertPlace(db: Database, input: InsertPlaceInput): Promis
   const normalizedKey = normalizePlaceKey(input.name, input.city);
   await db.runAsync(
     `INSERT INTO places (
-       id, trip_id, name, city, category, normalized_key,
+       id, trip_id, name, city, country_code, category, normalized_key,
        owner_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.id,
     input.tripId,
     input.name,
     input.city,
+    input.countryCode ?? null,
     input.category,
     normalizedKey,
     input.ownerId,

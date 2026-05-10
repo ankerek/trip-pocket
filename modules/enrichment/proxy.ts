@@ -17,6 +17,11 @@ const responseSchema = z.union([
     rating: z.number().nullable(),
     price_level: z.number().int().nullable(),
     external_url: z.string().nullable(),
+    // Authoritative geographic fields from Google Places `addressComponents`.
+    // Null when missing on Google's side; COALESCE in the write path then
+    // preserves the LLM value.
+    city: z.string().nullable(),
+    country_code: z.string().regex(/^[A-Z]{2}$/).nullable(),
     model: z.string().min(1),
   }),
   z.object({ status: z.literal('not-found') }),
@@ -95,6 +100,8 @@ export async function enrichFromProxy(
     rating: parsed.data.rating,
     price_level: parsed.data.price_level,
     external_url: parsed.data.external_url,
+    city: parsed.data.city,
+    country_code: parsed.data.country_code,
     model: parsed.data.model,
   };
 }

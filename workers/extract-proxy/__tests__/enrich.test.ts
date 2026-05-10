@@ -80,6 +80,10 @@ function placesDetailsOk(overrides: Record<string, unknown> = {}) {
       priceLevel: 'PRICE_LEVEL_MODERATE',
       types: ['cafe'],
       googleMapsUri: 'https://maps.google.com/?cid=123',
+      addressComponents: [
+        { types: ['locality', 'political'], longText: 'Tokyo', shortText: 'Tokyo' },
+        { types: ['country', 'political'], longText: 'Japan', shortText: 'JP' },
+      ],
       ...overrides,
     }),
     { status: 200, headers: { 'content-type': 'application/json' } },
@@ -168,6 +172,100 @@ describe('handleEnrich', () => {
     expect(body.price_level).toBe(2);
     expect(body.external_url).toBe('https://maps.google.com/?cid=123');
     expect(body.model).toBe('gemini-2.5-flash-lite');
+    expect(body.city).toBe('Tokyo');
+    expect(body.country_code).toBe('JP');
+  });
+
+  it('returns city=null when addressComponents lacks a locality entry', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () =>
+          placesDetailsOk({
+            addressComponents: [{ types: ['country', 'political'], longText: 'Japan', shortText: 'JP' }],
+          }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.city).toBeNull();
+    expect(body.country_code).toBe('JP');
+  });
+
+  it('returns country_code=null when addressComponents lacks a country entry', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () =>
+          placesDetailsOk({
+            addressComponents: [{ types: ['locality', 'political'], longText: 'Tokyo', shortText: 'Tokyo' }],
+          }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.city).toBe('Tokyo');
+    expect(body.country_code).toBeNull();
+  });
+
+  it('returns null city + country_code when addressComponents is missing entirely', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () => placesDetailsOk({ addressComponents: undefined }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.city).toBeNull();
+    expect(body.country_code).toBeNull();
+  });
+
+  it('uppercases country shortText defensively (CLDR convention is uppercase but cheap to enforce)', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () =>
+          placesDetailsOk({
+            addressComponents: [
+              { types: ['locality', 'political'], longText: 'Tokyo', shortText: 'Tokyo' },
+              { types: ['country', 'political'], longText: 'Japan', shortText: 'jp' },
+            ],
+          }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.country_code).toBe('JP');
+  });
+
+  it('requests addressComponents in the Places field mask', async () => {
+    const fetchSpy = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      { match: isPlaceDetails, response: () => placesDetailsOk() },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+    globalThis.fetch = fetchSpy;
+
+    await handleEnrich(postJson(validBody), makeEnv());
+    const detailsCall = (fetchSpy as unknown as jest.Mock).mock.calls.find((c) =>
+      isPlaceDetails(String(c[0])),
+    );
+    const init = detailsCall![1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get('X-Goog-FieldMask')).toContain('addressComponents');
   });
 
   it('passes textQuery as "name, address" to Places searchText', async () => {

@@ -50,6 +50,7 @@ type SeedPlace = {
   id: string;
   name: string;
   city: string | null;
+  countryCode?: string | null;
   tripId?: string | null;
   category?: 'place' | 'food' | 'activity';
   status?: 'pending' | 'enriched' | 'not-found' | 'failed';
@@ -60,14 +61,15 @@ async function seedPlace(db: Database, p: SeedPlace): Promise<void> {
   const normalizedKey = `${p.name.trim().toLowerCase()}|${(p.city ?? '').trim().toLowerCase()}`;
   await db.runAsync(
     `INSERT INTO places (
-       id, trip_id, name, city, category, normalized_key,
+       id, trip_id, name, city, country_code, category, normalized_key,
        external_place_id, enrichment_status,
        owner_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'owner-1', ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'owner-1', ?, ?)`,
     p.id,
     p.tripId ?? null,
     p.name,
     p.city,
+    p.countryCode ?? null,
     p.category ?? 'food',
     normalizedKey,
     p.externalPlaceId ?? null,
@@ -103,6 +105,8 @@ async function getPlace(
   description: string | null;
   latitude: number | null;
   trip_id: string | null;
+  city: string | null;
+  country_code: string | null;
 }> {
   const row = await db.getFirstAsync<{
     enrichment_status: string;
@@ -111,8 +115,11 @@ async function getPlace(
     description: string | null;
     latitude: number | null;
     trip_id: string | null;
+    city: string | null;
+    country_code: string | null;
   }>(
-    `SELECT enrichment_status, external_place_id, enriched_at, description, latitude, trip_id
+    `SELECT enrichment_status, external_place_id, enriched_at, description, latitude, trip_id,
+            city, country_code
        FROM places WHERE id = ?`,
     id,
   );
@@ -131,6 +138,8 @@ const enrichedOutcome: Extract<EnrichOutcome, { kind: 'enriched' }> = {
   rating: 4.5,
   price_level: 2,
   external_url: 'https://maps.google.com/?cid=1',
+  city: 'Tokyo',
+  country_code: 'JP',
   model: 'gemini-2.5-flash-lite',
 };
 
@@ -158,6 +167,55 @@ describe('createEnricher', () => {
       expect(row.description).toBe('Cozy 1950s tea house.');
       expect(row.latitude).toBeCloseTo(35.6076, 4);
       expect(enrich).toHaveBeenCalledTimes(1);
+    });
+
+    it('overrides LLM city + country_code with Google Places values on enrichment', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'tea house');
+      // LLM had said "Tokyo" / no-country-code. Google Places resolved to
+      // Tokyo / JP. Both should land on the row authoritatively after enrich.
+      await seedPlace(db, { id: 'p1', name: 'Kosoan', city: 'Shibuya', countryCode: null });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const enricher = makeEnricher(db, async () => enrichedOutcome);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.city).toBe('Tokyo');
+      expect(row.country_code).toBe('JP');
+    });
+
+    it('preserves LLM city + country_code when Google Places returns null for both (COALESCE)', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'rural ramen');
+      await seedPlace(db, { id: 'p1', name: 'Rural Ramen', city: 'Backwater', countryCode: 'JP' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const outcomeNullFields = { ...enrichedOutcome, city: null, country_code: null };
+      const enricher = makeEnricher(db, async () => outcomeNullFields);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.city).toBe('Backwater');
+      expect(row.country_code).toBe('JP');
+    });
+
+    it('partial override: Google supplies country but not city, so city is preserved', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'partial');
+      await seedPlace(db, { id: 'p1', name: 'Half Place', city: 'GuessedCity', countryCode: null });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const partial = { ...enrichedOutcome, city: null };
+      const enricher = makeEnricher(db, async () => partial);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.city).toBe('GuessedCity');
+      expect(row.country_code).toBe('JP');
     });
 
     it("uses the most-recent non-null place_sources.extracted_address as the address hint", async () => {
