@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
 import { Image } from 'expo-image';
 import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
 import { Pressable, Text, View } from '@/tw';
 import { Icon } from './Icon';
-import { buildMapUrl, openInMaps, type MapTarget } from '@/lib/openInMaps';
+import { buildMapUrl, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
 
 export type PlaceRowData = {
@@ -39,16 +40,6 @@ const CATEGORY_ICON: Record<PlaceRowData['category'], string> = {
   place: 'mappin.circle',
 };
 
-/**
- * Single place row used in both:
- *   - the screenshot detail's places-found sheet (one screenshot's places)
- *   - the trip detail's Places tab (distinct places across the trip)
- *
- * Tapping calls `openInMaps`, which prefers Google Maps when installed and
- * falls back to Apple Maps. Pre-enrichment, it uses a search-string URL
- * with name + address (or city) as the location signal. Post-enrichment,
- * lat/lng + external_place_id produce a precise pin.
- */
 // Inputs to the Maps URL builder. Narrow subset of PlaceRowData so debug
 // surfaces (OCR debug sheet) can compute the same URL without faking the
 // rest of the row shape.
@@ -62,6 +53,7 @@ export function getMapsUrl(place: MapsUrlInput): string {
 }
 
 export function PlaceRow({ place }: { place: PlaceRowData }) {
+  const router = useRouter();
   const subtitle = buildSubtitle(place);
   const photoUrl = buildPhotoUrl(place.photo_name);
 
@@ -77,14 +69,10 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
 
   return (
     <Pressable
-      onPress={() => {
-        openInMaps(toMapTarget(place)).catch((err) =>
-          console.warn('[place-row] open Maps failed', err),
-        );
-      }}
+      onPress={() => router.push(`/places/${place.id}`)}
       className="flex-row items-center gap-3 border-b border-slate-100 px-4 py-3"
       accessibilityRole="button"
-      accessibilityLabel={`Open ${place.name} in Maps`}
+      accessibilityLabel={`Open ${place.name}`}
     >
       {photoUrl ? (
         <Image
@@ -117,7 +105,7 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
           </Text>
         ) : null}
       </View>
-      <Icon name="arrow.up.right.square" size={18} tintColor="#64748b" />
+      <Icon name="chevron.right" size={14} tintColor="#94a3b8" />
     </Pressable>
   );
 }

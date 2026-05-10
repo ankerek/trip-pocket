@@ -17,6 +17,7 @@ const HEADER_OPTIONS = {
   title: '',
   headerStyle: { backgroundColor: '#000' },
   headerTintColor: '#fff',
+  headerBackButtonDisplayMode: 'minimal',
 } as const;
 
 export default function SourceDetail() {

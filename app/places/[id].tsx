@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, ToastAndroid } from 'react-native';
-import { Image, Pressable, Text, View } from '@/tw';
+import { Alert, ToastAndroid } from 'react-native';
+import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
