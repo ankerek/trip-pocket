@@ -429,22 +429,21 @@ describe('sources additions', () => {
       }
     };
 
-    it('soft-deletes a single-linked deselected place and its link', async () => {
+    it('hard-deletes a single-linked deselected place and its link', async () => {
       const db = await freshDb();
       await createTrip(db, { id: 't1', name: 'Japan', ownerId });
       await seedSourceWithPlaces(db, 's1', [{ id: 'p1' }]);
 
       await assignSourceTrip(db, 's1', 't1', { excludePlaceIds: ['p1'] });
 
-      const link = await db.getFirstAsync<{ deleted_at: string | null }>(
-        `SELECT deleted_at FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
+      const link = await db.getFirstAsync(
+        `SELECT source_id FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
       );
-      expect(link?.deleted_at).not.toBeNull();
-      const place = await db.getFirstAsync<{ deleted_at: string | null; trip_id: string | null }>(
-        `SELECT deleted_at, trip_id FROM places WHERE id = 'p1'`,
+      expect(link).toBeNull();
+      const place = await db.getFirstAsync(
+        `SELECT id FROM places WHERE id = 'p1'`,
       );
-      expect(place?.deleted_at).not.toBeNull();
-      expect(place?.trip_id).toBeNull();
+      expect(place).toBeNull(); // place was orphan-pruned
       const source = await getSource(db, 's1');
       expect(source?.tripId).toBe('t1');
     });
@@ -457,18 +456,18 @@ describe('sources additions', () => {
 
       await assignSourceTrip(db, 'sA', 't1', { excludePlaceIds: ['p1'] });
 
-      const linkA = await db.getFirstAsync<{ deleted_at: string | null }>(
-        `SELECT deleted_at FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
+      const linkA = await db.getFirstAsync(
+        `SELECT source_id FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
       );
-      const linkB = await db.getFirstAsync<{ deleted_at: string | null }>(
-        `SELECT deleted_at FROM place_sources WHERE source_id = 'sB' AND place_id = 'p1'`,
+      const linkB = await db.getFirstAsync(
+        `SELECT source_id FROM place_sources WHERE source_id = 'sB' AND place_id = 'p1'`,
       );
-      expect(linkA?.deleted_at).not.toBeNull();
-      expect(linkB?.deleted_at).toBeNull();
-      const place = await db.getFirstAsync<{ deleted_at: string | null; trip_id: string | null }>(
-        `SELECT deleted_at, trip_id FROM places WHERE id = 'p1'`,
+      expect(linkA).toBeNull();
+      expect(linkB).toBeTruthy();
+      const place = await db.getFirstAsync<{ trip_id: string | null }>(
+        `SELECT trip_id FROM places WHERE id = 'p1'`,
       );
-      expect(place?.deleted_at).toBeNull();
+      expect(place).toBeTruthy(); // place still alive (other source backs it)
       expect(place?.trip_id).toBeNull();
     });
 
@@ -483,14 +482,14 @@ describe('sources additions', () => {
 
       await assignSourceTrip(db, 'sA', 'tNew', { excludePlaceIds: ['p1'] });
 
-      const linkA = await db.getFirstAsync<{ deleted_at: string | null }>(
-        `SELECT deleted_at FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
+      const linkA = await db.getFirstAsync(
+        `SELECT source_id FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
       );
-      expect(linkA?.deleted_at).not.toBeNull();
-      const place = await db.getFirstAsync<{ deleted_at: string | null; trip_id: string | null }>(
-        `SELECT deleted_at, trip_id FROM places WHERE id = 'p1'`,
+      expect(linkA).toBeNull();
+      const place = await db.getFirstAsync<{ trip_id: string | null }>(
+        `SELECT trip_id FROM places WHERE id = 'p1'`,
       );
-      expect(place?.deleted_at).toBeNull();
+      expect(place).toBeTruthy();
       expect(place?.trip_id).toBe('tOld');
     });
 
@@ -502,14 +501,14 @@ describe('sources additions', () => {
 
       await assignSourceTrip(db, 's1', null, { excludePlaceIds: ['p1'] });
 
-      const link = await db.getFirstAsync<{ deleted_at: string | null }>(
-        `SELECT deleted_at FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
+      const link = await db.getFirstAsync(
+        `SELECT source_id FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
       );
-      expect(link?.deleted_at).toBeNull();
-      const place = await db.getFirstAsync<{ deleted_at: string | null }>(
-        `SELECT deleted_at FROM places WHERE id = 'p1'`,
+      expect(link).toBeTruthy();
+      const place = await db.getFirstAsync(
+        `SELECT id FROM places WHERE id = 'p1'`,
       );
-      expect(place?.deleted_at).toBeNull();
+      expect(place).toBeTruthy();
     });
 
     it('notifies places subscribers on a delete-only path (no places moved)', async () => {
@@ -517,13 +516,13 @@ describe('sources additions', () => {
       provideDatabase(db);
       await createTrip(db, { id: 't1', name: 'Japan', ownerId });
       // Two places: p1 will be kept and moved to t1; p2 will be deselected
-      // and (single-linked, no trip) soft-deleted. notifyChange('places')
+      // and (single-linked, no trip) hard-deleted. notifyChange('places')
       // must fire because p2 was deleted, even though p1 also moved.
       await seedSourceWithPlaces(db, 's1', [{ id: 'p1' }, { id: 'p2' }]);
 
       const placesHook = renderHook(() =>
         useLiveQuery<{ n: number }>(
-          'SELECT COUNT(*) AS n FROM places WHERE deleted_at IS NULL',
+          'SELECT COUNT(*) AS n FROM places',
           [],
           ['places'],
         ),

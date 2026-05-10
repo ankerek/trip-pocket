@@ -159,13 +159,17 @@ export async function listSourcesByTrip(
  *
  * `opts.excludePlaceIds` is honored only when `tripId !== null` (committing
  * the source into a trip). For each excluded place:
- *   1. its `place_sources` link to this source is soft-deleted, and
- *   2. the `places` row itself is soft-deleted IFF no other live
- *      `place_sources` link remains AND the place has no `trip_id`.
+ *   1. its `place_sources` link to this source is hard-DELETEd, and
+ *   2. the `places` row itself is hard-DELETEd IFF no `place_sources` link
+ *      remains AND the place has no `trip_id`.
  *
- * The two-anchor rule ("keep alive while it has a live source link OR a
- * trip") prevents accidental loss of a place that another source still
- * references or that a previous triage already committed into a trip.
+ * The two-anchor rule ("keep alive while it has a source link OR a trip")
+ * prevents accidental loss of a place that another source still references
+ * or that a previous triage already committed into a trip.
+ *
+ * The carve-out (spec §3.5): we deliberately do NOT source-prune the source
+ * being assigned — its links to non-excluded places stay, and dropping its
+ * link to an excluded place never deletes the source itself.
  *
  * For `tripId === null`, `excludePlaceIds` is ignored — "Remove from trip"
  * is the inverse of triage, not a place-pruning operation.
@@ -190,26 +194,17 @@ export async function assignSourceTrip(
 
     for (const placeId of excludeIds) {
       await db.runAsync(
-        `UPDATE place_sources
-            SET deleted_at = ?, updated_at = ?
-          WHERE source_id = ? AND place_id = ? AND deleted_at IS NULL`,
-        now,
-        now,
+        `DELETE FROM place_sources WHERE source_id = ? AND place_id = ?`,
         sourceId,
         placeId,
       );
       const remaining = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM place_sources
-          WHERE place_id = ? AND deleted_at IS NULL`,
+        `SELECT COUNT(*) AS n FROM place_sources WHERE place_id = ?`,
         placeId,
       );
       if ((remaining?.n ?? 0) === 0) {
         const result = await db.runAsync(
-          `UPDATE places
-              SET deleted_at = ?, updated_at = ?
-            WHERE id = ? AND trip_id IS NULL AND deleted_at IS NULL`,
-          now,
-          now,
+          `DELETE FROM places WHERE id = ? AND trip_id IS NULL`,
           placeId,
         );
         if (result.changes > 0) deletedPlaces = true;
@@ -219,17 +214,15 @@ export async function assignSourceTrip(
     // Mirror movePlaceToTrip's cascade in the opposite direction: when a
     // source gets triaged into a trip, pull its untriaged extracted
     // places along with it. The cascade naturally skips places we just
-    // soft-deleted and links we just soft-deleted (deleted_at IS NULL
-    // filters on both).
+    // hard-deleted and links we just hard-deleted (rows are gone).
     if (tripId !== null) {
       const result = await db.runAsync(
         `UPDATE places
             SET trip_id = ?, updated_at = ?
           WHERE trip_id IS NULL
-            AND deleted_at IS NULL
             AND id IN (
               SELECT place_id FROM place_sources
-               WHERE source_id = ? AND deleted_at IS NULL
+               WHERE source_id = ?
             )`,
         tripId,
         now,
