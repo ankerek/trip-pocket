@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { Image } from 'expo-image';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { Pressable, Text, View } from '@/tw';
+import { Text, View } from '@/tw';
 import { Icon } from './Icon';
+import { PressableScale } from './PressableScale';
 import { buildMapUrl, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
 import { useThemeColors } from '@/tw/theme';
@@ -70,7 +71,7 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
   }, [place.id, place.enrichment_status]);
 
   return (
-    <Pressable
+    <PressableScale
       onPress={() => router.push(`/places/${place.id}`)}
       className="flex-row items-center gap-3 border-hairline px-4 py-3"
       style={{ borderBottomWidth: 1 }}
@@ -109,7 +110,7 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
         ) : null}
       </View>
       <Icon name="chevron.right" size={14} tintColor={colors.textMuted} />
-    </Pressable>
+    </PressableScale>
   );
 }
 

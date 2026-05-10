@@ -1,9 +1,10 @@
 import Constants from 'expo-constants';
-import { Image, Pressable, Text, View } from '@/tw';
+import { Image, Text, View } from '@/tw';
 import { useRouter } from 'expo-router';
 import { Icon } from './Icon';
 import { TripChip } from './TripChip';
 import { CategoryChip } from './CategoryChip';
+import { PressableScale } from './PressableScale';
 import { useThemeColors } from '@/tw/theme';
 
 export type SearchResultRowData = {
@@ -28,7 +29,7 @@ export function SearchResultRow({ place }: { place: SearchResultRowData }) {
   const photoUrl = buildPhotoUrl(place.photo_name);
 
   return (
-    <Pressable
+    <PressableScale
       onPress={() => router.push(`/places/${place.id}`)}
       className="flex-row items-center gap-3 py-2"
       accessibilityRole="button"
@@ -63,7 +64,7 @@ export function SearchResultRow({ place }: { place: SearchResultRowData }) {
           {place.category ? <CategoryChip category={place.category} /> : null}
         </View>
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 

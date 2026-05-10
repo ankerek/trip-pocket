@@ -192,6 +192,7 @@ export default function SourceDetail() {
         entityId={source.id}
         entityKind="source"
         mode={pickerMode}
+        currentTripId={source.tripId}
         onClose={async (result) => {
           setPickerVisible(false);
           if (!result) return;

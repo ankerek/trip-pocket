@@ -4,6 +4,7 @@ import { FlatList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
+import { PressableScale } from '@/components/PressableScale';
 import {
   listTrips,
   useLiveQuery,
@@ -103,7 +104,7 @@ export default function Trips() {
         contentContainerStyle={{ padding: 14, paddingBottom: 96 }}
         windowSize={10}
         renderItem={({ item }) => (
-          <Pressable
+          <PressableScale
             onPress={() => router.push(`/trips/${item.trip.id}`)}
             className="mb-3 overflow-hidden rounded-2xl border border-hairline bg-surface"
             accessibilityRole="button"
@@ -148,7 +149,7 @@ export default function Trips() {
                 </Text>
               }
             />
-          </Pressable>
+          </PressableScale>
         )}
       />
     </>

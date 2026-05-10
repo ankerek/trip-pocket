@@ -1,10 +1,11 @@
 import Constants from 'expo-constants';
-import { Image, Pressable, Text, View } from '@/tw';
+import { Image, Text, View } from '@/tw';
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Icon } from './Icon';
 import { TripChip } from './TripChip';
+import { PressableScale } from './PressableScale';
 import { getEnricher } from '@/modules/enrichment';
 import { useThemeColors } from '@/tw/theme';
 
@@ -53,7 +54,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
   }, [place.id, place.enrichment_status]);
 
   return (
-    <Pressable
+    <PressableScale
       onPress={() => router.push(`/places/${place.id}`)}
       className="overflow-hidden rounded-xl bg-surface"
       accessibilityRole="button"
@@ -146,7 +147,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
           ) : null}
         </View>
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 

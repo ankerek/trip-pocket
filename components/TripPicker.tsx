@@ -28,6 +28,7 @@ import {
 import { getOrCreateOwnerId } from '@/modules/capture';
 import { useDatabase } from './useDatabase';
 import { useThemeColors } from '@/tw/theme';
+import { Icon } from '@/components/Icon';
 
 export type TripPickerMode = 'assign' | 'move';
 export type TripPickerEntityKind = 'source' | 'place';
@@ -46,8 +47,10 @@ export function TripPicker(props: {
    * call across two sites. Ignored for entityKind === 'place'.
    */
   assignOptions?: { excludePlaceIds?: string[] };
+  /** Trip the entity is currently assigned to — that row gets a checkmark. */
+  currentTripId?: string | null;
 }) {
-  const { visible, entityId, entityKind, mode, onClose, assignOptions } = props;
+  const { visible, entityId, entityKind, mode, onClose, assignOptions, currentTripId } = props;
   const db = useDatabase();
   const insets = useSafeAreaInsets();
   const colors = useThemeColors();
@@ -110,6 +113,13 @@ export function TripPicker(props: {
   };
 
   const choose = async (trip: TripWithCount) => {
+    // Tapping the trip the entity already belongs to is a no-op — close
+    // without re-running the assign (avoids a pointless updated_at bump
+    // and a confusing "Moved to X" toast).
+    if (trip.id === currentTripId) {
+      onClose(null);
+      return;
+    }
     try {
       await assignTo(trip.id);
       onClose({ tripName: trip.name });
@@ -229,6 +239,7 @@ export function TripPicker(props: {
                   key={t.id}
                   trip={t}
                   mode={mode}
+                  selected={t.id === currentTripId}
                   onPress={() => choose(t)}
                 />
               ))}
@@ -243,25 +254,38 @@ export function TripPicker(props: {
 function TripRow(props: {
   trip: TripWithCount;
   mode: TripPickerMode;
+  selected: boolean;
   onPress: () => void;
 }) {
-  const { trip, mode, onPress } = props;
-  const hint = mode === 'assign' ? 'Adds to this trip' : 'Moves to this trip';
+  const { trip, mode, selected, onPress } = props;
+  const colors = useThemeColors();
+  const hint = selected
+    ? 'Already assigned to this trip'
+    : mode === 'assign'
+      ? 'Adds to this trip'
+      : 'Moves to this trip';
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={trip.name}
       accessibilityHint={hint}
+      accessibilityState={{ selected }}
       className="flex-row items-center border-hairline"
-      style={{ paddingVertical: 15, paddingHorizontal: 20, borderTopWidth: 1 }}
+      style={{ paddingVertical: 15, paddingHorizontal: 20, borderTopWidth: 1, gap: 10 }}
     >
-      <Text className="flex-1 text-[15px] font-medium text-text" numberOfLines={1}>
+      <Text
+        className={`flex-1 text-[15px] ${selected ? 'font-semibold text-accent' : 'font-medium text-text'}`}
+        numberOfLines={1}
+      >
         {trip.name}
       </Text>
       <Text className="text-[13px] font-medium text-text-muted">
         {formatCount(trip.placeCount)}
       </Text>
+      {selected ? (
+        <Icon name="checkmark" size={16} tintColor={colors.accent} />
+      ) : null}
     </Pressable>
   );
 }

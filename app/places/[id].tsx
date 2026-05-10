@@ -460,6 +460,7 @@ export default function PlaceDetail() {
         entityId={place.id}
         entityKind="place"
         mode={pickerMode}
+        currentTripId={place.tripId}
         onClose={async (result) => {
           setPickerVisible(false);
           if (!result) return;
