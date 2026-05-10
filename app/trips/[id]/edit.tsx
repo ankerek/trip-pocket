@@ -6,7 +6,7 @@ import * as Haptics from 'expo-haptics';
 import {
   getTrip,
   renameTrip,
-  softDeleteTrip,
+  deleteTrip,
   type Trip,
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
@@ -101,7 +101,7 @@ export default function EditTrip() {
               if (process.env.EXPO_OS === 'ios') {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
               }
-              await softDeleteTrip(db, id);
+              await deleteTrip(db, id);
               router.back();
               setTimeout(() => router.back(), 0);
             } catch (err) {

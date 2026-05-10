@@ -49,8 +49,10 @@ export {
   listTrips,
   getTrip,
   renameTrip,
-  softDeleteTrip,
+  deleteTrip,
   type Trip,
+  type DeleteTripMode,
+  type DeleteTripOptions,
   type InsertTripInput,
   type UpdateTripNameInput,
 } from './trips';
