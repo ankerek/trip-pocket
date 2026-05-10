@@ -22,7 +22,7 @@ export {
   getPlace,
   listPlaces,
   movePlaceToTrip,
-  softDeletePlace,
+  deletePlace,
   applyEnrichment,
   setEnrichmentStatus,
   findSoleMatchByNormalizedKey,
@@ -33,6 +33,7 @@ export {
   type EnrichmentStatus,
   type EnrichmentColumns,
   type InsertPlaceInput,
+  type DeletePlaceOptions,
 } from './places';
 export {
   linkPlaceSource,

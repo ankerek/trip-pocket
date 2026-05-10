@@ -2,7 +2,7 @@ import { openDatabase, runMigrations, type Database } from '@/modules/storage/db
 import { migrations } from '@/modules/storage/migrations';
 import { createTrip } from '@/modules/storage/trips';
 import { insertSource } from '@/modules/storage/sources';
-import { insertPlace, softDeletePlace } from '@/modules/storage/places';
+import { insertPlace, deletePlace } from '@/modules/storage/places';
 import { linkPlaceSource } from '@/modules/storage/place_sources';
 import { buildFtsMatch } from '../buildFtsMatch';
 
@@ -205,14 +205,14 @@ describe('search integration: places_fts MATCH (places-first)', () => {
     expect((await placeSearch(db, 'tonk', 'trip-1')).map((r) => r.id)).toEqual([]);
   });
 
-  it('soft-deleting a place removes it from the result list', async () => {
+  it('deleting a place removes it from the result list', async () => {
     const db = await freshDb();
     await seedSource(db, 'src-1', null);
     await seedPlace(db, { id: 'p1', tripId: null, name: 'Tonkatsu Place' });
     await linkPlaceSource(db, { placeId: 'p1', sourceId: 'src-1', extractionModel: 't', ownerId: OWNER });
     expect((await placeSearch(db, 'tonk', null)).map((r) => r.id)).toEqual(['p1']);
 
-    await softDeletePlace(db, 'p1');
+    await deletePlace(db, 'p1', { unlinkFile: () => {} });
     expect((await placeSearch(db, 'tonk', null)).map((r) => r.id)).toEqual([]);
   });
 

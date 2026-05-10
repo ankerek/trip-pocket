@@ -215,15 +215,58 @@ export async function movePlaceToTrip(
   if (movedSources) notifyChange('sources');
 }
 
-export async function softDeletePlace(db: Database, id: string): Promise<void> {
-  const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE places SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-    now,
-    now,
-    id,
-  );
+export type DeletePlaceOptions = {
+  unlinkFile?: (path: string) => void;
+};
+
+const defaultUnlink = (path: string): void => {
+  try {
+    new (require('expo-file-system').File)(path).delete();
+  } catch (err) {
+    console.warn('[deletePlace] unlink failed', path, err);
+  }
+};
+
+export async function deletePlace(
+  db: Database,
+  id: string,
+  opts: DeletePlaceOptions = {},
+): Promise<void> {
+  const unlink = opts.unlinkFile ?? defaultUnlink;
+  const filesToUnlink: string[] = [];
+
+  await db.withTransactionAsync(async () => {
+    const sourceRows = await db.getAllAsync<{ source_id: string }>(
+      `SELECT source_id FROM place_sources WHERE place_id = ?`,
+      id,
+    );
+    const affectedSourceIds = sourceRows.map((r) => r.source_id);
+
+    await db.runAsync(`DELETE FROM place_sources WHERE place_id = ?`, id);
+    await db.runAsync(`DELETE FROM places WHERE id = ?`, id);
+
+    for (const sourceId of affectedSourceIds) {
+      const remaining = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM place_sources WHERE source_id = ?`,
+        sourceId,
+      );
+      if ((remaining?.n ?? 0) === 0) {
+        const fileRow = await db.getFirstAsync<{ file_path: string | null }>(
+          `SELECT file_path FROM sources WHERE id = ?`,
+          sourceId,
+        );
+        await db.runAsync(`DELETE FROM tags WHERE source_id = ?`, sourceId);
+        await db.runAsync(`DELETE FROM sources WHERE id = ?`, sourceId);
+        if (fileRow?.file_path) filesToUnlink.push(fileRow.file_path);
+      }
+    }
+  });
+
+  for (const path of filesToUnlink) unlink(path);
+
+  notifyChange('place_sources');
   notifyChange('places');
+  notifyChange('sources');
   notifyChange('trips');
 }
 

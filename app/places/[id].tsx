@@ -9,7 +9,7 @@ import * as Haptics from 'expo-haptics';
 import {
   getPlace,
   movePlaceToTrip,
-  softDeletePlace,
+  deletePlace,
   useLiveQuery,
   type Place,
 } from '@/modules/storage';
@@ -139,7 +139,7 @@ export default function PlaceDetail() {
             if (process.env.EXPO_OS === 'ios') {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
-            await softDeletePlace(db, place.id);
+            await deletePlace(db, place.id);
             router.back();
           },
         },
