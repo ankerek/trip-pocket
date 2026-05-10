@@ -1,0 +1,285 @@
+# Place Country — Design
+
+**Date:** 2026-05-10
+**Status:** ready for review
+**Roadmap:** small follow-on to the shipped AI-extraction + Google-Places-enrichment pipeline. Adds the structured-country signal needed for the next iteration of the trip Places tab.
+
+## Goal
+
+Persist a structured country code on every `places` row so the trip Places tab can group its rows by country. The grouping matters most for multi-country trips (e.g. "Europe 2026"); single-country trips render flat with no visible change.
+
+After this ships, the trip Places query selects `country_code`, and the Places tab renders one section per country (header label resolved via `Intl.DisplayNames`).
+
+## Non-goals
+
+- Cross-trip "all places" view filtered by country. Not asked for; defer.
+- Inbox-level filter by country. Same.
+- Auto-trip-name suggestion based on extracted countries (e.g. "we noticed this is a Japan trip"). Future spec.
+- Long-name country column. ISO-2 only on storage; display resolves to the localized name at render time.
+- Sub-country regions (state, prefecture, admin_area_level_1). The use case is country-level grouping; finer granularity is YAGNI.
+- Backfill of existing rows. Pre-launch dev DB. We purge and re-extract instead of writing a backfill script.
+- New `0002_*` migration file. Schema is still in flux pre-launch; the project convention (see `0001_init.ts` comment) is to fold changes into `0001_init.ts` and document a one-time dev-DB wipe.
+- Per-source provenance for the LLM's country guess (i.e. `place_sources.extracted_country_code`). No consumer needs it; YAGNI.
+
+## Context
+
+Current pipeline, verified against code:
+
+1. **`/extract`** (Gemini 2.5 Flash-Lite, `workers/extract-proxy/src/prompt.ts`) returns per place: `name`, `city`, `address`, `category`.
+2. **`/enrich`** (Google Places API New, `workers/extract-proxy/src/enrich.ts`) returns: `external_place_id`, `latitude`, `longitude`, `formatted_address`, `photo_name`, `description`, `rating`, `price_level`, `external_url`, `model`.
+3. **`places` table** (`modules/storage/migrations/0001_init.ts`) carries both halves of the pipeline as columns on a single row. LLM writes `name`/`city`/`category` at INSERT; enrichment UPDATEs the Google-Places-derived columns later.
+
+The gap: nothing stores **country** as a structured value. `formatted_address` contains the country as a string suffix ("…, Tokyo 152-0035, Japan") but parsing it is locale-fragile, and rows where enrichment returned `not-found` don't even have that.
+
+Symmetric gap on `city`: today `places.city` is written by the LLM at INSERT and **never overwritten by enrichment**, even though Google Places returns an authoritative `addressComponents.locality`. This spec fixes both halves at once.
+
+## Architecture
+
+No new modules, no new endpoints. The change is additive across the existing pipeline:
+
+```
+OCR text
+   │
+   ▼
+/extract (Gemini)  ── now also returns country_code (ISO-2)
+   │
+   ▼
+INSERT INTO places (name, city, category, country_code, …)
+   │
+   ▼
+/enrich (Google Places)  ── now also returns city + country_code from addressComponents
+   │
+   ▼
+UPDATE places SET city = ?, country_code = ?, lat = ?, lng = ?, formatted_address = ?, …
+   │
+   ▼
+Trip Places tab query  ── GROUP BY country_code, render section per country
+```
+
+Stage authority:
+
+| Field          | INSERT (extraction)   | UPDATE (enrichment)         | Authoritative when |
+|----------------|------------------------|------------------------------|---------------------|
+| `name`         | LLM                    | (unchanged)                  | Always LLM         |
+| `category`     | LLM                    | (unchanged)                  | Always LLM         |
+| `city`         | LLM                    | **Google Places `locality`** | Enriched: Google. Else: LLM. |
+| `country_code` | **LLM (new)**          | **Google Places `country.shortText`** | Enriched: Google. Else: LLM. |
+| `latitude`/`longitude`/`formatted_address`/`description`/… | (NULL) | Google Places | Enriched only |
+
+`not-found` rows keep whatever the LLM wrote — that's the whole point of dual-write. Pure-Google-Places would leave them NULL.
+
+## Components
+
+### `0001_init.ts` — add one column
+
+```sql
+CREATE TABLE IF NOT EXISTS places (
+  …
+  city               TEXT,
+  country_code       TEXT,           -- new: ISO 3166-1 alpha-2, e.g. 'JP', 'US'
+  category           TEXT,
+  …
+);
+```
+
+No constraint, no index. Length-2-uppercase is enforced upstream (Zod schema on the proxy + LLM `responseSchema` `maxLength`). Dev DB wipe required — covered by the existing migration comment.
+
+### `workers/extract-proxy/src/prompt.ts` — extend system prompt + Gemini schema
+
+Add `country_code` to the per-place object in the prompt:
+
+> - `country_code`: ISO 3166-1 alpha-2 code of the country the place is in (e.g. "JP", "US", "FR"). Infer from context (country name, currency, language, city). Empty string if truly ambiguous — never guess.
+
+Add to `GEMINI_RESPONSE_SCHEMA.items.properties`:
+
+```ts
+country_code: { type: 'STRING' },
+```
+
+Add `'country_code'` to the per-place `required` array. (Empty string is the "unknown" sentinel — the schema still requires the field to be present, mirroring `city`/`address`.)
+
+### `workers/extract-proxy/src/schema.ts` — Zod mirror
+
+Add `country_code: z.string().max(2)` (LLM returns "" or a 2-letter code; Zod enforces). Defense-in-depth: if Gemini ever returns a 3-letter code or full name, the Worker returns 502 and the client retries.
+
+### `workers/extract-proxy/src/enrich.ts` — extend field mask + parser
+
+In `getPlaceDetails`, add `addressComponents` to the field mask string. Parse the response:
+
+```ts
+function pickComponent(components: AddressComponent[], type: string): { shortText?: string; longText?: string } | null {
+  return components.find(c => c.types?.includes(type)) ?? null;
+}
+
+const locality = pickComponent(obj.addressComponents ?? [], 'locality')?.longText ?? null;
+const country  = pickComponent(obj.addressComponents ?? [], 'country')?.shortText ?? null;  // ISO-2
+```
+
+Extend `PlaceDetails` + `EnrichResponse` with `city: string | null` and `country_code: string | null`. The 'not-found' branch is unchanged (no city/country_code in that response shape).
+
+### `modules/enrichment/proxy.ts` + `enrichment.ts` — pass-through
+
+`EnrichmentResult` type widens to include `city` and `country_code`. The enrichment write path UPDATEs both columns on `places`. Only override when the proxy returned non-null/non-empty; if Google didn't supply a locality (rare, e.g. some rural place), don't clobber the LLM value with NULL.
+
+```ts
+UPDATE places
+   SET city              = COALESCE(?, city),
+       country_code      = COALESCE(?, country_code),
+       latitude          = ?,
+       longitude         = ?,
+       formatted_address = ?,
+       …
+ WHERE id = ?;
+```
+
+`COALESCE(?, col)` only overrides when the new value is non-NULL — preserves the LLM-extracted value when Google has nothing better.
+
+### `modules/extraction/extraction.ts` + `proxy.ts` — pass-through
+
+`ExtractedPlace` widens to include `country_code: string`. The INSERT path writes it to `places.country_code`. Empty-string LLM output stored as NULL on the way in (one canonical "unknown" representation in the DB).
+
+**Dedup-match path.** When an extraction matches an existing `places` row by `normalized_key`, we add a `place_sources` link but **do not** update `places.country_code` — same posture as `city`/`name`/`category` today. The first extraction's value sticks until enrichment overrides it. Re-extractions that disagree with the existing value are silently ignored.
+
+### `modules/storage/places.ts` — column lists
+
+Add `country_code` to the INSERT column list and the UPDATE column list on the enrichment-write path. `Place` row type gains `country_code: string | null`.
+
+### Trip Places tab (`app/trips/[id].tsx`) — group by country
+
+Existing query (paraphrased) returns a flat list of places for the trip. Extend the SELECT with `country_code` and group at render time, not in SQL — small N, simpler code:
+
+```ts
+const grouped = groupBy(places, p => p.country_code ?? 'XX');  // 'XX' = unknown bucket
+```
+
+Render rules:
+
+| Buckets present | UI |
+|---|---|
+| One non-null bucket (and no unknown) | Flat list, no section headers. Single-country trips look unchanged. |
+| One non-null bucket + an unknown bucket | Flat for the known bucket, "Other" section at the bottom for unknowns. |
+| Multiple non-null buckets | Section per country, header from `Intl.DisplayNames(['en'], { type: 'region' }).of(code)`. Sort sections by row count desc within the trip (largest country first); unknown bucket last. |
+
+Section header style: existing list-section-header treatment (system gray, footnote weight, capitalised — match other tabs in the app).
+
+`Intl.DisplayNames` is built into Hermes / RN on iOS 14+. No on-device map to maintain.
+
+## Data flow
+
+```
+Screenshot OCR text →
+  /extract → [{ name, city, country_code, address, category }, …]
+            (country_code is ISO-2 or '')
+    │
+    │ (per place)
+    ▼
+  upsert into places (LLM is the source of truth for country_code at this point)
+    │
+    ▼
+  enqueue enrichment
+    │
+    ▼
+  /enrich → returns city + country_code from addressComponents (when status=enriched)
+    │
+    ▼
+  UPDATE places SET city = COALESCE(?, city), country_code = COALESCE(?, country_code), …
+    │
+    ▼
+  Trip Places tab refresh: GROUP BY country_code
+```
+
+## Failure modes
+
+| Case | Behavior |
+|---|---|
+| LLM omits `country_code` from a place | Worker Zod-validates the response; missing field → 502 → client retry per existing policy. |
+| LLM emits 3-letter or full name | Zod `max(2)` rejects → 502 → retry. |
+| LLM emits `""` (ambiguous) | Stored as NULL in `places.country_code`. Place lands in the "Other" bucket until enriched. |
+| Google `addressComponents` missing the `country` entry | Rare. Parser returns null; `COALESCE` preserves LLM value. |
+| Google returns a different ISO-2 than the LLM | Google wins (the override is the whole point). |
+| Place enriches to `not-found` | `country_code` stays at whatever the LLM wrote (NULL or ISO-2). |
+| Place hasn't been enriched yet (`pending`) | Same: LLM value is what shows. |
+| Trip has one country but a few unknown-bucket rows | Flat list for the known country, small "Other" section at the bottom. |
+
+## Open questions / decisions made
+
+Resolved:
+
+| Question | Decision |
+|---|---|
+| Storage shape | Single column `places.country_code TEXT`, ISO 3166-1 alpha-2. No long-name column. |
+| Display | `Intl.DisplayNames` at render. Built-in, no map shipped. |
+| Write path | Both: LLM at INSERT, Google Places at UPDATE. Enrichment uses `COALESCE` so it only overrides when Google has a value. |
+| Scope of override | Both `city` and `country_code` get the dual-write treatment. Fixes the pre-existing inconsistency where `city` was LLM-only forever. |
+| `not-found` rows | Keep LLM-extracted values (the whole reason for dual-write). |
+| LLM ambiguity sentinel | Empty string from the LLM; stored as NULL in the DB. |
+| Per-source provenance for country | Out of scope. `place_sources` does not gain an `extracted_country_code` column. |
+| Migration shape | Edit `0001_init.ts` in place; dev DB wipe (matches the existing comment in that file). |
+| Backfill | None. Pre-launch. |
+| Trip-Places SQL grouping | Group at render time, not in SQL. Small N. |
+| `regionCode` hint to Google Places `searchText` | **Optional** follow-up. Adding `regionCode: <country_code>` to the searchText body, when LLM provided one, would disambiguate "Cambridge" globally. Defer until evidence it matters. |
+
+Deferred:
+
+- Cross-trip "all places" view filtered by country.
+- Country-based inbox filter.
+- Country-derived auto-suggestion at trip creation.
+- Sub-country region grouping.
+
+## Testing
+
+**Worker (`workers/extract-proxy/__tests__/`):**
+
+- `extract`: stubbed Gemini returns a place with `country_code: "JP"` → 200 response contains it; Zod validates.
+- `extract`: stubbed Gemini returns 3-letter code → Worker returns 502.
+- `extract`: stubbed Gemini omits `country_code` → 502.
+- `enrich`: stubbed Google Places returns `addressComponents` with a `country` entry → response includes `country_code: "JP"`.
+- `enrich`: stubbed Google Places returns `addressComponents` without a `country` entry → response includes `country_code: null`; `city: null` similarly.
+- `enrich`: not-found branch unchanged (no city/country_code in body).
+
+**Client (`modules/extraction/__tests__/`, `modules/enrichment/__tests__/`):**
+
+- Extraction proxy adapter: LLM empty-string `country_code` → INSERT writes NULL.
+- Extraction proxy adapter: LLM "JP" → INSERT writes "JP".
+- Enrichment write path: response with city + country_code → UPDATE writes both, overriding LLM values.
+- Enrichment write path: response with null city → COALESCE preserves the LLM-extracted city. Same for country_code.
+- Enrichment write path: `not-found` response → LLM-extracted city + country_code remain on the row.
+
+**Storage (`modules/storage/__tests__/`):**
+
+- `0001_init` schema test asserts `country_code` column exists on `places`.
+
+**Trip-Places UI:**
+
+- Trip with all rows in one country → flat list, no section headers.
+- Trip with one country + one unknown row → flat for the country, "Other" section with one row.
+- Trip with three countries → three sections, ordered by row count desc, headers resolved via `Intl.DisplayNames`.
+
+## File-change inventory
+
+**Modified:**
+
+- `modules/storage/migrations/0001_init.ts` — add `country_code TEXT` to `places`.
+- `workers/extract-proxy/src/prompt.ts` — extend system prompt + `GEMINI_RESPONSE_SCHEMA`.
+- `workers/extract-proxy/src/schema.ts` — extend Zod schema with `country_code: z.string().max(2)`.
+- `workers/extract-proxy/src/enrich.ts` — add `addressComponents` to field mask, parse locality + country, extend `PlaceDetails` + `EnrichResponse`.
+- `workers/extract-proxy/__tests__/` — new test cases as above.
+- `modules/extraction/proxy.ts` + `extraction.ts` — widen `ExtractedPlace`; INSERT writes country_code.
+- `modules/enrichment/proxy.ts` + `enrichment.ts` — widen `EnrichmentResult`; UPDATE writes city + country_code with COALESCE override.
+- `modules/storage/places.ts` — column lists + row type.
+- `app/trips/[id].tsx` — Places tab grouping + section rendering. Possibly extracted into a small helper if the file is already crowded.
+- `components/PlaceRow.tsx` / `components/PlaceTile.tsx` — only if a "country" detail is desired in the row itself (not required for the section header use case).
+
+**New:** none.
+
+**Deleted:** none.
+
+## Implementation order suggestion
+
+1. Schema column on `places` (edit `0001_init.ts`). Storage test asserts the column.
+2. Worker `/extract` extension (prompt + schema + Zod). Worker tests.
+3. Client extraction widening (`ExtractedPlace`, INSERT). Unit test.
+4. Worker `/enrich` extension (field mask + parser + response shape). Worker tests.
+5. Client enrichment widening (UPDATE with COALESCE). Unit test.
+6. Trip-Places tab grouping + section rendering.
+7. Manual smoke on device with a multi-country trip (e.g. mixed Japan + Korea screenshots) before declaring done.
