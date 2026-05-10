@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, useColorScheme } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
@@ -49,6 +49,14 @@ export function DetailHeaderIconButton({
   icon,
   onPress,
 }: DetailHeaderIconButtonProps) {
+  // Theme-aware translucent pill so the button reads on photos AND on the
+  // bare `bg-bg` surface that shows during loading / error states. In light
+  // mode that's a white pill with a dark glyph; in dark mode it's a slate
+  // pill with a white glyph.
+  const isDark = useColorScheme() === 'dark';
+  const fill = isDark ? 'rgba(15,23,42,0.7)' : 'rgba(255,255,255,0.84)';
+  const stroke = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.55)';
+  const glyph = isDark ? '#f8fafc' : '#0f172a';
   return (
     <Pressable
       onPress={onPress}
@@ -61,14 +69,14 @@ export function DetailHeaderIconButton({
         borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.84)',
+        backgroundColor: fill,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.55)',
+        borderColor: stroke,
         opacity: pressed ? 0.86 : 1,
         transform: [{ scale: pressed ? 1.08 : 1 }],
       })}
     >
-      <Icon name={icon} size={24} tintColor="#0f172a" />
+      <Icon name={icon} size={24} tintColor={glyph} />
     </Pressable>
   );
 }

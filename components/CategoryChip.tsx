@@ -1,5 +1,6 @@
 import { Text, View } from '@/tw';
 import { Icon } from './Icon';
+import { useThemeColors } from '@/tw/theme';
 
 const CATEGORY_META: Record<string, { icon: string; label: string }> = {
   food: { icon: 'fork.knife', label: 'Food' },
@@ -9,14 +10,12 @@ const CATEGORY_META: Record<string, { icon: string; label: string }> = {
 
 export function CategoryChip({ category }: { category: string }) {
   const meta = CATEGORY_META[category];
+  const colors = useThemeColors();
   if (!meta) return null;
   return (
-    <View
-      className="flex-row items-center gap-1 rounded-full px-2.5 py-1"
-      style={{ backgroundColor: 'rgba(15,23,42,0.06)' }}
-    >
-      <Icon name={meta.icon} size={12} tintColor="#475569" />
-      <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>
+    <View className="flex-row items-center gap-1 rounded-full bg-hairline px-2.5 py-1">
+      <Icon name={meta.icon} size={12} tintColor={colors.textMuted} />
+      <Text className="text-text-muted" style={{ fontSize: 12, fontWeight: '500' }}>
         {meta.label}
       </Text>
     </View>

@@ -17,8 +17,8 @@ export function HeaderProfile() {
       className="mr-1"
     >
       <View
-        className="h-8 w-8 items-center justify-center rounded-full bg-surface"
-        style={{ borderWidth: 1, borderColor: 'rgba(15,23,42,0.06)' }}
+        className="h-8 w-8 items-center justify-center rounded-full bg-surface border-hairline"
+        style={{ borderWidth: 1 }}
       >
         <Text className="text-sm font-semibold text-text">TP</Text>
       </View>

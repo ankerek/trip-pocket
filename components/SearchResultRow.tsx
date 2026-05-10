@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Icon } from './Icon';
 import { TripChip } from './TripChip';
 import { CategoryChip } from './CategoryChip';
+import { useThemeColors } from '@/tw/theme';
 
 export type SearchResultRowData = {
   id: string;
@@ -23,6 +24,7 @@ const CATEGORY_ICON: Record<string, string> = {
 
 export function SearchResultRow({ place }: { place: SearchResultRowData }) {
   const router = useRouter();
+  const colors = useThemeColors();
   const photoUrl = buildPhotoUrl(place.photo_name);
 
   return (
@@ -46,7 +48,7 @@ export function SearchResultRow({ place }: { place: SearchResultRowData }) {
             <Icon
               name={place.category ? CATEGORY_ICON[place.category] ?? 'mappin.circle' : 'mappin.circle'}
               size={22}
-              tintColor="#94a3b8"
+              tintColor={colors.textMuted}
             />
           </View>
         )}

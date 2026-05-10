@@ -4,6 +4,8 @@
 // gesture-handler config, native module props). Keep both in sync.
 // See docs/superpowers/specs/2026-05-08-app-redesign-design.md §6.
 
+import { useColorScheme } from 'react-native';
+
 export const palette = {
   light: {
     bg: '#ffffff',
@@ -67,6 +69,16 @@ export const durations = {
   short: 280,
   medium: 380,
 } as const;
+
+// Active palette for the system color scheme. Use this for inline styles
+// and props (Icon `tintColor`, `placeholderTextColor`, gradient stops…)
+// where Tailwind's `bg-*` / `text-*` classes can't reach. For things that
+// DO accept className, prefer `bg-bg` / `text-text` / `border-hairline` —
+// CSS variables already swap on the system theme.
+export function useThemeColors() {
+  const scheme = useColorScheme();
+  return scheme === 'dark' ? palette.dark : palette.light;
+}
 
 // Photo-overlay gradient stops — single recipe (spec §9.2).
 // Used by PlaceTile and any other component that puts text on a photo.

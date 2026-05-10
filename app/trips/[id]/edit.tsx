@@ -10,6 +10,7 @@ import {
   type Trip,
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
+import { useThemeColors } from '@/tw/theme';
 
 type CountSet = {
   places: number;
@@ -26,6 +27,7 @@ export default function EditTrip() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
+  const colors = useThemeColors();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [name, setName] = useState('');
 
@@ -106,7 +108,7 @@ export default function EditTrip() {
                 accessibilityLabel="Cancel"
                 hitSlop={8}
               >
-                <Text style={{ fontSize: 16, color: '#475569' }}>Cancel</Text>
+                <Text className="text-text-muted" style={{ fontSize: 16 }}>Cancel</Text>
               </Pressable>
             ),
             headerRight: () => null,
@@ -218,7 +220,7 @@ export default function EditTrip() {
               accessibilityLabel="Cancel"
               hitSlop={8}
             >
-              <Text style={{ fontSize: 16, color: '#475569' }}>Cancel</Text>
+              <Text className="text-text-muted" style={{ fontSize: 16 }}>Cancel</Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -232,11 +234,8 @@ export default function EditTrip() {
               hitSlop={8}
             >
               <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: '600',
-                  color: canSave ? '#14b8a6' : '#cbd5e1',
-                }}
+                className={canSave ? 'text-accent' : 'text-text-muted'}
+                style={{ fontSize: 16, fontWeight: '600', opacity: canSave ? 1 : 0.5 }}
               >
                 Save
               </Text>
@@ -260,18 +259,17 @@ export default function EditTrip() {
           value={name}
           onChangeText={setName}
           placeholder="Trip name"
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={colors.textMuted}
           returnKeyType="done"
           onSubmitEditing={onSave}
+          className="bg-surface border-hairline"
           style={{
             fontSize: 17,
-            color: '#0c4a6e',
+            color: colors.text,
             paddingHorizontal: 14,
             paddingVertical: 12,
             borderRadius: 12,
-            backgroundColor: '#f8fafc',
             borderWidth: 1,
-            borderColor: 'rgba(15,23,42,0.06)',
           }}
         />
 
@@ -286,7 +284,7 @@ export default function EditTrip() {
             borderRadius: 12,
             borderWidth: 1,
             borderColor: 'rgba(220,38,38,0.30)',
-            backgroundColor: 'rgba(254,242,242,0.6)',
+            backgroundColor: 'rgba(220,38,38,0.08)',
           }}
         >
           <Text

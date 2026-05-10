@@ -14,7 +14,9 @@ type FilterPillsProps = {
 
 /**
  * Horizontal scrollable trip filter row. Spec §4.1.
- * Active pill = Sea bg + Snow text; inactive = Snow surface + slate text.
+ * Active pill uses the accent token (teal) so it pops on both light and
+ * dark surfaces. Inactive pill uses the hairline tint, which auto-flips
+ * between dark-on-light and light-on-dark via the CSS variable.
  */
 export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps) {
   return (
@@ -32,30 +34,25 @@ export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps)
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             accessibilityLabel={opt.label}
-            className="flex-row items-center gap-1.5 rounded-full px-3 py-1.5"
-            style={{
-              backgroundColor: active ? '#0c4a6e' : 'rgba(15,23,42,0.06)',
-            }}
+            className={`flex-row items-center gap-1.5 rounded-full px-3 py-1.5 ${
+              active ? 'bg-accent' : 'bg-hairline'
+            }`}
           >
             <Text
-              className="text-[13px]"
+              className={`text-[13px] ${active ? 'text-white' : 'text-text-muted'}`}
               style={{
                 // Constant weight prevents the pill from changing width
                 // when toggling active — bolder glyphs measure wider and
                 // would shift neighboring pills horizontally.
                 fontWeight: '600',
-                color: active ? '#f8fafc' : '#475569',
               }}
             >
               {opt.label}
             </Text>
             {opt.count !== undefined ? (
               <Text
-                className="text-[11px]"
-                style={{
-                  fontVariant: ['tabular-nums'],
-                  color: active ? 'rgba(248,250,252,0.7)' : '#94a3b8',
-                }}
+                className={`text-[11px] ${active ? 'text-white/70' : 'text-text-muted'}`}
+                style={{ fontVariant: ['tabular-nums'] }}
               >
                 {opt.count}
               </Text>

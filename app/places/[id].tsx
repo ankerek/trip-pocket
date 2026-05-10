@@ -20,6 +20,7 @@ import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
 import { openInMaps, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
 import { DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
+import { useThemeColors } from '@/tw/theme';
 
 type SourceStripItem = {
   source_id: string;
@@ -35,6 +36,7 @@ export default function PlaceDetail() {
   const router = useRouter();
   const db = useDatabase();
   const insets = useSafeAreaInsets();
+  const colors = useThemeColors();
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerMode, setPickerMode] = useState<TripPickerMode>('assign');
   const [state, setState] = useState<
@@ -183,10 +185,10 @@ export default function PlaceDetail() {
         {/* Full-bleed hero. Photo extends behind the transparent nav header,
             with bottom corners rounded to read as a "card" against the body. */}
         <View
+          className="bg-surface"
           style={{
             width: '100%',
             aspectRatio: 4 / 5,
-            backgroundColor: '#e2e8f0',
             overflow: 'hidden',
           }}
         >
@@ -208,7 +210,7 @@ export default function PlaceDetail() {
                 justifyContent: 'center',
               }}
             >
-              <Icon name="mappin.circle" size={48} tintColor="#94a3b8" />
+              <Icon name="mappin.circle" size={48} tintColor={colors.textMuted} />
             </View>
           )}
 
@@ -315,6 +317,7 @@ export default function PlaceDetail() {
             onPress={() => onAssignTrip(inTrip ? 'move' : 'assign')}
             accessibilityRole="button"
             accessibilityLabel={inTrip ? 'Move to trip' : 'Add to trip'}
+            className="bg-surface border-hairline"
             style={{
               flex: 1,
               flexDirection: 'row',
@@ -323,13 +326,11 @@ export default function PlaceDetail() {
               gap: 6,
               paddingVertical: 12,
               borderRadius: 14,
-              backgroundColor: 'rgba(15,23,42,0.06)',
               borderWidth: 1,
-              borderColor: 'rgba(15,23,42,0.06)',
             }}
           >
-            <Icon name="folder" size={16} tintColor="#0c4a6e" />
-            <Text style={{ fontSize: 14, fontWeight: '600', color: '#0c4a6e' }}>
+            <Icon name="folder" size={16} tintColor={colors.text} />
+            <Text className="text-text" style={{ fontSize: 14, fontWeight: '600' }}>
               {inTrip ? 'Move trip' : 'Add to trip'}
             </Text>
           </Pressable>
@@ -343,12 +344,8 @@ export default function PlaceDetail() {
 
         {/* Metadata block. */}
         <View
-          className="mx-4 mt-4 overflow-hidden rounded-2xl"
-          style={{
-            backgroundColor: 'rgba(15,23,42,0.025)',
-            borderWidth: 1,
-            borderColor: 'rgba(15,23,42,0.06)',
-          }}
+          className="mx-4 mt-4 overflow-hidden rounded-2xl bg-surface border-hairline"
+          style={{ borderWidth: 1 }}
         >
           {place.formattedAddress ? (
             <MetaRow icon="mappin" text={place.formattedAddress} />
@@ -379,12 +376,8 @@ export default function PlaceDetail() {
             <Pressable
               key={src.source_id}
               onPress={() => router.push(`/sources/${src.source_id}`)}
-              className="overflow-hidden rounded-xl"
-              style={{
-                width: 88,
-                height: 110,
-                backgroundColor: '#e2e8f0',
-              }}
+              className="overflow-hidden rounded-xl bg-surface"
+              style={{ width: 88, height: 110 }}
               accessibilityRole="button"
               accessibilityLabel="Open source screenshot"
             >
@@ -397,7 +390,7 @@ export default function PlaceDetail() {
                 />
               ) : (
                 <View className="h-full w-full items-center justify-center">
-                  <Icon name="link" size={20} tintColor="#94a3b8" />
+                  <Icon name="link" size={20} tintColor={colors.textMuted} />
                 </View>
               )}
               {src.trip_id !== place.tripId && src.trip_name ? (
@@ -423,14 +416,10 @@ export default function PlaceDetail() {
           {inTrip ? (
             <Pressable
               onPress={onUnassign}
-              className="mb-2 rounded-2xl py-3"
+              className="mb-2 rounded-2xl py-3 bg-surface border-hairline"
               accessibilityRole="button"
               accessibilityLabel="Remove from trip"
-              style={{
-                backgroundColor: 'rgba(15,23,42,0.04)',
-                borderWidth: 1,
-                borderColor: 'rgba(15,23,42,0.06)',
-              }}
+              style={{ borderWidth: 1 }}
             >
               <Text
                 className="text-center text-text"
@@ -448,7 +437,7 @@ export default function PlaceDetail() {
             style={{
               borderWidth: 1,
               borderColor: 'rgba(220,38,38,0.30)',
-              backgroundColor: 'rgba(254,242,242,0.6)',
+              backgroundColor: 'rgba(220,38,38,0.08)',
             }}
           >
             <Text
@@ -563,16 +552,18 @@ function MetaRow({
   text: string;
   muted?: boolean;
 }) {
+  const colors = useThemeColors();
+  const fg = muted ? colors.textMuted : colors.text;
   return (
     <View
-      className="flex-row items-center gap-3 px-4 py-3"
-      style={{ borderBottomWidth: 1, borderBottomColor: 'rgba(15,23,42,0.06)' }}
+      className="flex-row items-center gap-3 border-hairline px-4 py-3"
+      style={{ borderBottomWidth: 1 }}
     >
-      <Icon name={icon} size={16} tintColor={muted ? '#94a3b8' : '#0c4a6e'} />
+      <Icon name={icon} size={16} tintColor={fg} />
       <Text
         className="flex-1"
         numberOfLines={2}
-        style={{ fontSize: 14, color: muted ? '#94a3b8' : '#0c4a6e' }}
+        style={{ fontSize: 14, color: fg }}
       >
         {text}
       </Text>

@@ -27,6 +27,7 @@ import {
 } from '@/modules/storage';
 import { getOrCreateOwnerId } from '@/modules/capture';
 import { useDatabase } from './useDatabase';
+import { useThemeColors } from '@/tw/theme';
 
 export type TripPickerMode = 'assign' | 'move';
 export type TripPickerEntityKind = 'source' | 'place';
@@ -49,6 +50,7 @@ export function TripPicker(props: {
   const { visible, entityId, entityKind, mode, onClose, assignOptions } = props;
   const db = useDatabase();
   const insets = useSafeAreaInsets();
+  const colors = useThemeColors();
 
   const [internalVisible, setInternalVisible] = useState(false);
   const [trips, setTrips] = useState<TripWithCount[]>([]);
@@ -182,7 +184,10 @@ export function TripPicker(props: {
             accessibilityViewIsModal
             style={[
               {
-                backgroundColor: '#ffffff',
+                // Animated.View is from reanimated, not @/tw, so it ignores
+                // `className` — the bg has to come through the style prop or
+                // the sheet renders transparent over the scrim.
+                backgroundColor: colors.bg,
                 borderTopLeftRadius: 22,
                 borderTopRightRadius: 22,
                 paddingTop: 8,
@@ -197,17 +202,16 @@ export function TripPicker(props: {
             ]}
           >
             <View
-              className="self-center"
+              className="self-center bg-hairline"
               style={{
                 width: 40,
                 height: 5,
                 borderRadius: 999,
-                backgroundColor: '#e2e8f0',
                 marginTop: 4,
                 marginBottom: 12,
               }}
             />
-            <Text className="text-center text-[15px] font-bold text-slate-900">{title}</Text>
+            <Text className="text-center text-[15px] font-bold text-text">{title}</Text>
 
             <View className="mt-2">
               {creatingNew ? (
@@ -249,13 +253,13 @@ function TripRow(props: {
       accessibilityRole="button"
       accessibilityLabel={trip.name}
       accessibilityHint={hint}
-      className="flex-row items-center border-t border-slate-100 active:bg-slate-50"
-      style={{ paddingVertical: 15, paddingHorizontal: 20 }}
+      className="flex-row items-center border-hairline"
+      style={{ paddingVertical: 15, paddingHorizontal: 20, borderTopWidth: 1 }}
     >
-      <Text className="flex-1 text-[15px] font-medium text-slate-900" numberOfLines={1}>
+      <Text className="flex-1 text-[15px] font-medium text-text" numberOfLines={1}>
         {trip.name}
       </Text>
-      <Text className="text-[13px] font-medium text-slate-400">
+      <Text className="text-[13px] font-medium text-text-muted">
         {formatCount(trip.placeCount)}
       </Text>
     </Pressable>
@@ -268,16 +272,16 @@ function CreateRow(props: { onPress: () => void }) {
       onPress={props.onPress}
       accessibilityRole="button"
       accessibilityLabel="Create new trip"
-      className="flex-row items-center active:bg-slate-50"
+      className="flex-row items-center"
       style={{ paddingVertical: 15, paddingHorizontal: 20, gap: 10 }}
     >
       <View
-        className="items-center justify-center bg-blue-100"
+        className="items-center justify-center bg-info-bg"
         style={{ width: 22, height: 22, borderRadius: 999 }}
       >
-        <Text className="text-[15px] font-bold leading-none text-blue-600">+</Text>
+        <Text className="text-[15px] font-bold leading-none text-info-text">+</Text>
       </View>
-      <Text className="text-[15px] font-semibold text-blue-600">New trip</Text>
+      <Text className="text-[15px] font-semibold text-info-text">New trip</Text>
     </Pressable>
   );
 }
@@ -289,16 +293,16 @@ function CreateForm(props: {
   onSave: () => void;
 }) {
   const { name, onChangeName, canSave, onSave } = props;
+  const colors = useThemeColors();
   return (
     <View
-      className="flex-row items-center bg-slate-50"
+      className="flex-row items-center bg-surface border-hairline"
       style={{
         paddingVertical: 12,
         paddingHorizontal: 20,
         gap: 10,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderColor: '#e2e8f0',
       }}
     >
       <TextInput
@@ -306,13 +310,13 @@ function CreateForm(props: {
         value={name}
         onChangeText={onChangeName}
         placeholder="Trip name"
+        placeholderTextColor={colors.textMuted}
         returnKeyType="done"
         onSubmitEditing={onSave}
         accessibilityLabel="New trip name"
-        className="flex-1 bg-white text-[15px] text-slate-900"
+        className="flex-1 bg-bg border-hairline text-[15px] text-text"
         style={{
           borderWidth: 1,
-          borderColor: '#cbd5e1',
           borderRadius: 10,
           paddingHorizontal: 12,
           paddingVertical: 9,
@@ -324,11 +328,12 @@ function CreateForm(props: {
         accessibilityRole="button"
         accessibilityLabel="Save trip"
         accessibilityState={{ disabled: !canSave }}
+        className={canSave ? 'bg-accent' : 'bg-hairline'}
         style={{
-          backgroundColor: canSave ? '#2563eb' : '#cbd5e1',
           borderRadius: 10,
           paddingHorizontal: 14,
           paddingVertical: 9,
+          opacity: canSave ? 1 : 0.6,
         }}
       >
         <Text className="text-[14px] font-bold text-white">Save</Text>

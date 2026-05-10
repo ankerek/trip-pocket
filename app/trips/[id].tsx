@@ -16,6 +16,7 @@ import {
   DetailHeaderIconButton,
   DetailHeaderOverlay,
 } from '@/components/DetailHeaderOverlay';
+import { useThemeColors } from '@/tw/theme';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
                                  COALESCE(p.place_count, 0) AS place_count
@@ -146,18 +147,7 @@ export default function TripDetail() {
             </View>
 
             {view === 'map' ? (
-              <View
-                className="mx-4 mt-2 items-center justify-center rounded-2xl py-12"
-                style={{ backgroundColor: 'rgba(15,23,42,0.04)' }}
-              >
-                <Icon name="map" size={28} tintColor="#94a3b8" />
-                <Text
-                  className="mt-2 text-text-muted"
-                  style={{ fontSize: 13, fontWeight: '500' }}
-                >
-                  Map view coming soon
-                </Text>
-              </View>
+              <MapPlaceholder />
             ) : (
               <>
                 <SubTabToggle
@@ -190,12 +180,13 @@ function TripHero({
   coverPhotoUrl: string | null;
   placeCount: number;
 }) {
+  const colors = useThemeColors();
   return (
     <View
+      className="bg-surface"
       style={{
         width: '100%',
         aspectRatio: 4 / 5,
-        backgroundColor: '#e2e8f0',
         overflow: 'hidden',
       }}
     >
@@ -217,7 +208,7 @@ function TripHero({
             justifyContent: 'center',
           }}
         >
-          <Icon name="map" size={48} tintColor="#94a3b8" />
+          <Icon name="map" size={48} tintColor={colors.textMuted} />
         </View>
       )}
 
@@ -275,10 +266,7 @@ function TripHero({
 function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
     <View
-      className="mx-4 flex-row rounded-full p-1"
-      style={{
-        backgroundColor: 'rgba(15,23,42,0.06)',
-      }}
+      className="mx-4 flex-row rounded-full bg-hairline p-1"
       accessibilityRole="tablist"
     >
       <ToggleSegment label="Grid" active={view === 'grid'} onPress={() => onChange('grid')} />
@@ -300,27 +288,39 @@ function ToggleSegment({
   active: boolean;
   onPress: () => void;
 }) {
+  // Active = `bg` (the page surface, white in light / near-black in dark)
+  // so the active pill reads as "lifted" on either theme. Text uses
+  // theme `text` / `text-muted` tokens.
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       accessibilityLabel={label}
-      className="flex-1 items-center rounded-full py-2"
-      style={{
-        backgroundColor: active ? '#ffffff' : 'transparent',
-      }}
+      className={`flex-1 items-center rounded-full py-2 ${active ? 'bg-bg' : ''}`}
     >
       <Text
-        style={{
-          fontSize: 13,
-          fontWeight: active ? '600' : '500',
-          color: active ? '#0c4a6e' : '#475569',
-        }}
+        className={active ? 'text-text' : 'text-text-muted'}
+        style={{ fontSize: 13, fontWeight: active ? '600' : '500' }}
       >
         {label}
       </Text>
     </Pressable>
+  );
+}
+
+function MapPlaceholder() {
+  const colors = useThemeColors();
+  return (
+    <View className="mx-4 mt-2 items-center justify-center rounded-2xl bg-hairline py-12">
+      <Icon name="map" size={28} tintColor={colors.textMuted} />
+      <Text
+        className="mt-2 text-text-muted"
+        style={{ fontSize: 13, fontWeight: '500' }}
+      >
+        Map view coming soon
+      </Text>
+    </View>
   );
 }
 
@@ -360,22 +360,20 @@ function SubTabButton({
   active: boolean;
   onPress: () => void;
 }) {
+  // Active uses the accent token (teal) so it stays vivid against both
+  // a light and a dark page surface. Inactive uses the hairline tint.
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
-      className="flex-1 items-center rounded-full px-4 py-2"
-      style={{
-        backgroundColor: active ? '#0c4a6e' : 'rgba(15,23,42,0.06)',
-      }}
+      className={`flex-1 items-center rounded-full px-4 py-2 ${
+        active ? 'bg-accent' : 'bg-hairline'
+      }`}
     >
       <Text
-        style={{
-          fontSize: 13,
-          fontWeight: active ? '600' : '500',
-          color: active ? '#f8fafc' : '#475569',
-        }}
+        className={active ? 'text-white' : 'text-text-muted'}
+        style={{ fontSize: 13, fontWeight: active ? '600' : '500' }}
       >
         {label}
       </Text>
@@ -442,11 +440,11 @@ function CountrySectionHeader({ label }: { label: string }) {
   return (
     <View className="px-4 pt-5 pb-2">
       <Text
+        className="text-text-muted"
         style={{
           fontSize: 12,
           fontWeight: '600',
           letterSpacing: 0.6,
-          color: '#64748b',
           textTransform: 'uppercase',
         }}
         accessibilityRole="header"

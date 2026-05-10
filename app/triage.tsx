@@ -34,6 +34,7 @@ import { Icon } from '@/components/Icon';
 import { TripPicker } from '@/components/TripPicker';
 import { useDatabase } from '@/components/useDatabase';
 import { formatCapturedAt } from '@/lib/relativeTime';
+import { useThemeColors } from '@/tw/theme';
 
 type ExtractedPlace = {
   source_id: string;
@@ -405,6 +406,7 @@ function TriageCard({
   heroMax: number;
   onSnapHaptic: () => void;
 }) {
+  const colors = useThemeColors();
   const total = places.length;
   // The hero stays at heroMax behind the sheet; expanding/collapsing
   // animates the sheet's translateY only. Animating layout (`height`) here
@@ -434,13 +436,13 @@ function TriageCard({
           sheet down "reveals" more hero without any layout work. */}
       <GestureDetector gesture={heroPan}>
         <View
+          className="bg-surface"
           style={{
             position: 'absolute',
             top: 0,
             left: 0,
             right: 0,
             height: heroMax,
-            backgroundColor: '#0c4a6e',
             overflow: 'hidden',
           }}
         >
@@ -453,7 +455,7 @@ function TriageCard({
             />
           ) : (
             <View className="flex-1 items-center justify-center">
-              <Icon name="photo" size={36} tintColor="#94a3b8" />
+              <Icon name="photo" size={36} tintColor={colors.textMuted} />
             </View>
           )}
         </View>
@@ -481,11 +483,12 @@ function TriageCard({
             accessibilityLabel="Drag to resize the screenshot"
           >
             <View
+              className="bg-text-muted"
               style={{
                 width: 40,
                 height: 4,
                 borderRadius: 2,
-                backgroundColor: 'rgba(15,23,42,0.18)',
+                opacity: 0.4,
               }}
             />
           </View>
@@ -500,23 +503,15 @@ function TriageCard({
           <View className="px-4 pt-1 pb-2">
             {total > 0 ? (
               <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: '#0f766e',
-                  letterSpacing: 0.6,
-                }}
+                className="text-info-text"
+                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
               >
                 ✦ {total} {total === 1 ? 'PLACE FOUND' : 'PLACES FOUND'}
               </Text>
             ) : (
               <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: '#64748b',
-                  letterSpacing: 0.6,
-                }}
+                className="text-text-muted"
+                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
               >
                 COULDN'T READ
               </Text>
@@ -538,10 +533,10 @@ function TriageCard({
           {total > 0 ? (
             <View className="px-4 pt-3 pb-1">
               <Text
+                className="text-text-muted"
                 style={{
                   fontSize: 11,
                   fontWeight: '600',
-                  color: '#64748b',
                   letterSpacing: 0.5,
                   textTransform: 'uppercase',
                 }}
@@ -608,6 +603,7 @@ function PlaceSelectRow({
   checked: boolean;
   onToggle: () => void;
 }) {
+  const colors = useThemeColors();
   const photoUrl = buildPhotoUrl(
     place.enrichment_status === 'enriched' ? place.photo_name : null,
   );
@@ -622,8 +618,8 @@ function PlaceSelectRow({
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
       accessibilityLabel={place.city ? `${place.name}, ${place.city}` : place.name}
-      style={{ opacity: checked ? 1 : 0.45 }}
-      className="flex-row items-center gap-3 border-b border-slate-100 px-4 py-3"
+      style={{ opacity: checked ? 1 : 0.45, borderBottomWidth: 1 }}
+      className="flex-row items-center gap-3 border-hairline px-4 py-3"
     >
       {photoUrl ? (
         <ExpoImage
@@ -633,25 +629,25 @@ function PlaceSelectRow({
           transition={150}
         />
       ) : (
-        <View className="h-11 w-11 items-center justify-center rounded-[10px] bg-slate-100">
-          <Icon name={categoryIcon} size={20} tintColor="#0f172a" />
+        <View className="h-11 w-11 items-center justify-center rounded-[10px] bg-surface">
+          <Icon name={categoryIcon} size={20} tintColor={colors.text} />
         </View>
       )}
       <View className="flex-1">
         <Text
-          className="text-slate-900"
+          className="text-text"
           style={{
             fontSize: 15,
             fontWeight: '600',
             textDecorationLine: checked ? 'none' : 'line-through',
-            textDecorationColor: 'rgba(15,23,42,0.4)',
+            textDecorationColor: colors.textMuted,
           }}
           numberOfLines={1}
         >
           {place.name}
         </Text>
         {subtitle ? (
-          <Text className="mt-0.5 text-slate-500" style={{ fontSize: 12 }} numberOfLines={1}>
+          <Text className="mt-0.5 text-text-muted" style={{ fontSize: 12 }} numberOfLines={1}>
             {subtitle}
           </Text>
         ) : null}
@@ -662,9 +658,9 @@ function PlaceSelectRow({
           width: 26,
           height: 26,
           borderRadius: 999,
-          backgroundColor: checked ? '#14b8a6' : 'transparent',
+          backgroundColor: checked ? colors.accent : 'transparent',
           borderWidth: checked ? 0 : 2,
-          borderColor: 'rgba(15,23,42,0.2)',
+          borderColor: colors.textMuted,
         }}
         importantForAccessibility="no"
         accessibilityElementsHidden
@@ -690,10 +686,19 @@ function CtaTray({
   onSkip: () => void;
   onDelete: () => void;
 }) {
+  // Sheet body lives on the `bg-bg` surface, so the fade-into-tray gradient
+  // has to use the active bg color instead of always-white. We pull the JS
+  // mirror of the bg token from the palette so the gradient stops swap with
+  // the system theme.
+  const colors = useThemeColors();
+  const bgRgba = (alpha: number) =>
+    colors.bg === '#020617'
+      ? `rgba(2,6,23,${alpha})`
+      : `rgba(255,255,255,${alpha})`;
   return (
     <View className="absolute left-0 right-0 bottom-0" pointerEvents="box-none">
       <LinearGradient
-        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.96)']}
+        colors={[bgRgba(0), bgRgba(0.96)]}
         locations={[0, 0.55]}
         style={{
           paddingTop: 40,
@@ -706,8 +711,7 @@ function CtaTray({
           accessibilityRole="button"
           accessibilityLabel="Choose a trip"
           accessibilityHint="Picks a trip and saves the selected places"
-          className="flex-row items-center justify-between rounded-2xl px-4 py-4"
-          style={{ backgroundColor: '#14b8a6' }}
+          className="flex-row items-center justify-between rounded-2xl bg-accent px-4 py-4"
         >
           <View className="flex-row items-center gap-2">
             <Icon name="folder.fill" size={16} tintColor="#ffffff" />
@@ -736,15 +740,10 @@ function CtaTray({
           accessibilityRole="button"
           accessibilityLabel="Skip for now"
           accessibilityHint="Leaves this screenshot in the inbox and goes to the next"
-          className="mt-2 rounded-2xl items-center justify-center"
-          style={{
-            paddingVertical: 12,
-            backgroundColor: 'rgba(15,23,42,0.05)',
-            borderWidth: 1,
-            borderColor: 'rgba(15,23,42,0.06)',
-          }}
+          className="mt-2 rounded-2xl items-center justify-center bg-surface border-hairline"
+          style={{ paddingVertical: 12, borderWidth: 1 }}
         >
-          <Text style={{ fontSize: 14, fontWeight: '600', color: '#475569' }}>
+          <Text className="text-text" style={{ fontSize: 14, fontWeight: '600' }}>
             Skip for now
           </Text>
         </Pressable>

@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
 import { useDatabase } from '@/components/useDatabase';
 import { runForegroundIngest } from '@/modules/capture';
+import { useThemeColors } from '@/tw/theme';
 
 // Global places feed: every live place, regardless of trip. Tiles render
 // photo + name overlay (PlaceTile). Untriaged sources surface as the
@@ -55,6 +56,7 @@ const UNTRIAGED_FILTER_ID = '__untriaged__';
 export default function Pocket() {
   const db = useDatabase();
   const router = useRouter();
+  const colors = useThemeColors();
   const places = useLiveQuery<PlaceRow>(PLACES_SQL, [], ['places', 'trips']);
   const inboxCountRows = useLiveQuery<InboxCount>(
     INBOX_COUNT_SQL,
@@ -193,7 +195,7 @@ export default function Pocket() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#14b8a6"
+            tintColor={colors.accent}
           />
         }
       />

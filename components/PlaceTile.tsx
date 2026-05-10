@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Icon } from './Icon';
 import { TripChip } from './TripChip';
 import { getEnricher } from '@/modules/enrichment';
+import { useThemeColors } from '@/tw/theme';
 
 export type PlaceTileData = {
   id: string;
@@ -41,6 +42,7 @@ const CATEGORY_ICON: Record<NonNullable<PlaceTileData['category']>, string> = {
  */
 export function PlaceTile({ place }: { place: PlaceTileData }) {
   const router = useRouter();
+  const colors = useThemeColors();
   const photoUrl = buildPhotoUrl(place.photo_name);
 
   // Trigger enrichment on mount when warranted; runner dedups internally.
@@ -53,8 +55,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
   return (
     <Pressable
       onPress={() => router.push(`/places/${place.id}`)}
-      className="overflow-hidden rounded-xl"
-      style={{ backgroundColor: '#e2e8f0' }}
+      className="overflow-hidden rounded-xl bg-surface"
       accessibilityRole="button"
       accessibilityLabel={place.name}
       accessibilityHint={place.city ? `In ${place.city}. Opens place detail.` : 'Opens place detail.'}
@@ -71,11 +72,11 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
             accessibilityIgnoresInvertColors
           />
         ) : (
-          <View className="h-full w-full items-center justify-center" style={{ backgroundColor: '#e2e8f0' }}>
+          <View className="h-full w-full items-center justify-center bg-surface">
             <Icon
               name={place.category ? CATEGORY_ICON[place.category] : 'mappin.circle'}
               size={36}
-              tintColor="#94a3b8"
+              tintColor={colors.textMuted}
             />
           </View>
         )}

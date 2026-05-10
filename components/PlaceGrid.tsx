@@ -72,7 +72,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
               accessibilityRole="button"
               accessibilityLabel="Screenshot"
             >
-              <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-slate-100">
+              <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-surface">
                 <Image
                   source={item.file_path}
                   className="h-full w-full"

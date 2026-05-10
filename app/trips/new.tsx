@@ -7,10 +7,12 @@ import * as Haptics from 'expo-haptics';
 import { createTrip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { getOrCreateOwnerId } from '@/modules/capture';
+import { useThemeColors } from '@/tw/theme';
 
 export default function NewTrip() {
   const router = useRouter();
   const db = useDatabase();
+  const colors = useThemeColors();
   const [name, setName] = useState('');
   const trimmed = name.trim();
   const canSave = trimmed.length > 0 && db !== null;
@@ -47,7 +49,7 @@ export default function NewTrip() {
               accessibilityLabel="Cancel"
               hitSlop={8}
             >
-              <Text style={{ fontSize: 16, color: '#475569' }}>Cancel</Text>
+              <Text className="text-text-muted" style={{ fontSize: 16 }}>Cancel</Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -61,11 +63,8 @@ export default function NewTrip() {
               hitSlop={8}
             >
               <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: '600',
-                  color: canSave ? '#14b8a6' : '#cbd5e1',
-                }}
+                className={canSave ? 'text-accent' : 'text-text-muted'}
+                style={{ fontSize: 16, fontWeight: '600', opacity: canSave ? 1 : 0.5 }}
               >
                 Save
               </Text>
@@ -90,18 +89,17 @@ export default function NewTrip() {
           value={name}
           onChangeText={setName}
           placeholder="e.g. Japan"
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={colors.textMuted}
           returnKeyType="done"
           onSubmitEditing={onSave}
+          className="bg-surface border-hairline"
           style={{
             fontSize: 17,
-            color: '#0c4a6e',
+            color: colors.text,
             paddingHorizontal: 14,
             paddingVertical: 12,
             borderRadius: 12,
-            backgroundColor: '#f8fafc',
             borderWidth: 1,
-            borderColor: 'rgba(15,23,42,0.06)',
           }}
         />
       </ScrollView>

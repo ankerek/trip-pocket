@@ -3,9 +3,11 @@ import * as Haptics from 'expo-haptics';
 import { Icon } from '@/components/Icon';
 import { useDatabase } from '@/components/useDatabase';
 import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
+import { useThemeColors } from '@/tw/theme';
 
 export function HeaderCaptureButton() {
   const db = useDatabase();
+  const colors = useThemeColors();
   return (
     <Pressable
       onPress={() => {
@@ -21,7 +23,7 @@ export function HeaderCaptureButton() {
       hitSlop={8}
       style={{ paddingHorizontal: 12 }}
     >
-      <Icon name="plus" size={22} tintColor="#0c4a6e" />
+      <Icon name="plus" size={22} tintColor={colors.text} />
     </Pressable>
   );
 }

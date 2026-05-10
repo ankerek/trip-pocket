@@ -61,7 +61,7 @@ export default function OcrDebugSheet() {
 
   return (
     <ScrollView
-      className="flex-1 bg-white"
+      className="flex-1 bg-bg"
       contentContainerClassName="px-4 py-3 gap-3"
     >
       <Field label="ID" value={source.id} mono />
@@ -70,11 +70,11 @@ export default function OcrDebugSheet() {
       <Field label="Captured" value={source.capturedAt} />
       <Field label="OCR status" value={source.ocrStatus} />
       <View className="gap-1">
-        <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        <Text className="text-xs font-medium uppercase tracking-wide text-text-muted">
           OCR text · {charCount} chars
         </Text>
         {source.ocrStatus === 'pending' ? (
-          <Text className="text-sm italic text-slate-500">
+          <Text className="text-sm italic text-text-muted">
             OCR pending — pull down to refresh after a few seconds.
           </Text>
         ) : source.ocrStatus === 'failed' ? (
@@ -82,11 +82,11 @@ export default function OcrDebugSheet() {
             OCR failed (3 retries exhausted).
           </Text>
         ) : ocr.length === 0 ? (
-          <Text className="text-sm italic text-slate-500">
+          <Text className="text-sm italic text-text-muted">
             (no text recognized)
           </Text>
         ) : (
-          <Text selectable className="text-sm leading-5 text-slate-900">
+          <Text selectable className="text-sm leading-5 text-text">
             {ocr}
           </Text>
         )}
@@ -104,29 +104,30 @@ function ExtractedPlacesSection({ places }: { places: DebugPlace[] | null }) {
   if (places === null) return null;
   return (
     <View className="gap-2">
-      <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
+      <Text className="text-xs font-medium uppercase tracking-wide text-text-muted">
         Extracted places · {places.length}
       </Text>
       {places.length === 0 ? (
-        <Text className="text-sm italic text-slate-500">
+        <Text className="text-sm italic text-text-muted">
           (none extracted yet)
         </Text>
       ) : (
         places.map((p) => (
           <View
             key={p.id}
-            className="gap-1 rounded-md border border-slate-200 px-3 py-2"
+            className="gap-1 rounded-md border-hairline bg-surface px-3 py-2"
+            style={{ borderWidth: 1 }}
           >
-            <Text selectable className="text-sm font-semibold text-slate-900">
+            <Text selectable className="text-sm font-semibold text-text">
               {p.name}
             </Text>
-            <Text selectable className="text-xs text-slate-500">
+            <Text selectable className="text-xs text-text-muted">
               city: {p.city || '—'}
               {p.address ? `\naddress: ${p.address}` : ''}
               {`\nenrichment: ${p.enrichment_status}`}
               {p.external_place_id ? `\nplace_id: ${p.external_place_id}` : ''}
             </Text>
-            <Text selectable className="font-mono text-xs text-slate-700">
+            <Text selectable className="font-mono text-xs text-text-muted">
               {getMapsUrl({
                 name: p.name,
                 city: p.city ?? '',
@@ -156,7 +157,7 @@ function Field({
 }) {
   return (
     <View className="gap-0.5">
-      <Text className="text-xs font-medium uppercase tracking-wide text-slate-500">
+      <Text className="text-xs font-medium uppercase tracking-wide text-text-muted">
         {label}
       </Text>
       <Text
@@ -164,7 +165,7 @@ function Field({
         className={[
           small ? 'text-xs' : 'text-sm',
           mono ? 'font-mono' : '',
-          'text-slate-900',
+          'text-text',
         ].join(' ')}
       >
         {value}

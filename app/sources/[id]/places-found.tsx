@@ -49,7 +49,7 @@ export default function PlacesFoundSheet() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      className="flex-1 bg-white"
+      className="flex-1 bg-bg"
       contentContainerClassName="py-2"
     >
       {places.map((p) => (
@@ -61,8 +61,8 @@ export default function PlacesFoundSheet() {
 
 function CenteredHint({ text }: { text: string }) {
   return (
-    <View className="flex-1 items-center justify-center bg-white px-8">
-      <Text className="text-center text-base text-slate-500">{text}</Text>
+    <View className="flex-1 items-center justify-center bg-bg px-8">
+      <Text className="text-center text-base text-text-muted">{text}</Text>
     </View>
   );
 }

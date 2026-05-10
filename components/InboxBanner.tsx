@@ -1,5 +1,6 @@
 import { Pressable, Text, View } from '@/tw';
 import { Icon } from '@/components/Icon';
+import { useThemeColors } from '@/tw/theme';
 
 type InboxBannerProps = {
   count: number;
@@ -15,6 +16,7 @@ type InboxBannerProps = {
  * stub a placeholder.
  */
 export function InboxBanner({ count, onPress }: InboxBannerProps) {
+  const colors = useThemeColors();
   if (count === 0) return null;
   const label = `${count} new source${count === 1 ? '' : 's'} to triage`;
   return (
@@ -23,30 +25,28 @@ export function InboxBanner({ count, onPress }: InboxBannerProps) {
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint="Opens the triage flow"
-      className="mx-3.5 mb-2 mt-1 flex-row items-center gap-3 rounded-2xl px-3 py-3"
+      className="mx-3.5 mb-2 mt-1 flex-row items-center gap-3 rounded-2xl bg-info-bg px-3 py-3"
       style={{
-        backgroundColor: '#ccfbf1',
         borderWidth: 1,
         borderColor: 'rgba(17, 94, 89, 0.10)',
       }}
     >
       <View
-        className="h-8 min-w-[32px] items-center justify-center rounded-lg px-2"
-        style={{ backgroundColor: '#0f766e' }}
+        className="h-8 min-w-[32px] items-center justify-center rounded-lg bg-accent-strong px-2"
       >
         <Text className="text-sm font-bold text-white" style={{ fontVariant: ['tabular-nums'] }}>
           {count}
         </Text>
       </View>
       <View className="flex-1">
-        <Text className="text-[15px] font-semibold" style={{ color: '#115e59' }}>
+        <Text className="text-[15px] font-semibold text-info-text">
           New sources
         </Text>
-        <Text className="text-xs" style={{ color: '#0f766e' }}>
+        <Text className="text-xs text-info-text" style={{ opacity: 0.85 }}>
           Tap to triage
         </Text>
       </View>
-      <Icon name="chevron.right" size={18} tintColor="#115e59" />
+      <Icon name="chevron.right" size={18} tintColor={colors.infoText} />
     </Pressable>
   );
 }
