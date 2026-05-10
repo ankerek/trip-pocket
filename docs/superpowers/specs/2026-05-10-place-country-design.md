@@ -8,14 +8,14 @@
 
 Persist a structured country code on every `places` row so the trip Places tab can group its rows by country. The grouping matters most for multi-country trips (e.g. "Europe 2026"); single-country trips render flat with no visible change.
 
-After this ships, the trip Places query selects `country_code`, and the Places tab renders one section per country (header label resolved via `Intl.DisplayNames`).
+After this ships, the trip Places query selects `country_code`, and the Places tab renders one section per country (header label looked up via a static `COUNTRY_NAMES` map).
 
 ## Non-goals
 
 - Cross-trip "all places" view filtered by country. Not asked for; defer.
 - Inbox-level filter by country. Same.
 - Auto-trip-name suggestion based on extracted countries (e.g. "we noticed this is a Japan trip"). Future spec.
-- Long-name country column. ISO-2 only on storage; display resolves to the localized name at render time.
+- Long-name country column. ISO-2 only on storage; display name resolved at render time from a static English map.
 - Sub-country regions (state, prefecture, admin_area_level_1). The use case is country-level grouping; finer granularity is YAGNI.
 - Backfill of existing rows. Pre-launch dev DB. We purge and re-extract instead of writing a backfill script.
 - New `0002_*` migration file. Schema is still in flux pre-launch; the project convention (see `0001_init.ts` comment) is to fold changes into `0001_init.ts` and document a one-time dev-DB wipe.
@@ -88,7 +88,7 @@ No constraint, no index. Length-2-uppercase is enforced upstream (Zod schema on 
 
 Add `country_code` to the per-place object in the prompt:
 
-> - `country_code`: ISO 3166-1 alpha-2 code of the country the place is in (e.g. "JP", "US", "FR"). Infer from context (country name, currency, language, city). Empty string if truly ambiguous — never guess.
+> - `country_code`: ISO 3166-1 alpha-2 **uppercase** code of the country the place is in (e.g. "JP", "US", "FR"). Always uppercase, exactly two letters. Infer from context (country name, currency, language, city). Empty string if truly ambiguous — never guess. Never emit 3-letter codes or full country names.
 
 Add to `GEMINI_RESPONSE_SCHEMA.items.properties`:
 
@@ -100,7 +100,11 @@ Add `'country_code'` to the per-place `required` array. (Empty string is the "un
 
 ### `workers/extract-proxy/src/schema.ts` — Zod mirror
 
-Add `country_code: z.string().max(2)` (LLM returns "" or a 2-letter code; Zod enforces). Defense-in-depth: if Gemini ever returns a 3-letter code or full name, the Worker returns 502 and the client retries.
+```ts
+country_code: z.string().regex(/^([A-Z]{2})?$/, 'iso-2-uppercase-or-empty'),
+```
+
+Empty string OR exactly two uppercase letters — nothing else. If Gemini ever drifts (lowercase, 3-letter code, full name), Zod rejects and the Worker returns 502; the client retries per existing policy. This is the **only** layer where the format is enforced — downstream code can assume valid input.
 
 ### `workers/extract-proxy/src/enrich.ts` — extend field mask + parser
 
@@ -138,7 +142,14 @@ UPDATE places
 
 `ExtractedPlace` widens to include `country_code: string`. The INSERT path writes it to `places.country_code`. Empty-string LLM output stored as NULL on the way in (one canonical "unknown" representation in the DB).
 
-**Dedup-match path.** When an extraction matches an existing `places` row by `normalized_key`, we add a `place_sources` link but **do not** update `places.country_code` — same posture as `city`/`name`/`category` today. The first extraction's value sticks until enrichment overrides it. Re-extractions that disagree with the existing value are silently ignored.
+**Dedup-match path.** When an extraction matches an existing `places` row by `normalized_key`, we add a `place_sources` link. For `country_code` we adopt an **asymmetric fill** rule:
+
+- Existing `country_code` is non-NULL → leave it alone. Re-extractions never overwrite a non-empty value (mirrors `city`/`name`/`category` posture).
+- Existing `country_code` is NULL AND new extraction supplied a non-empty ISO-2 → fill it. This gives the LLM a second chance to populate country on rows that were created from an ambiguous source.
+
+Asymmetric fill is safe because the LLM's confidence sentinel is NULL/empty — filling NULL is a strict information gain, never a contradiction.
+
+**Known limitation: cross-country same-name+same-city collisions.** `normalized_key` is `LOWER(name)|LOWER(city)` and does not include country. Two distinct places that share both name and city across different countries (Cambridge MA "Flour Bakery" vs Cambridge UK "Flour Bakery") collapse onto one `places` row. This is a pre-existing limitation, not introduced by this spec — every Google-Places-derived field (`formatted_address`, `lat/lng`, etc.) already suffers from it. `country_code` inherits the same trade-off. Acceptable for v1; if it becomes a real complaint, the fix is to extend `normalized_key` to include `country_code`, which is a separate spec.
 
 ### `modules/storage/places.ts` — column lists
 
@@ -146,23 +157,25 @@ Add `country_code` to the INSERT column list and the UPDATE column list on the e
 
 ### Trip Places tab (`app/trips/[id].tsx`) — group by country
 
-Existing query (paraphrased) returns a flat list of places for the trip. Extend the SELECT with `country_code` and group at render time, not in SQL — small N, simpler code:
+The Places tab is today a flat 2-column grid of `PlaceTile`s (`app/trips/[id].tsx:168-174`). This spec **keeps the grid layout** and only inserts country headers between groups when there is more than one country in the trip.
 
-```ts
-const grouped = groupBy(places, p => p.country_code ?? 'XX');  // 'XX' = unknown bucket
-```
+Extend `TRIP_PLACES_SQL` to select `country_code` (no SQL grouping — group at render time, small N).
 
 Render rules:
 
 | Buckets present | UI |
 |---|---|
-| One non-null bucket (and no unknown) | Flat list, no section headers. Single-country trips look unchanged. |
-| One non-null bucket + an unknown bucket | Flat for the known bucket, "Other" section at the bottom for unknowns. |
-| Multiple non-null buckets | Section per country, header from `Intl.DisplayNames(['en'], { type: 'region' }).of(code)`. Sort sections by row count desc within the trip (largest country first); unknown bucket last. |
+| One non-null bucket (and no unknown bucket) | Existing flat 2-column grid, no section headers. Single-country trips look identical to today. |
+| One non-null bucket + an unknown bucket | Existing flat grid for the known country (no header), then a small "Other" header followed by another 2-column grid for unknowns. Header only renders when both buckets are non-empty. |
+| Multiple non-null buckets | One section per country, each rendered as a 2-column grid with a header above. Sort sections by row count desc within the trip; unknown bucket last. |
 
-Section header style: existing list-section-header treatment (system gray, footnote weight, capitalised — match other tabs in the app).
+**Layout primitive.** Stay with the existing flex-wrap pattern, not `SectionList`. The render becomes a plain map over `[{ code, places }, …]`, emitting `<CountrySectionHeader />` then a flex-wrap row of `PlaceTile`s per group. Avoids restructuring the tab into a virtualised list.
 
-`Intl.DisplayNames` is built into Hermes / RN on iOS 14+. No on-device map to maintain.
+**Header style.** Match existing section-header treatment in the app (e.g. inbox list-section labels): system gray, footnote weight, uppercased, with the same horizontal padding as the grid (`px-4`).
+
+**Code → name display.** Ship a static `COUNTRY_NAMES: Record<string, string>` map in `components/CountryDisplay.ts` (~250 entries, English names, ~5KB). Lookup with `COUNTRY_NAMES[code] ?? code` (falls back to the raw code if the LLM/Google ever produces a code we didn't include — shouldn't happen, but defensive).
+
+**Why not `Intl.DisplayNames`?** Hermes' `Intl` support on RN 0.83 / Expo 55 does not list `Intl.DisplayNames` as guaranteed; relying on it risks runtime failures on device. A static map is ~5KB, fully deterministic across runtimes, and English-only matches the app's current single-locale posture. Revisit if/when the app gains localized labels.
 
 ## Data flow
 
@@ -193,8 +206,10 @@ Screenshot OCR text →
 | Case | Behavior |
 |---|---|
 | LLM omits `country_code` from a place | Worker Zod-validates the response; missing field → 502 → client retry per existing policy. |
-| LLM emits 3-letter or full name | Zod `max(2)` rejects → 502 → retry. |
-| LLM emits `""` (ambiguous) | Stored as NULL in `places.country_code`. Place lands in the "Other" bucket until enriched. |
+| LLM emits 3-letter, lowercase, or full name | Zod regex `/^([A-Z]{2})?$/` rejects → 502 → retry. |
+| LLM emits `""` (ambiguous) | Stored as NULL in `places.country_code`. Place lands in the "Other" bucket until enriched (or until a later same-place extraction fills NULL via asymmetric-fill). |
+| Google `addressComponents.country.shortText` is lowercase (CLDR convention says uppercase, but defensive) | Normalise to uppercase in the Worker before serialising the response. Client never sees mixed case. |
+| Same-name + same-city across countries (Cambridge UK + Cambridge MA both "Flour Bakery") | Collide on `normalized_key`; one row wins. Acknowledged limitation, see "Dedup-match path" above. |
 | Google `addressComponents` missing the `country` entry | Rare. Parser returns null; `COALESCE` preserves LLM value. |
 | Google returns a different ISO-2 than the LLM | Google wins (the override is the whole point). |
 | Place enriches to `not-found` | `country_code` stays at whatever the LLM wrote (NULL or ISO-2). |
@@ -207,16 +222,21 @@ Resolved:
 
 | Question | Decision |
 |---|---|
-| Storage shape | Single column `places.country_code TEXT`, ISO 3166-1 alpha-2. No long-name column. |
-| Display | `Intl.DisplayNames` at render. Built-in, no map shipped. |
+| Storage shape | Single column `places.country_code TEXT`, ISO 3166-1 alpha-2 uppercase. No long-name column. |
+| Display | Static English `COUNTRY_NAMES` map in `components/CountryDisplay.ts` (~250 entries, ~5KB). No `Intl.DisplayNames` — Hermes support is not guaranteed on RN 0.83. |
+| Localisation | English-only labels for v1. If/when the app ships in other locales, swap the static map for `Intl.DisplayNames` or a per-locale map. |
 | Write path | Both: LLM at INSERT, Google Places at UPDATE. Enrichment uses `COALESCE` so it only overrides when Google has a value. |
 | Scope of override | Both `city` and `country_code` get the dual-write treatment. Fixes the pre-existing inconsistency where `city` was LLM-only forever. |
 | `not-found` rows | Keep LLM-extracted values (the whole reason for dual-write). |
 | LLM ambiguity sentinel | Empty string from the LLM; stored as NULL in the DB. |
+| Format enforcement | Zod regex `/^([A-Z]{2})?$/` at the proxy boundary. Downstream code assumes uppercase ISO-2 or NULL. Google's `shortText` defensively normalised to uppercase in the Worker. |
+| Dedup-match write | Asymmetric fill: replace NULL with non-empty values; never overwrite a non-NULL existing value. |
+| Cross-country same-name+same-city collisions | Acknowledged pre-existing limitation of `normalized_key = name|city`. Affects `country_code` exactly as it affects every other Google-Places-derived column. Out of scope to fix here. |
 | Per-source provenance for country | Out of scope. `place_sources` does not gain an `extracted_country_code` column. |
 | Migration shape | Edit `0001_init.ts` in place; dev DB wipe (matches the existing comment in that file). |
 | Backfill | None. Pre-launch. |
 | Trip-Places SQL grouping | Group at render time, not in SQL. Small N. |
+| Trip-Places layout | Stay on the existing flex-wrap 2-column grid; insert section headers between country groups when >1 country. No `SectionList` migration. |
 | `regionCode` hint to Google Places `searchText` | **Optional** follow-up. Adding `regionCode: <country_code>` to the searchText body, when LLM provided one, would disambiguate "Cambridge" globally. Defer until evidence it matters. |
 
 Deferred:
@@ -232,6 +252,7 @@ Deferred:
 
 - `extract`: stubbed Gemini returns a place with `country_code: "JP"` → 200 response contains it; Zod validates.
 - `extract`: stubbed Gemini returns 3-letter code → Worker returns 502.
+- `extract`: stubbed Gemini returns lowercase "jp" → Worker returns 502 (regex `/^([A-Z]{2})?$/` rejects).
 - `extract`: stubbed Gemini omits `country_code` → 502.
 - `enrich`: stubbed Google Places returns `addressComponents` with a `country` entry → response includes `country_code: "JP"`.
 - `enrich`: stubbed Google Places returns `addressComponents` without a `country` entry → response includes `country_code: null`; `city: null` similarly.
@@ -241,9 +262,13 @@ Deferred:
 
 - Extraction proxy adapter: LLM empty-string `country_code` → INSERT writes NULL.
 - Extraction proxy adapter: LLM "JP" → INSERT writes "JP".
+- Extraction dedup-match: existing place with `country_code = NULL`, new extraction supplies "JP" → asymmetric fill writes "JP".
+- Extraction dedup-match: existing place with `country_code = "JP"`, new extraction supplies "" → no write; "JP" preserved.
+- Extraction dedup-match: existing place with `country_code = "JP"`, new extraction supplies "KR" → no write; "JP" preserved (re-extractions never overwrite a non-empty value).
 - Enrichment write path: response with city + country_code → UPDATE writes both, overriding LLM values.
 - Enrichment write path: response with null city → COALESCE preserves the LLM-extracted city. Same for country_code.
 - Enrichment write path: `not-found` response → LLM-extracted city + country_code remain on the row.
+- Worker enrich path: Google `addressComponents.country.shortText = "jp"` (defensive) → response includes `"JP"` (uppercase).
 
 **Storage (`modules/storage/__tests__/`):**
 
@@ -251,26 +276,29 @@ Deferred:
 
 **Trip-Places UI:**
 
-- Trip with all rows in one country → flat list, no section headers.
-- Trip with one country + one unknown row → flat for the country, "Other" section with one row.
-- Trip with three countries → three sections, ordered by row count desc, headers resolved via `Intl.DisplayNames`.
+- Trip with all rows in one country → existing flat 2-column grid, no section headers (regression guard against headers leaking into single-country trips).
+- Trip with one country + one unknown row → flat grid for the country, "Other" header + grid for unknowns.
+- Trip with three countries → three sections, ordered by row count desc, each rendered as a 2-column grid, header text from `COUNTRY_NAMES`.
+- Trip with a code missing from `COUNTRY_NAMES` (defensive — shouldn't happen) → header falls back to the raw ISO-2 code; layout doesn't crash.
 
 ## File-change inventory
+
+**New:**
+
+- `components/CountryDisplay.ts` — static `COUNTRY_NAMES: Record<string, string>` (ISO-2 → English name) plus a `displayCountry(code)` helper. ~250 entries.
 
 **Modified:**
 
 - `modules/storage/migrations/0001_init.ts` — add `country_code TEXT` to `places`.
 - `workers/extract-proxy/src/prompt.ts` — extend system prompt + `GEMINI_RESPONSE_SCHEMA`.
-- `workers/extract-proxy/src/schema.ts` — extend Zod schema with `country_code: z.string().max(2)`.
-- `workers/extract-proxy/src/enrich.ts` — add `addressComponents` to field mask, parse locality + country, extend `PlaceDetails` + `EnrichResponse`.
+- `workers/extract-proxy/src/schema.ts` — extend Zod schema with `country_code: z.string().regex(/^([A-Z]{2})?$/)`.
+- `workers/extract-proxy/src/enrich.ts` — add `addressComponents` to field mask, parse locality + country, normalise country to uppercase, extend `PlaceDetails` + `EnrichResponse`.
 - `workers/extract-proxy/__tests__/` — new test cases as above.
-- `modules/extraction/proxy.ts` + `extraction.ts` — widen `ExtractedPlace`; INSERT writes country_code.
-- `modules/enrichment/proxy.ts` + `enrichment.ts` — widen `EnrichmentResult`; UPDATE writes city + country_code with COALESCE override.
+- `modules/extraction/proxy.ts` + `extraction.ts` — widen `ExtractedPlace`; INSERT writes `country_code`; dedup-match path implements asymmetric fill.
+- `modules/enrichment/proxy.ts` + `enrichment.ts` — widen `EnrichmentResult`; UPDATE writes city + country_code with `COALESCE` override.
 - `modules/storage/places.ts` — column lists + row type.
-- `app/trips/[id].tsx` — Places tab grouping + section rendering. Possibly extracted into a small helper if the file is already crowded.
-- `components/PlaceRow.tsx` / `components/PlaceTile.tsx` — only if a "country" detail is desired in the row itself (not required for the section header use case).
-
-**New:** none.
+- `app/trips/[id].tsx` — extend `TRIP_PLACES_SQL` with `country_code`; group at render; insert `<CountrySectionHeader>` between groups when >1 country.
+- `components/PlaceTile.tsx` — no change required for grouping itself. Touch only if you also want to surface country on the tile body.
 
 **Deleted:** none.
 
