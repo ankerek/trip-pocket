@@ -124,17 +124,34 @@ export default function PlaceDetail() {
     }
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
+    if (!db) return;
+    // Count sources that will be orphan-pruned: sources whose only junction
+    // is to this place.
+    const countRow = await db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM place_sources ps1
+        WHERE ps1.place_id = ?
+          AND NOT EXISTS (
+                SELECT 1 FROM place_sources ps2
+                 WHERE ps2.source_id = ps1.source_id
+                   AND ps2.place_id != ?
+              )`,
+      place.id, place.id,
+    );
+    const orphanCount = countRow?.n ?? 0;
+    const body =
+      orphanCount === 0
+        ? "This can't be undone."
+        : `${orphanCount} screenshot${orphanCount === 1 ? '' : 's'} it came from will also be deleted. This can't be undone.`;
     Alert.alert(
       'Delete this place?',
-      "This can't be undone.",
+      body,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            if (!db) return;
             if (process.env.EXPO_OS === 'ios') {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
