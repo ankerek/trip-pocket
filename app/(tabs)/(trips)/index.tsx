@@ -3,6 +3,7 @@ import { Image, Pressable, Text, View } from '@/tw';
 import { FlatList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
+import { EmptyState } from '@/components/EmptyState';
 import {
   listTrips,
   useLiveQuery,
@@ -77,11 +78,16 @@ export default function Trips() {
     return (
       <>
         <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
-        <View className="flex-1 items-center justify-center bg-bg">
-          <Text className="text-base text-text-muted">
-            No trips yet — tap + to create one.
-          </Text>
-        </View>
+        <EmptyState
+          icon="folder.badge.plus"
+          title="No trips yet"
+          body="Trips group your screenshots together — like “Japan” or “Lisbon weekend”."
+          cta={{
+            label: 'Create your first trip',
+            onPress: () => router.push('/trips/new'),
+            accessibilityHint: 'Opens the new-trip screen',
+          }}
+        />
       </>
     );
   }
@@ -167,6 +173,7 @@ function PreviewThumb({ place }: { place: TripPreviewPlace }) {
         }}
         contentFit="cover"
         cachePolicy="memory-disk"
+        recyclingKey={place.id}
       />
     );
   }

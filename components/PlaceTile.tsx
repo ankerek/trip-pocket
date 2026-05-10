@@ -65,6 +65,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
             className="h-full w-full"
             contentFit="cover"
             cachePolicy="memory-disk"
+            recyclingKey={place.id}
             transition={150}
             accessibilityIgnoresInvertColors
           />

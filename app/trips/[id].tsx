@@ -8,6 +8,8 @@ import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { Icon } from '@/components/Icon';
+import { EmptyState } from '@/components/EmptyState';
+import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
 import {
   DetailHeaderIconButton,
   DetailHeaderOverlay,
@@ -120,10 +122,20 @@ export default function TripDetail() {
         />
 
         {empty ? (
-          <View className="px-8 pt-12">
-            <Text className="text-center text-base text-text-muted">
-              No places in this trip yet — add some from Pocket.
-            </Text>
+          <View className="pt-6 pb-16">
+            <EmptyState
+              icon="square.and.arrow.down"
+              title="Nothing in this trip yet"
+              body={`Capture screenshots, then assign them to “${trip.name}” from your Inbox.`}
+              cta={{
+                label: 'Add from Photos',
+                onPress: () => {
+                  if (db) showCaptureActionSheet(db);
+                },
+                accessibilityHint:
+                  'Opens the camera roll to import screenshots into the inbox',
+              }}
+            />
           </View>
         ) : (
           <>

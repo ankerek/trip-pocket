@@ -75,8 +75,8 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 
 **In flight:**
 - [x] Triage redesign — multi-place selection per source, default-on with deselect-to-drop, swipe-down-to-dismiss. Shipped 2026-05-09 (`853eb78`); compact-bottom-sheet trip picker shipped 2026-05-10 (`eac25e9`). Specs: `docs/superpowers/specs/2026-05-09-triage-redesign-design.md`, `docs/superpowers/specs/2026-05-09-trip-picker-redesign-design.md`.
-- [ ] Empty-state audit across the app (carried over from v0.1).
-- [ ] Performance pass on list scrolling and image loading. Photo proxy is in place, virtualization is wired, but no formal measurement pass yet.
+- [x] Empty-state audit — shipped 2026-05-10. Extracted shared `components/EmptyState.tsx` (icon + title + body + optional CTA); applied to Pocket all-empty (now CTAs into capture), Trips list (CTAs into new-trip), and Trip detail (CTAs into capture). Other empty states across search, places-found sheet, source/place not-found, and triage card-no-places already had appropriate copy and were left alone.
+- [→] Performance pass — drive-by fixes shipped 2026-05-10: `recyclingKey` on PlaceTile + Trips-list preview thumb (prevents flash-of-old-image during FlatList row recycle); Pocket grid cell extracted to memoised `GridCell` with stable cell-style memo. Deferred to v0.3 (TestFlight): on-device profiling of list scroll fps + cold-launch TTI, photo-proxy size validation against measured display sizes, and triage's unbounded `EXTRACTED_SQL` (currently fetches all `place_sources` and filters in JS).
 
 **Cut from v0.2:**
 - Manual tagging UI — formally cut 2026-05-10. AI-set `places.category` covers the launch-promise behaviour and avoids adding a write-surface that exists only to override the AI. Revisit in v1.x only if users actually ask.

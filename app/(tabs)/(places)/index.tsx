@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import {
   PixelRatio,
   RefreshControl,
@@ -11,6 +11,8 @@ import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { HeaderCaptureButton } from '@/components/HeaderCaptureButton';
 import { InboxBanner } from '@/components/InboxBanner';
 import { FilterPills, type FilterOption } from '@/components/FilterPills';
+import { EmptyState } from '@/components/EmptyState';
+import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
 import { useDatabase } from '@/components/useDatabase';
 import { runForegroundIngest } from '@/modules/capture';
 
@@ -97,6 +99,22 @@ export default function Pocket() {
 
   const headerRight = () => <HeaderCaptureButton />;
 
+  const cellStyle = useMemo(
+    () => ({
+      flex: 1 / numColumns,
+      maxWidth: numColumns === 1 ? width - 28 : undefined,
+      paddingHorizontal: numColumns === 1 ? 14 : 0,
+    }),
+    [numColumns, width],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: PlaceRow }) => (
+      <GridCell place={item} style={cellStyle} />
+    ),
+    [cellStyle],
+  );
+
   const onRefresh = async () => {
     if (!db) return;
     setRefreshing(true);
@@ -113,11 +131,18 @@ export default function Pocket() {
     return (
       <>
         <Stack.Screen options={{ headerRight }} />
-        <View className="flex-1 items-center justify-center bg-bg">
-          <Text className="px-8 text-center text-base text-text-muted">
-            No places yet — share a screenshot from Photos.
-          </Text>
-        </View>
+        <EmptyState
+          icon="square.and.arrow.down"
+          title="No places yet"
+          body="Share a screenshot to Trip Pocket from Photos, Instagram, or TikTok — or pull some in from your camera roll."
+          cta={{
+            label: 'Add from Photos',
+            onPress: () => {
+              if (db) showCaptureActionSheet(db);
+            },
+            accessibilityHint: 'Opens the camera roll to import screenshots',
+          }}
+        />
       </>
     );
   }
@@ -166,17 +191,7 @@ export default function Pocket() {
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <View
-            style={{
-              flex: 1 / numColumns,
-              maxWidth: numColumns === 1 ? width - 28 : undefined,
-              paddingHorizontal: numColumns === 1 ? 14 : 0,
-            }}
-          >
-            <PlaceTile place={item} />
-          </View>
-        )}
+        renderItem={renderItem}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -196,3 +211,23 @@ function keyExtractor(item: PlaceRow): string {
 function GridGap() {
   return <View style={{ height: 6 }} />;
 }
+
+type GridCellStyle = {
+  flex: number;
+  maxWidth: number | undefined;
+  paddingHorizontal: number;
+};
+
+const GridCell = memo(function GridCell({
+  place,
+  style,
+}: {
+  place: PlaceRow;
+  style: GridCellStyle;
+}) {
+  return (
+    <View style={style}>
+      <PlaceTile place={place} />
+    </View>
+  );
+});
