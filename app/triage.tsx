@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList as RNFlatList,
   ScrollView as RNScrollView,
   useWindowDimensions,
@@ -23,7 +24,12 @@ import Animated, {
 import { Pressable, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { listInboxSources, useLiveQuery, type Source } from '@/modules/storage';
+import {
+  deleteSource,
+  listInboxSources,
+  useLiveQuery,
+  type Source,
+} from '@/modules/storage';
 import { Icon } from '@/components/Icon';
 import { TripPicker } from '@/components/TripPicker';
 import { useDatabase } from '@/components/useDatabase';
@@ -157,6 +163,47 @@ export default function Triage() {
     advanceOrClose();
   };
 
+  const onDelete = useCallback(() => {
+    if (!items) return;
+    const source = items[index];
+    if (!source) return;
+    const placesCount = (placesBySource[source.id] ?? []).length;
+    const body =
+      placesCount === 0
+        ? "This can't be undone."
+        : `${placesCount} place${placesCount === 1 ? '' : 's'} extracted from it will also be deleted. This can't be undone.`;
+    Alert.alert(
+      'Delete this screenshot?',
+      body,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (!db) return;
+            if (process.env.EXPO_OS === 'ios') {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(
+                () => {},
+              );
+            }
+            await deleteSource(db, source.id);
+            // Same advance behaviour as the TripPicker save: drop this source
+            // from the local list, snap to the next index (or close if last).
+            setItems((prev) => prev?.filter((s) => s.id !== source.id) ?? prev);
+            const remaining = (items?.length ?? 0) - 1;
+            if (index >= remaining) {
+              router.back();
+            } else {
+              listRef.current?.scrollToIndex({ index, animated: true });
+            }
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  }, [db, index, items, placesBySource, router]);
+
   const tapHaptic = useCallback(() => {
     if (process.env.EXPO_OS === 'ios') Haptics.selectionAsync().catch(() => {});
   }, []);
@@ -268,6 +315,7 @@ export default function Triage() {
           bottomInset={insets.bottom}
           onPickTrip={() => setPickerVisible(true)}
           onSkip={onSkip}
+          onDelete={onDelete}
         />
 
         <TripPicker
@@ -633,12 +681,14 @@ function CtaTray({
   bottomInset,
   onPickTrip,
   onSkip,
+  onDelete,
 }: {
   totalCount: number;
   selectedCount: number;
   bottomInset: number;
   onPickTrip: () => void;
   onSkip: () => void;
+  onDelete: () => void;
 }) {
   return (
     <View className="absolute left-0 right-0 bottom-0" pointerEvents="box-none">
@@ -696,6 +746,20 @@ function CtaTray({
         >
           <Text style={{ fontSize: 14, fontWeight: '600', color: '#475569' }}>
             Skip for now
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={onDelete}
+          accessibilityRole="button"
+          accessibilityLabel="Delete screenshot"
+          accessibilityHint="Permanently delete this screenshot and any extracted places."
+          className="mt-2 items-center justify-center"
+          style={{ paddingVertical: 10 }}
+          hitSlop={8}
+        >
+          <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>
+            Delete
           </Text>
         </Pressable>
       </LinearGradient>
