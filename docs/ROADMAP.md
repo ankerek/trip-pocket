@@ -44,7 +44,7 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 
 ### Explicit non-goals for v0.1
 - OCR — v0.2.
-- Tags — v0.2.
+- AI categorization (place / food / activity) — v0.2 (AI-only; no manual tag editor).
 - AI extraction / Places view — v0.2.
 - Onboarding — v0.3.
 - Any design polish.
@@ -57,9 +57,9 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 
 **Definition of done:** every "at launch" bullet from PRODUCT.md works end-to-end, capture-to-saved-in-trip is under ~5 seconds, and AI extraction reliably produces a tappable place for the obvious cases (single restaurant or POI in a screenshot).
 
-**Status (2026-05-09):** core pipeline is shipped end-to-end on device. OCR, AI extraction, enrichment, photo proxy, search, places-first home, triage, per-trip Places tab, per-source places-found sheet, Maps deep-link — all live. Two design changes vs. the original plan:
+**Status (2026-05-10):** core pipeline is shipped end-to-end on device. OCR, AI extraction, enrichment, photo proxy, search, places-first home, triage (with multi-place selection + redesigned trip picker), per-trip Places tab, per-source places-found sheet, Maps deep-link — all live. Two design changes vs. the original plan:
 - Schema collapsed to a places-first shape (`places` + `place_sources` junction + generalised `sources`) before any users existed; FTS5 indexes the place document, not the source document.
-- `places.category` is populated by the AI extractor rather than asked of the user, so the "manual tagging" deliverable is partial — the categorisation works, but there's no tag editor in the UI yet.
+- Manual tagging UI is **cut**: `places.category` is populated by the AI extractor and that covers the launch-promise behaviour. No user-facing tag editor will ship in v0.2 (or v1.0). Override-the-AI-category lives in v1.x if users actually ask.
 
 **Shipped:**
 - [x] On-device OCR via Apple Vision (`modules/vision-ocr/`, Swift Expo Module).
@@ -74,13 +74,13 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 - [x] **Beyond original scope:** triage flow — full-screen pager modal that walks new sources one at a time, picking-a-trip auto-saves and advances. (Triage redesign approved 2026-05-09 — see "In flight" below.)
 
 **In flight:**
-- [ ] Triage redesign — multi-place selection per source, default-on with deselect-to-drop, swipe-down-to-dismiss. Spec: `docs/superpowers/specs/2026-05-09-triage-redesign-design.md`.
+- [x] Triage redesign — multi-place selection per source, default-on with deselect-to-drop, swipe-down-to-dismiss. Shipped 2026-05-09 (`853eb78`); compact-bottom-sheet trip picker shipped 2026-05-10 (`eac25e9`). Specs: `docs/superpowers/specs/2026-05-09-triage-redesign-design.md`, `docs/superpowers/specs/2026-05-09-trip-picker-redesign-design.md`.
 - [ ] Empty-state audit across the app (carried over from v0.1).
 - [ ] Performance pass on list scrolling and image loading. Photo proxy is in place, virtualization is wired, but no formal measurement pass yet.
 
-**Open / cut:**
-- Manual tagging UI: AI-set categories cover the launch-promise behaviour. Decision pending — ship a tag editor, or formally cut and lean on AI categories for v1.0.
-- Trip detail filtering by tag/category: deferred until the manual-tagging decision lands. Trip detail's "Map" view is currently a "coming soon" placeholder (full map is v1.x).
+**Cut from v0.2:**
+- Manual tagging UI — formally cut 2026-05-10. AI-set `places.category` covers the launch-promise behaviour and avoids adding a write-surface that exists only to override the AI. Revisit in v1.x only if users actually ask.
+- Trip detail filtering by tag/category — moved to v1.x with the rest of the tag-editor surface area. Trip detail's "Map" view remains a "coming soon" placeholder (full map is v1.x).
 
 **Note on the proxy:** the proxy ships from v0.2 onward — it's free for me to run while there are no users, and TestFlight users in v0.3 should hit it without any auth (auth is added at v1.0 alongside the paywall). Endpoints live: `POST /extract`, `POST /enrich`, `GET /photo/:name`. Privacy posture: never logs OCR text or LLM bodies; logs only HTTP status, latency, and error class.
 
@@ -132,6 +132,7 @@ Public. Paid from day one.
 Sequenced post-launch based on what users actually ask for. Order here is a guess, not a commitment.
 
 - Smart suggestions on top of extracted places ("Looks like a café in Tokyo", auto-tagging).
+- Manual category override on a place (inline edit on place-detail) + trip-detail filtering by category. Cut from v0.2 on 2026-05-10; revisit only if users ask.
 - In-app map view of saved places (uses the lat/lng populated by v0.2 place enrichment).
 - Cloud sync across devices (CloudKit while iOS-only; revisit if Android happens).
 - Itinerary generation from saved ideas.
