@@ -7,6 +7,8 @@ import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
+import { groupPlacesByCountry } from '@/components/groupPlacesByCountry';
+import { displayCountry } from '@/components/CountryDisplay';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
 import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
@@ -26,7 +28,7 @@ const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_s
                            WHERE s.trip_id = ?
                         ORDER BY s.captured_at DESC`;
 
-const TRIP_PLACES_SQL = `SELECT id, name, city, category, photo_name,
+const TRIP_PLACES_SQL = `SELECT id, name, city, country_code, category, photo_name,
                                 rating, price_level,
                                 external_place_id, enrichment_status,
                                 latitude, longitude, formatted_address
@@ -165,13 +167,7 @@ export default function TripDetail() {
                   sourcesCount={sources.length}
                 />
                 {tab === 'places' ? (
-                  <View className="flex-row flex-wrap px-2.5 pt-1">
-                    {places.map((p) => (
-                      <View key={p.id} className="w-1/2 p-1">
-                        <PlaceTile place={p} />
-                      </View>
-                    ))}
-                  </View>
+                  <PlacesByCountry places={places} />
                 ) : (
                   <PlaceGrid data={sources} />
                 )}
@@ -392,4 +388,71 @@ function buildCoverUrl(photoName: string | null): string | null {
   const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
   if (!base) return null;
   return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=1500`;
+}
+
+// Places tab body. Single-country trips stay on the existing flat 2-col grid
+// (no headers). Multi-country trips get a header per group. The "one country
+// + an unknown bucket" case shows the country flat and a single "Other"
+// header above the unknown bucket — so single-country UX is never disturbed
+// by a stray unenriched row.
+function PlacesByCountry({ places }: { places: PlaceTileData[] }) {
+  const groups = groupPlacesByCountry(places);
+
+  if (groups.length === 0) {
+    return null;
+  }
+
+  if (groups.length === 1) {
+    return (
+      <View className="flex-row flex-wrap px-2.5 pt-1">
+        {groups[0]!.places.map((p) => (
+          <View key={p.id} className="w-1/2 p-1">
+            <PlaceTile place={p} />
+          </View>
+        ))}
+      </View>
+    );
+  }
+
+  const hideHeaderOnLeader = groups.length === 2 && groups[1]!.code === null;
+
+  return (
+    <View>
+      {groups.map((group, idx) => {
+        const isLeaderInTwoGroupCase = idx === 0 && hideHeaderOnLeader;
+        const label = group.code === null ? 'Other' : displayCountry(group.code) ?? group.code;
+        return (
+          <View key={group.code ?? '__unknown'}>
+            {!isLeaderInTwoGroupCase && <CountrySectionHeader label={label!} />}
+            <View className="flex-row flex-wrap px-2.5 pt-1">
+              {group.places.map((p) => (
+                <View key={p.id} className="w-1/2 p-1">
+                  <PlaceTile place={p} />
+                </View>
+              ))}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function CountrySectionHeader({ label }: { label: string }) {
+  return (
+    <View className="px-4 pt-5 pb-2">
+      <Text
+        style={{
+          fontSize: 12,
+          fontWeight: '600',
+          letterSpacing: 0.6,
+          color: '#64748b',
+          textTransform: 'uppercase',
+        }}
+        accessibilityRole="header"
+      >
+        {label}
+      </Text>
+    </View>
+  );
 }

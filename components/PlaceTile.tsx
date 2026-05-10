@@ -11,6 +11,7 @@ export type PlaceTileData = {
   id: string;
   name: string;
   city: string | null;
+  country_code: string | null;
   category: 'place' | 'food' | 'activity' | null;
   photo_name: string | null;
   rating: number | null;
