@@ -4,10 +4,16 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
-import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
+import {
+  getTrip,
+  useLiveQuery,
+  PROCESSING_SOURCES_WHERE,
+  type Trip,
+} from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
+import { ProcessingBanner } from '@/components/ProcessingBanner';
 import { groupPlacesByCountry } from '@/components/groupPlacesByCountry';
 import { displayCountry } from '@/components/CountryDisplay';
 import { Icon } from '@/components/Icon';
@@ -38,6 +44,13 @@ const TRIP_PLACES_SQL = `SELECT id, name, city, country_code, category, photo_na
                           WHERE trip_id = ?
                        ORDER BY enriched_at DESC NULLS LAST, created_at DESC`;
 
+// Global source-level in-flight count — same semantics as the Pocket banner.
+// Not filtered by trip: OCR/extraction run regardless of trip assignment, and
+// keeping both screens on the same signal avoids divergent UX.
+const PROCESSING_COUNT_SQL = `SELECT COUNT(*) AS n
+                                FROM sources
+                               WHERE ${PROCESSING_SOURCES_WHERE}`;
+
 type ViewMode = 'grid' | 'map';
 
 export default function TripDetail() {
@@ -58,6 +71,12 @@ export default function TripDetail() {
     id ? [id] : [],
     ['places'],
   );
+  const processingRows = useLiveQuery<{ n: number }>(
+    PROCESSING_COUNT_SQL,
+    [],
+    ['sources'],
+  );
+  const processingCount = processingRows?.[0]?.n ?? 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +124,7 @@ export default function TripDetail() {
     </View>
   );
 
-  if (trip === 'loading' || sources === null || places === null) {
+  if (trip === 'loading' || sources === null || places === null || processingRows === null) {
     return (
       <View className="flex-1 bg-bg">
         <DetailHeaderOverlay right={headerRight} />
@@ -138,6 +157,8 @@ export default function TripDetail() {
           coverPhotoUrl={coverPhotoUrl}
           placeCount={places.length}
         />
+
+        <ProcessingBanner count={processingCount} />
 
         {empty ? (
           <View className="pt-6 pb-16">

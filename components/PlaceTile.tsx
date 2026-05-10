@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Icon } from './Icon';
 import { TripChip } from './TripChip';
 import { PressableScale } from './PressableScale';
+import { SkeletonBlock } from './Skeleton';
 import { getEnricher } from '@/modules/enrichment';
 import { useThemeColors } from '@/tw/theme';
 
@@ -72,6 +73,10 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
             transition={150}
             accessibilityIgnoresInvertColors
           />
+        ) : place.enrichment_status === 'pending' ? (
+          // Pending enrichment — shimmer reads as "still loading", not
+          // visually identical to the not-found / no-photo fallback below.
+          <SkeletonBlock testID={`place-tile-skeleton-${place.id}`} />
         ) : (
           <View className="h-full w-full items-center justify-center bg-surface">
             <Icon

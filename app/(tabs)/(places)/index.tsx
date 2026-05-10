@@ -6,10 +6,11 @@ import {
 } from 'react-native';
 import { FlatList, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
-import { useLiveQuery } from '@/modules/storage';
+import { useLiveQuery, PROCESSING_SOURCES_WHERE } from '@/modules/storage';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { HeaderCaptureButton } from '@/components/HeaderCaptureButton';
 import { InboxBanner } from '@/components/InboxBanner';
+import { ProcessingBanner } from '@/components/ProcessingBanner';
 import { FilterPills, type FilterOption } from '@/components/FilterPills';
 import { EmptyState } from '@/components/EmptyState';
 import { pickPhotosForImport } from '@/components/pickPhotos';
@@ -39,6 +40,12 @@ const INBOX_COUNT_SQL = `SELECT COUNT(*) AS n
                            FROM sources s
                           WHERE s.trip_id IS NULL`;
 
+// Source-level in-flight count for the ProcessingBanner. Enrichment is
+// surfaced per-tile (PlaceTile shimmer), not aggregated here.
+const PROCESSING_COUNT_SQL = `SELECT COUNT(*) AS n
+                                FROM sources
+                               WHERE ${PROCESSING_SOURCES_WHERE}`;
+
 const TRIPS_SQL = `SELECT t.id, t.name,
                           COUNT(p.id) AS place_count
                      FROM trips t
@@ -63,6 +70,11 @@ export default function Pocket() {
     [],
     ['sources'],
   );
+  const processingRows = useLiveQuery<InboxCount>(
+    PROCESSING_COUNT_SQL,
+    [],
+    ['sources'],
+  );
   const tripRows = useLiveQuery<TripRow>(TRIPS_SQL, [], ['trips', 'places']);
 
   const [filter, setFilter] = useState<string>(ALL_FILTER_ID);
@@ -75,6 +87,7 @@ export default function Pocket() {
   const numColumns = fontScale >= 1.35 ? 1 : 2;
 
   const inboxCount = inboxCountRows?.[0]?.n ?? 0;
+  const processingCount = processingRows?.[0]?.n ?? 0;
 
   const filterOptions = useMemo<FilterOption[]>(() => {
     const opts: FilterOption[] = [{ id: ALL_FILTER_ID, label: 'All' }];
@@ -124,9 +137,16 @@ export default function Pocket() {
     }
   };
 
-  if (filteredPlaces === null || inboxCountRows === null) return null;
+  if (filteredPlaces === null || inboxCountRows === null || processingRows === null) {
+    return null;
+  }
 
-  if (filteredPlaces.length === 0 && inboxCount === 0 && filter === ALL_FILTER_ID) {
+  if (
+    filteredPlaces.length === 0 &&
+    inboxCount === 0 &&
+    processingCount === 0 &&
+    filter === ALL_FILTER_ID
+  ) {
     return (
       <>
         <Stack.Screen options={{ headerRight }} />
@@ -169,8 +189,9 @@ export default function Pocket() {
         ItemSeparatorComponent={GridGap}
         ListHeaderComponent={
           <View>
+            <ProcessingBanner count={processingCount} />
             <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
-            {/* Banner only on the Untriaged filter — keeps the All
+            {/* InboxBanner only on the Untriaged filter — keeps the All
                 feed visually quiet for users who already have a queue
                 they're ignoring. */}
             {filter === UNTRIAGED_FILTER_ID ? (

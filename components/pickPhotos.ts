@@ -1,4 +1,3 @@
-import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import {
@@ -15,7 +14,6 @@ export type PickPhotosOptions = {
 
 type Outcome = {
   imported: number;
-  skipped: number;
   failed: number;
 };
 
@@ -45,7 +43,7 @@ async function runImports(
   const now = new Date().toISOString();
   const fs = createImportFs();
 
-  const outcome: Outcome = { imported: 0, skipped: 0, failed: 0 };
+  const outcome: Outcome = { imported: 0, failed: 0 };
   const queue = [...assets];
   const next = async () => {
     while (queue.length > 0) {
@@ -63,7 +61,6 @@ async function runImports(
           fs,
         });
         if (r.status === 'imported') outcome.imported += 1;
-        else outcome.skipped += 1;
       } catch (err) {
         console.warn('[capture] import failed', err);
         outcome.failed += 1;
@@ -83,11 +80,4 @@ async function runImports(
           : Haptics.NotificationFeedbackType.Warning;
     Haptics.notificationAsync(haptic).catch(() => {});
   }
-
-  const parts: string[] = [];
-  if (outcome.imported > 0) parts.push(`Imported ${outcome.imported}`);
-  if (outcome.skipped > 0)
-    parts.push(`skipped ${outcome.skipped} duplicate${outcome.skipped === 1 ? '' : 's'}`);
-  if (outcome.failed > 0) parts.push(`${outcome.failed} failed`);
-  Alert.alert(parts.join(' · ') || 'Nothing to import');
 }

@@ -26,11 +26,14 @@ import { Stack, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   deleteSource,
+  isSourceProcessing,
   listInboxSources,
   useLiveQuery,
+  type ProcessingStatus,
   type Source,
 } from '@/modules/storage';
 import { Icon } from '@/components/Icon';
+import { SkeletonRow } from '@/components/Skeleton';
 import { TripPicker } from '@/components/TripPicker';
 import { useDatabase } from '@/components/useDatabase';
 import { formatCapturedAt } from '@/lib/relativeTime';
@@ -52,6 +55,21 @@ const EXTRACTED_SQL = `SELECT ps.source_id, p.id AS place_id, p.name, p.city, p.
                          FROM place_sources ps
                          JOIN places p ON p.id = ps.place_id
                      ORDER BY ps.extracted_at ASC`;
+
+// Status for every untriaged source — the FlatList window can mount cards
+// adjacent to the visible one, so we need per-id lookup, not just current.
+const INBOX_STATUS_SQL =
+  `SELECT id, ocr_status, extraction_status FROM sources WHERE trip_id IS NULL`;
+type SourceStatusRow = {
+  id: string;
+  ocr_status: ProcessingStatus;
+  extraction_status: ProcessingStatus;
+};
+// Tri-state. 'loading' (status query unresolved or row not yet in the result
+// set) renders identically to 'processing' so the user never flashes
+// COULDN'T READ on cold mount — the source was just imported, so "still
+// working" is the safer default.
+type CardStatus = 'loading' | 'processing' | 'settled';
 
 const CATEGORY_ICON: Record<NonNullable<ExtractedPlace['category']> | 'null', string> = {
   food: 'fork.knife',
@@ -87,6 +105,34 @@ export default function Triage() {
     'place_sources',
     'places',
   ]);
+
+  // OCR/extraction status for every untriaged source. Cheap (< ~50 rows in
+  // practice) and avoids a per-card query that'd race with FlatList paging.
+  const statusRows = useLiveQuery<SourceStatusRow>(
+    INBOX_STATUS_SQL,
+    [],
+    ['sources'],
+  );
+
+  const cardStatusById = useMemo(() => {
+    const out = new Map<string, CardStatus>();
+    if (statusRows === null) return out; // 'loading' resolved at lookup time
+    for (const r of statusRows) {
+      out.set(r.id, isSourceProcessing(r) ? 'processing' : 'settled');
+    }
+    return out;
+  }, [statusRows]);
+
+  const getCardStatus = useCallback(
+    (sourceId: string): CardStatus => {
+      // Status query unresolved, OR resolved but no row for this id yet
+      // (race between insert and the next sweep) → 'loading'. Renders
+      // identically to 'processing'.
+      if (statusRows === null) return 'loading';
+      return cardStatusById.get(sourceId) ?? 'loading';
+    },
+    [statusRows, cardStatusById],
+  );
 
   const placesBySource = useMemo(() => {
     const out: Record<string, ExtractedPlace[]> = {};
@@ -260,6 +306,7 @@ export default function Triage() {
               width={width}
               source={item}
               places={placesBySource[item.id] ?? []}
+              status={getCardStatus(item.id)}
               isSelected={(placeId) => isSelected(item.id, placeId)}
               onToggleOne={(placeId) => toggleOne(item.id, placeId)}
               bottomInset={insets.bottom + TRAY_HEIGHT + 16}
@@ -387,6 +434,7 @@ function TriageCard({
   width,
   source,
   places,
+  status,
   isSelected,
   onToggleOne,
   bottomInset,
@@ -398,6 +446,7 @@ function TriageCard({
   width: number;
   source: Source;
   places: ExtractedPlace[];
+  status: CardStatus;
   isSelected: (placeId: string) => boolean;
   onToggleOne: (placeId: string) => void;
   bottomInset: number;
@@ -500,60 +549,84 @@ function TriageCard({
           // Keyboard isn't likely here, but keep this safe.
           keyboardShouldPersistTaps="handled"
         >
-          <View className="px-4 pt-1 pb-2">
-            {total > 0 ? (
-              <Text
-                className="text-info-text"
-                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
-              >
-                ✦ {total} {total === 1 ? 'PLACE FOUND' : 'PLACES FOUND'}
-              </Text>
-            ) : (
-              <Text
-                className="text-text-muted"
-                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
-              >
-                COULDN'T READ
-              </Text>
-            )}
-            <Text
-              className="text-text mt-1"
-              style={{ fontSize: 16, fontWeight: '700', letterSpacing: -0.2 }}
-              numberOfLines={1}
-            >
-              {formatCapturedAt(source.capturedAt)}
-            </Text>
-            {total === 0 ? (
-              <Text className="text-text-muted mt-1" style={{ fontSize: 13 }}>
-                Save it anyway and label it later.
-              </Text>
-            ) : null}
-          </View>
+          {(() => {
+            // 'loading' and 'processing' render identically — the distinction
+            // exists only so we know null-result is a safer default than
+            // 'settled' (avoids COULDN'T READ flash on cold mount).
+            const inFlight = status === 'loading' || status === 'processing';
+            return (
+              <>
+                <View className="px-4 pt-1 pb-2">
+                  {inFlight ? (
+                    <Text
+                      className="text-info-text"
+                      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
+                    >
+                      PROCESSING…
+                    </Text>
+                  ) : total > 0 ? (
+                    <Text
+                      className="text-info-text"
+                      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
+                    >
+                      ✦ {total} {total === 1 ? 'PLACE FOUND' : 'PLACES FOUND'}
+                    </Text>
+                  ) : (
+                    <Text
+                      className="text-text-muted"
+                      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
+                    >
+                      COULDN'T READ
+                    </Text>
+                  )}
+                  <Text
+                    className="text-text mt-1"
+                    style={{ fontSize: 16, fontWeight: '700', letterSpacing: -0.2 }}
+                    numberOfLines={1}
+                  >
+                    {formatCapturedAt(source.capturedAt)}
+                  </Text>
+                  {!inFlight && total === 0 ? (
+                    <Text className="text-text-muted mt-1" style={{ fontSize: 13 }}>
+                      Save it anyway and label it later.
+                    </Text>
+                  ) : null}
+                </View>
 
-          {total > 0 ? (
-            <View className="px-4 pt-3 pb-1">
-              <Text
-                className="text-text-muted"
-                style={{
-                  fontSize: 11,
-                  fontWeight: '600',
-                  letterSpacing: 0.5,
-                  textTransform: 'uppercase',
-                }}
-              >
-                Add to trip
-              </Text>
-            </View>
-          ) : null}
+                {!inFlight && total > 0 ? (
+                  <View className="px-4 pt-3 pb-1">
+                    <Text
+                      className="text-text-muted"
+                      style={{
+                        fontSize: 11,
+                        fontWeight: '600',
+                        letterSpacing: 0.5,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Add to trip
+                    </Text>
+                  </View>
+                ) : null}
 
-          {places.map((p) => (
-            <PlaceSelectRow
-              key={p.place_id}
-              place={p}
-              checked={isSelected(p.place_id)}
-              onToggle={() => onToggleOne(p.place_id)}
-            />
-          ))}
+                {inFlight ? (
+                  <>
+                    <SkeletonRow />
+                    <SkeletonRow />
+                  </>
+                ) : (
+                  places.map((p) => (
+                    <PlaceSelectRow
+                      key={p.place_id}
+                      place={p}
+                      checked={isSelected(p.place_id)}
+                      onToggle={() => onToggleOne(p.place_id)}
+                    />
+                  ))
+                )}
+              </>
+            );
+          })()}
         </RNScrollView>
         </View>
       </Animated.View>

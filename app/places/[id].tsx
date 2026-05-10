@@ -17,6 +17,8 @@ import { Icon } from '@/components/Icon';
 import { TripChip } from '@/components/TripChip';
 import { useDatabase } from '@/components/useDatabase';
 import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
+import { SkeletonBlock, SkeletonLines, SkeletonLine } from '@/components/Skeleton';
+import { StatusPill } from '@/components/StatusPill';
 import { openInMaps, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
 import { DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
@@ -105,6 +107,7 @@ export default function PlaceDetail() {
   const place = state.place;
   const inTrip = place.tripId !== null;
   const photoUrl = buildPhotoUrl(place.photoName);
+  const isEnriching = place.enrichmentStatus === 'pending';
 
   const onAssignTrip = (mode: TripPickerMode) => {
     setPickerMode(mode);
@@ -201,6 +204,8 @@ export default function PlaceDetail() {
               transition={150}
               accessibilityIgnoresInvertColors
             />
+          ) : isEnriching ? (
+            <SkeletonBlock />
           ) : (
             <View
               style={{
@@ -287,6 +292,12 @@ export default function PlaceDetail() {
           </View>
         </View>
 
+        {isEnriching ? (
+          <View style={{ paddingHorizontal: 14, paddingTop: 14 }}>
+            <StatusPill label="Looking up details…" />
+          </View>
+        ) : null}
+
         {/* Side-by-side primary actions. */}
         <View
           style={{
@@ -345,21 +356,36 @@ export default function PlaceDetail() {
           <View className="px-4 pb-4 pt-4">
             <Text className="text-[15px] leading-5 text-text">{place.description}</Text>
           </View>
+        ) : isEnriching ? (
+          <View className="px-4 pb-4 pt-4">
+            <SkeletonLines count={3} />
+          </View>
         ) : null}
 
-        {/* Metadata block. */}
+        {/* Metadata block. While enrichment is pending, the address +
+            status row are not yet populated; render skeleton rows so the
+            card has shape and the layout doesn't jump when data arrives. */}
         <View
           className="mx-4 mt-4 overflow-hidden rounded-2xl bg-surface border-hairline"
           style={{ borderWidth: 1 }}
         >
-          {place.formattedAddress ? (
-            <MetaRow icon="mappin" text={place.formattedAddress} />
-          ) : null}
-          <MetaRow
-            icon="info.circle"
-            text={enrichmentLabel(place.enrichmentStatus)}
-            muted
-          />
+          {isEnriching ? (
+            <>
+              <MetaSkeletonRow />
+              <MetaSkeletonRow />
+            </>
+          ) : (
+            <>
+              {place.formattedAddress ? (
+                <MetaRow icon="mappin" text={place.formattedAddress} />
+              ) : null}
+              <MetaRow
+                icon="info.circle"
+                text={enrichmentLabel(place.enrichmentStatus)}
+                muted
+              />
+            </>
+          )}
         </View>
 
         {/* Sources strip. */}
@@ -572,6 +598,24 @@ function MetaRow({
       >
         {text}
       </Text>
+    </View>
+  );
+}
+
+// Single row inside the metadata card while enrichment is pending. Matches
+// MetaRow's geometry (icon-sized leading block + text line) so the card
+// reads as "loading" without shifting layout when real rows replace it.
+function MetaSkeletonRow() {
+  const colors = useThemeColors();
+  return (
+    <View
+      className="flex-row items-center gap-3 border-hairline px-4 py-3"
+      style={{ borderBottomWidth: 1, borderColor: colors.hairline }}
+    >
+      <SkeletonLine widthPercent={5} height={16} style={{ borderRadius: 8 }} />
+      <View style={{ flex: 1 }}>
+        <SkeletonLine widthPercent={70} height={12} />
+      </View>
     </View>
   );
 }

@@ -47,6 +47,11 @@ export {
 } from './place_sources';
 export { provideDatabase, useLiveQuery, notifyChange, getDatabaseHandle } from './live-query';
 export {
+  isSourceProcessing,
+  isPlaceProcessing,
+  PROCESSING_SOURCES_WHERE,
+} from './processing-status';
+export {
   createTrip,
   listTrips,
   getTrip,
