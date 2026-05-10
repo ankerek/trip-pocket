@@ -288,19 +288,17 @@ describe('createProcessor', () => {
       expect((await getStatus(db, 'f1')).status).toBe('pending');
     });
 
-    it('does not touch soft-deleted rows', async () => {
+    it('is a no-op for rows that have been hard-deleted', async () => {
       const db = await freshDb();
       await seedSource(db, 'f1', { status: 'failed' });
-      await db.runAsync(`UPDATE sources SET deleted_at = ? WHERE id = ?`, '2026-05-07T11:00:00Z', 'f1');
+      await db.runAsync(`DELETE FROM sources WHERE id = ?`, 'f1');
       const p = createProcessor({ db, ocr: jest.fn() });
 
       await p.runStartupRecovery();
 
-      // Status remains 'failed' because the recovery only touches non-deleted rows.
-      const row = await db.getFirstAsync<{ ocr_status: string }>(
-        `SELECT ocr_status FROM sources WHERE id = ?`, 'f1',
-      );
-      expect(row?.ocr_status).toBe('failed');
+      // Row is gone; recovery has nothing to flip.
+      const row = await db.getFirstAsync(`SELECT id FROM sources WHERE id = ?`, 'f1');
+      expect(row).toBeNull();
     });
   });
 

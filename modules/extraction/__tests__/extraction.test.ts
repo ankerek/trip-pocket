@@ -668,11 +668,11 @@ describe('createExtractor', () => {
     });
   });
 
-  describe('soft-delete handling', () => {
-    it('skips sources that were soft-deleted between enqueue and run', async () => {
+  describe('hard-delete handling', () => {
+    it('skips sources that were deleted between enqueue and run', async () => {
       const db = await freshDb();
       await seedSource(db, 's1');
-      await db.runAsync(`UPDATE sources SET deleted_at = ? WHERE id = 's1'`, NOW);
+      await db.runAsync(`DELETE FROM sources WHERE id = 's1'`);
 
       const extract = okExtract([{ name: 'X', city: 'Y', category: 'place' }]);
       const e = createExtractor({

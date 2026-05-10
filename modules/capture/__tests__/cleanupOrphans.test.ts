@@ -24,7 +24,7 @@ async function seedRow(db: Database, id: string, filePath: string) {
 }
 
 describe('cleanupOrphanSources', () => {
-  it('soft-deletes rows whose file is missing and leaves live rows alone', async () => {
+  it('hard-deletes rows whose file is missing and leaves live rows alone', async () => {
     const db = await freshDb();
     await seedRow(db, 'live-1', '/storage/live-1.jpg');
     await seedRow(db, 'orphan-1', '/storage/orphan-1.jpg');
@@ -54,25 +54,24 @@ describe('cleanupOrphanSources', () => {
     expect(remaining).toHaveLength(2);
   });
 
-  it('ignores already soft-deleted rows', async () => {
+  it('is idempotent on the second pass (hard-deleted rows are gone)', async () => {
     const db = await freshDb();
     await seedRow(db, 'gone', '/storage/gone.jpg');
-    await db.runAsync(
-      `UPDATE sources SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-      '2026-05-07T00:00:00Z',
-      '2026-05-07T00:00:00Z',
-      'gone',
-    );
 
+    const first = await cleanupOrphanSources(db, {
+      fileExists: () => false,
+    });
+    expect(first).toBe(1);
+
+    // Second sweep finds nothing because the row was hard-deleted.
     const calls: string[] = [];
-    const removed = await cleanupOrphanSources(db, {
+    const second = await cleanupOrphanSources(db, {
       fileExists: (uri) => {
         calls.push(uri);
         return false;
       },
     });
-
-    expect(removed).toBe(0);
+    expect(second).toBe(0);
     expect(calls).toEqual([]);
   });
 
