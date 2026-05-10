@@ -42,114 +42,43 @@ Not in scope:
 
 ## §1 — Schema changes
 
-Migration `0002_drop_soft_delete.ts`. Runs inside the per-migration transaction that `runMigrations` wraps around `m.up()` (`modules/storage/db.ts:30`). Order matters: SQLite cannot drop a column that any live trigger or index references, and `PRAGMA foreign_keys = ON` is set on every connection (`db.ts:16`), so junctions and tags pointing at soft-deleted parents must be cleaned up before parents are deleted.
+**No migration.** Trip Pocket has no users; the existing `0001_init.ts` is the same kind of "collapse the history" rewrite the schema already underwent for the places-first restructure (see the file's own header comment). We edit `0001_init.ts` in place. Anyone with a pre-existing dev DB (i.e. simulator-installed app) wipes it: delete the app from the simulator, or remove `trip-pocket.db` from the app sandbox — same instruction the file already documents.
 
-### §1.1 — Step 0: FK-safe cleanup pass
+### §1.1 — Edits to `modules/storage/migrations/0001_init.ts`
 
-Existing `softDeleteSource` (`sources.ts:246`) and `softDeletePlace` (`places.ts:218`) only flip `deleted_at` on the parent — they do not touch `place_sources` junctions or `tags` rows. So the DB can already contain live junction or tag rows pointing at a soft-deleted parent. With `foreign_keys = ON` and the schema's default `NO ACTION` FKs (`migrations/0001_init.ts:70,107,141,142,157`), deleting those parents would fail. Clean up leaf-first, including any rows whose parent is soft-deleted:
+1. **Drop the `deleted_at` column** from every table that declares it: `trips`, `sources`, `places`, `place_sources`, `tags`. Five table-creation statements lose one line each.
+2. **Drop the partial-by-`deleted_at` predicates** from every index. The eight predicate-bearing indexes today become:
 
-```sql
--- Tags: explicit + parent-orphans.
-DELETE FROM tags
- WHERE deleted_at IS NOT NULL
-    OR source_id IN (SELECT id FROM sources WHERE deleted_at IS NOT NULL);
+   ```sql
+   CREATE INDEX        IF NOT EXISTS idx_sources_trip            ON sources(trip_id);
+   CREATE INDEX        IF NOT EXISTS idx_sources_captured_at     ON sources(captured_at DESC);
+   CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_hash            ON sources(content_hash);
+   CREATE INDEX        IF NOT EXISTS idx_places_normalized_key   ON places(normalized_key, owner_id);
+   CREATE UNIQUE INDEX IF NOT EXISTS idx_places_external_place_id
+          ON places(external_place_id, owner_id) WHERE external_place_id IS NOT NULL;
+   CREATE INDEX        IF NOT EXISTS idx_places_trip             ON places(trip_id);
+   CREATE INDEX        IF NOT EXISTS idx_places_enrichment_pending
+          ON places(enrichment_status) WHERE enrichment_status = 'pending';
+   CREATE INDEX        IF NOT EXISTS idx_place_sources_source    ON place_sources(source_id);
+   ```
 
--- Junctions: explicit + parent-orphans on either side.
-DELETE FROM place_sources
- WHERE deleted_at IS NOT NULL
-    OR place_id  IN (SELECT id FROM places  WHERE deleted_at IS NOT NULL)
-    OR source_id IN (SELECT id FROM sources WHERE deleted_at IS NOT NULL);
+   The `idx_places_external_place_id` index keeps its `WHERE external_place_id IS NOT NULL` predicate (still needed — not all places are enriched). The partial-by-`deleted_at` half is gone, which forces the enrichment-merge resequence in §3.6.
+3. **Rebuild the nine FTS triggers** without any `deleted_at` mentions. The bodies are otherwise unchanged. Concretely:
 
--- Parents: now safe to drop.
-DELETE FROM places  WHERE deleted_at IS NOT NULL;
-DELETE FROM sources WHERE deleted_at IS NOT NULL;
-DELETE FROM trips   WHERE deleted_at IS NOT NULL;
-```
+   - `places_fts_ai` — drop the `WHEN NEW.deleted_at IS NULL` clause; body unchanged.
+   - `places_fts_au` — `AFTER UPDATE OF name, city, description ON places` (no `deleted_at`); drop the outer `WHERE NEW.deleted_at IS NULL`; drop both inner `WHERE deleted_at IS NULL` filters in the GROUP_CONCAT sub-queries.
+   - `places_fts_ad` — unchanged.
+   - `place_sources_fts_ai` — drop the `WHEN`; drop the inner `WHERE p.deleted_at IS NULL` and both sub-query `WHERE deleted_at IS NULL` filters.
+   - `place_sources_fts_au` — `AFTER UPDATE OF raw_text, extracted_address ON place_sources` (no `deleted_at`); drop all three `deleted_at` filters in the body.
+   - `place_sources_fts_ad` — drop the inner `WHERE p.deleted_at IS NULL` and both sub-query filters.
+   - `sources_fts_ai` — drop the `WHEN`; relax the tag sub-query from `WHERE source_id = NEW.id AND deleted_at IS NULL` to `WHERE source_id = NEW.id`.
+   - `sources_fts_au` — `AFTER UPDATE OF ocr_text, trip_id ON sources` (no `deleted_at`); drop the outer guard; drop the tag-subquery filter.
+   - `sources_fts_ad` — unchanged.
+4. **Header comment update** — refresh the file's leading comment to note that the soft-delete column is gone and that delete is hard, mirroring how the prior places-first restructure annotated itself in the same comment block.
 
-**No file unlinking inside the migration.** `runMigrations` wraps `m.up()` in a DB transaction; if a later step fails the DB rolls back but a deleted file cannot be un-deleted. The migration leaves orphan JPEGs alone — the `cleanupOrphans` worker (already wired into the launch path; see `modules/capture/__tests__/cleanupOrphans.test.ts`) reconciles disk against the live `sources.file_path` set on next launch and removes them then. Disk-space recovery is delayed by one app launch, which is acceptable.
+### §1.2 — Developer ergonomics
 
-### §1.2 — Step 1: drop FTS triggers
-
-Every existing FTS trigger references `deleted_at`, either in a `WHEN NEW.deleted_at IS NULL` clause, the `AFTER UPDATE OF … deleted_at` column list, or an inner `WHERE deleted_at IS NULL` subquery. SQLite refuses `ALTER TABLE … DROP COLUMN` while any trigger references the column, so all nine triggers go first:
-
-```sql
-DROP TRIGGER IF EXISTS places_fts_ai;
-DROP TRIGGER IF EXISTS places_fts_au;
-DROP TRIGGER IF EXISTS places_fts_ad;
-DROP TRIGGER IF EXISTS place_sources_fts_ai;
-DROP TRIGGER IF EXISTS place_sources_fts_au;
-DROP TRIGGER IF EXISTS place_sources_fts_ad;
-DROP TRIGGER IF EXISTS sources_fts_ai;
-DROP TRIGGER IF EXISTS sources_fts_au;
-DROP TRIGGER IF EXISTS sources_fts_ad;
-```
-
-### §1.3 — Step 2: drop indexes whose `WHERE` references `deleted_at`
-
-Real names from `0001_init.ts`:
-
-```sql
-DROP INDEX IF EXISTS idx_sources_trip;
-DROP INDEX IF EXISTS idx_sources_captured_at;
-DROP INDEX IF EXISTS idx_sources_hash;
-DROP INDEX IF EXISTS idx_places_normalized_key;
-DROP INDEX IF EXISTS idx_places_external_place_id;
-DROP INDEX IF EXISTS idx_places_trip;
-DROP INDEX IF EXISTS idx_places_enrichment_pending;
-DROP INDEX IF EXISTS idx_place_sources_source;
-```
-
-### §1.4 — Step 3: drop the `deleted_at` column
-
-The column lives on five tables, including `tags`. `tags.deleted_at` is unused at runtime (no live writer in v0.2), and the `sources_fts_*` triggers' tag sub-queries currently filter by it; dropping it now keeps the rebuilt triggers free of `deleted_at` mentions.
-
-```sql
-ALTER TABLE trips         DROP COLUMN deleted_at;
-ALTER TABLE sources       DROP COLUMN deleted_at;
-ALTER TABLE places        DROP COLUMN deleted_at;
-ALTER TABLE place_sources DROP COLUMN deleted_at;
-ALTER TABLE tags          DROP COLUMN deleted_at;
-```
-
-SQLite ≥ 3.35 supports `ALTER TABLE … DROP COLUMN`; Expo SQLite ships current.
-
-### §1.5 — Step 4: recreate indexes without the predicate
-
-```sql
-CREATE INDEX        IF NOT EXISTS idx_sources_trip            ON sources(trip_id);
-CREATE INDEX        IF NOT EXISTS idx_sources_captured_at     ON sources(captured_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_hash            ON sources(content_hash);
-CREATE INDEX        IF NOT EXISTS idx_places_normalized_key   ON places(normalized_key, owner_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_places_external_place_id
-       ON places(external_place_id, owner_id) WHERE external_place_id IS NOT NULL;
-CREATE INDEX        IF NOT EXISTS idx_places_trip             ON places(trip_id);
-CREATE INDEX        IF NOT EXISTS idx_places_enrichment_pending
-       ON places(enrichment_status) WHERE enrichment_status = 'pending';
-CREATE INDEX        IF NOT EXISTS idx_place_sources_source    ON place_sources(source_id);
-```
-
-The unique index on `(external_place_id, owner_id)` keeps its `WHERE external_place_id IS NOT NULL` predicate (still needed; not all places are enriched). The partial-by-`deleted_at` predicate that today lets soft-delete sidestep collision is gone — see §3.6 for the enrichment-merge sequence change that this forces.
-
-### §1.6 — Step 5: recreate FTS triggers
-
-Same logic as today minus every `WHERE NEW.deleted_at IS NULL` outer guard, every inner `WHERE deleted_at IS NULL` sub-query filter, and `deleted_at` from every `AFTER UPDATE OF (…)` column list. Concretely:
-
-- `places_fts_ai` — drop the `WHEN NEW.deleted_at IS NULL` clause; body unchanged.
-- `places_fts_au` — `AFTER UPDATE OF name, city, description ON places` (no `deleted_at`); drop the outer `WHERE NEW.deleted_at IS NULL`; drop both inner `WHERE deleted_at IS NULL` filters in the GROUP_CONCAT subqueries.
-- `places_fts_ad` — unchanged.
-- `place_sources_fts_ai` — drop the `WHEN`; drop the inner `WHERE p.deleted_at IS NULL` and both subquery `WHERE deleted_at IS NULL`.
-- `place_sources_fts_au` — `AFTER UPDATE OF raw_text, extracted_address ON place_sources` (no `deleted_at`); drop all three `deleted_at` filters in the body.
-- `place_sources_fts_ad` — drop the inner `WHERE p.deleted_at IS NULL` and both subquery filters.
-- `sources_fts_ai` — drop the `WHEN`; drop the tag-subquery `WHERE source_id = NEW.id AND deleted_at IS NULL` to just `WHERE source_id = NEW.id`.
-- `sources_fts_au` — `AFTER UPDATE OF ocr_text, trip_id ON sources` (no `deleted_at`); drop the outer guard; drop the tag-subquery filter.
-- `sources_fts_ad` — unchanged.
-
-### §1.7 — Migration tests
-
-`modules/storage/__tests__/db.test.ts` adds:
-
-1. **Standard path** — seed a pre-migration schema (manually re-create the v1 DDL inside the test, or pin the previous migration step). Insert: a live trip; a live source with one live tag; a live place with two live junctions; a soft-deleted trip with a live source still pointing at it; a soft-deleted place with a live junction; a soft-deleted source with a live tag; a soft-deleted junction. Run the migration. Assert: live rows preserved, all soft-deleted rows gone, all live tags / junctions whose parent was soft-deleted also gone (FK regression check), `deleted_at` not present in `pragma_table_info` for any of the five tables, indexes recreated with no `deleted_at` in the SQL definition (`SELECT sql FROM sqlite_master WHERE type='index'`), FTS5 row count matches the live places count.
-2. **Replay via the runner** — call `runMigrations` twice in a row. Assert: second call is a no-op (the version-skip in `db.ts:30-43` handles it), no SQL errors. The migration body itself is **not** designed to be replay-safe inside a single call — `ALTER TABLE … DROP COLUMN` on an already-dropped column would error. The runner's version-tracking is the contract that prevents that path.
+Add a section to `docs/ARCHITECTURE.md` (or the README, whichever is closer to dev-onboarding instructions today) that says: "If you had the app running before this change, delete it from the simulator — the schema changed and the runner's version-skip means the new shape will not apply over your old DB." Same one-line note added to the `0001_init.ts` header comment so the next person who reads the schema sees the warning at the source.
 
 ## §2 — Application code: query cleanup
 
@@ -529,12 +458,14 @@ Enrichment merge cases (§3.6):
 - Existing-wins merge: `E.created_at < I.created_at` so `E` is winner. Assert: `I` is gone, `E` keeps its junctions plus any from `I` it didn't already have, `E.external_place_id` unchanged.
 - Merge with junction conflict: both `E` and `I` already attach the same source `S`. Run merge. Assert: only one (winner-keyed) junction for `S` remains, no PRIMARY KEY violation, `place_sources` count for the winner equals `|junctions(E) ∪ junctions(I)|`.
 
-### §6.2 — Migration tests
+### §6.2 — Schema-shape tests
 
-Covered in §1.7 above (standard path + idempotency). Two additional cases live alongside the §6.1 storage unit tests because they exercise post-migration runtime behaviour, not the migration step itself:
+There is no migration to test (§1). Existing tests in `modules/storage/__tests__/db.test.ts` already exercise `0001_init.ts`; they are extended with:
 
-- After migration, INSERT a place + a junction + a source. Assert: `places_fts` and `sources_fts` get populated by the new triggers (no `deleted_at` predicate dropping rows).
-- After migration, UPDATE `places.name`. Assert: the `places_fts_au` trigger fires and the FTS row reflects the new name (regression check that the trigger's column-list edit didn't accidentally drop `name`).
+- `pragma_table_info` assertions: `deleted_at` is not a column of `trips`, `sources`, `places`, `place_sources`, or `tags`.
+- `SELECT sql FROM sqlite_master WHERE type='index'` for each of the eight predicate-bearing indexes asserts the SQL no longer contains `deleted_at`.
+- INSERT a place + junction + source after init. Assert: `places_fts` and `sources_fts` are populated by the rebuilt triggers (no `deleted_at` filter dropping the row).
+- UPDATE `places.name` after init. Assert: the `places_fts_au` trigger fires and the FTS row reflects the new name (regression check that the trigger's `UPDATE OF` column list edit didn't accidentally drop `name`).
 
 ### §6.3 — FTS sanity
 
@@ -566,8 +497,7 @@ None. All forks were resolved during the brainstorm and the codex pre-implementa
 - Source delete prunes orphan places, place delete prunes orphan sources: resolved (symmetric).
 - Triage Delete affordance lives as the third tertiary row in the CTA tray: resolved.
 - `assignSourceTrip` does NOT trigger the source-prune rule: resolved (§3.5).
-- Migration order — drop FTS triggers and predicate-bearing indexes before the column drop: resolved (§1.2, §1.3, §1.4).
-- FK safety during the cleanup pass — clean junctions and tags whose parent is soft-deleted before deleting the parent: resolved (§1.1).
-- Tags table — included in §3.2 / §3.3 cascades and the migration: resolved.
+- Migration vs. in-place schema rewrite — no users, so we edit `0001_init.ts` and ask devs to wipe their dev DB (matches existing precedent in the file's own header): resolved (§1).
+- Tags table — included in §3.2 / §3.3 cascades and the schema rewrite: resolved.
 - Enrichment merge collision after `deleted_at` removal — resequence to junctions-move → loser-DELETE → winner-promote: resolved (§3.6).
 - Cascade-mode confirm copy — counts the actual deletion outcome and discloses surviving shared places: resolved (§4.3).
