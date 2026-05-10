@@ -166,12 +166,7 @@ If `outcome.imported === 0 && outcome.skipped === 0 && outcome.failed === 0` (th
 
 ### Triage card — `app/triage.tsx`
 
-Two pieces of data the screen doesn't have today:
-
-- The current source's `ocr_status` and `extraction_status`.
-- Reactivity on transitions of those columns for the currently displayed source.
-
-Approach: extend `listInboxSources` to include these columns in `Source` (one-time read at mount), and add a small live query keyed by the displayed `current.id` that re-reads the two statuses when `sources` changes:
+The screen doesn't currently observe the displayed source's `ocr_status` / `extraction_status`. Add a small live query keyed by `current.id` and subscribed to `['sources']`. One query per card is fine — Triage shows one card at a time and `current.id` only changes on swipe.
 
 ```ts
 const STATUS_SQL = `SELECT ocr_status, extraction_status FROM sources WHERE id = ?`;
@@ -184,8 +179,6 @@ const processing = statusRows?.[0]
   ? isSourceProcessing(statusRows[0])
   : false;
 ```
-
-(One live query that re-binds on `current` switch is fine — Triage shows one card at a time and the user usually settles per source before swiping.)
 
 Render branches in the bottom sheet header:
 
@@ -230,18 +223,21 @@ Once `enrichmentStatus !== 'pending'`:
 
 ## Testing
 
+The existing test infra is `jest-expo` with the in-memory `expo-sqlite` mock and `@testing-library/react-native` (used today only at the `renderHook` level — no full screen-rendering tests yet). The spec sticks to what that infra already supports.
+
 Unit tests:
 
-- `modules/storage/__tests__/processing-status.test.ts` — three tiny tests for `isSourceProcessing` (covers `pending/pending`, `done/pending`, `done/done`, `failed/done`, `done/failed`) and `isPlaceProcessing` (covers all four `enrichment_status` values).
+- `modules/storage/__tests__/processing-status.test.ts` — exhaustive cases for `isSourceProcessing` (covers `pending/pending`, `done/pending`, `pending/done`, `done/done`, `failed/done`, `done/failed`, `failed/pending`) and `isPlaceProcessing` (one case per `enrichment_status` value).
 
-Component tests (React Testing Library + the existing in-memory SQLite setup used by `__tests__/`):
+Live-query integration tests (in the style of `modules/storage/__tests__/live-query.test.ts`, using `renderHook`):
 
-- `components/__tests__/ProcessingBanner.test.tsx` — renders `null` at `count={0}`; renders singular at `count={1}`; renders plural at `count > 1`.
-- `app/__tests__/triage.test.tsx` (extend existing) — a freshly inserted source with `ocr_status='pending'` shows `PROCESSING…` + skeletons; flipping to `ocr_status='done' AND extraction_status='done'` with zero places shows `COULDN'T READ`; with one place shows `1 PLACE FOUND`.
-- `app/__tests__/places-index.test.tsx` (extend existing) — banner appears when a source is inserted with `ocr_status='pending'`; banner disappears once both statuses settle; `EmptyState` is not shown while `processingCount > 0`.
-- `app/__tests__/place-detail.test.tsx` (extend existing) — `enrichment_status='pending'` renders the skeleton hero + skeleton description + status pill; flipping to `enriched` renders the real hero + description + metadata block.
+- `modules/storage/__tests__/processing-status.live.test.ts` — assert that `useLiveQuery` over `PROCESSING_COUNT_SQL` (a) returns `0` on an empty DB, (b) returns `2` after inserting two `ocr_status='pending'` sources, (c) returns `0` after both transition to `ocr_status='done', extraction_status='done'`, (d) ignores sources with `ocr_status='failed'`.
 
-No new integration test for the pipeline itself — the existing `processor`/`extractor`/`enricher` test suites cover status transitions, and these UI tests verify the UI subscribes to them correctly via in-memory SQLite + `notifyChange`.
+Component test for the banner (pure props → markup, no DB needed):
+
+- `components/__tests__/ProcessingBanner.test.tsx` — renders `null` at `count={0}`; renders `Processing 1 screenshot…` at `count=1`; renders `Processing 3 screenshots…` at `count=3`.
+
+Screen-level RTL tests for Triage and Place Detail are **deferred**: rendering an `expo-router` screen end-to-end isn't established in this repo's test setup and the cost of standing it up is larger than this feature warrants. Behavioral coverage comes from the live-query test + manual QA. If the screen-rendering test harness lands later, the cases worth adding are listed in "Future work" below.
 
 ## Out of scope / future work
 
@@ -250,3 +246,4 @@ No new integration test for the pipeline itself — the existing `processor`/`ex
 - Tap-to-expand on the Pocket banner showing a list of in-flight screenshots.
 - Global tab-bar dot or header chip.
 - Surfacing enrichment status outside Place Detail (e.g. a "loading" treatment on Pocket tiles while their enrichment is pending).
+- Screen-level RTL tests (Triage `PROCESSING…` ↔ `COULDN'T READ` ↔ `N PLACES FOUND` branching; Place Detail pending ↔ enriched branching; Pocket banner mount/unmount on live `sources` changes). Worth adding once `expo-router` screens have a render harness in this repo.
