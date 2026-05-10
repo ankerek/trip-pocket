@@ -175,6 +175,7 @@ Three Expo Modules, each ~100–300 lines of Swift. We own them. Community packa
 
 - SQL migrations as numbered files in `modules/storage/migrations/`. Linear, no down-migrations.
 - A migration runner applies anything new on launch and stores the current version in `meta`.
+- **Pre-v1.0 dev DB wipe.** While there are no users, schema changes that would otherwise require a migration are sometimes applied by editing `0001_init.ts` in place rather than carrying old shapes forward (most recently: `deleted_at` removal, 2026-05-10). The runner skips already-applied versions, so the in-place edit only takes effect on a fresh DB. To pick up such a change locally: long-press the simulator app → Remove app → Delete, or remove `trip-pocket.db` from the simulator app sandbox. Drops post-v1.0; once we ship to TestFlight we add migrations like a normal codebase.
 
 ### Paywall + trial (v1.0)
 
