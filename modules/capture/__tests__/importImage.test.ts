@@ -1,6 +1,6 @@
 import { openDatabase, runMigrations, type Database } from '@/modules/storage/db';
 import { migrations } from '@/modules/storage/migrations';
-import { listSources, softDeleteSource } from '@/modules/storage/sources';
+import { listSources, deleteSource } from '@/modules/storage/sources';
 import {
   provideProcessor,
   _resetProcessorForTests,
@@ -97,7 +97,7 @@ describe('importImage', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('allows reimporting after soft-delete (partial unique index excludes deleted rows)', async () => {
+  it('allows reimporting after delete (UNIQUE on content_hash applies only to live rows)', async () => {
     const db = await freshDb();
     const fs = makeFs();
 
@@ -111,7 +111,7 @@ describe('importImage', () => {
       fs,
     });
     if (first.status !== 'imported') throw new Error('expected imported');
-    await softDeleteSource(db, first.sourceId);
+    await deleteSource(db, first.sourceId, { unlinkFile: () => {} });
 
     const second = await importImage(db, {
       sourceUri: '/picker/img1.jpg',
@@ -122,12 +122,14 @@ describe('importImage', () => {
       storageDir: '/sandbox',
       fs,
     });
-    expect(second.status).toBe('imported');
+    if (second.status !== 'imported') throw new Error('expected imported');
 
-    const all = await db.getAllAsync<{ id: string; deleted_at: string | null }>(
-      'SELECT id, deleted_at FROM sources ORDER BY created_at',
+    // Hard delete leaves only the new row.
+    const all = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM sources ORDER BY created_at',
     );
-    expect(all).toHaveLength(2);
+    expect(all).toHaveLength(1);
+    expect(all[0]?.id).toBe(second.sourceId);
   });
 
   it('uses move when transfer=move (share-ingest path)', async () => {

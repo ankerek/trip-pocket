@@ -2,7 +2,7 @@ import {
   openDatabase,
   runMigrations,
   insertSource,
-  softDeleteSource,
+  deleteSource,
   type Database,
 } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
@@ -244,15 +244,16 @@ describe('createProcessor', () => {
       expect(ocr).not.toHaveBeenCalled();
     });
 
-    it('skips rows that were soft-deleted between enqueue and run', async () => {
+    it('skips rows that were deleted before the chain runs', async () => {
       const db = await freshDb();
       await seedSource(db, 's1');
       const ocr: OcrRunner = jest.fn().mockResolvedValue('text');
       const p = createProcessor({ db, ocr });
 
+      // Hard-delete before enqueueing. processOne's SELECT returns null
+      // (row gone), so OCR is skipped without burning a Vision call.
+      await deleteSource(db, 's1', { unlinkFile: () => {} });
       p.enqueueOcr('s1');
-      // Soft delete before the chain reaches it.
-      await softDeleteSource(db, 's1');
       await drain(p);
 
       expect(ocr).not.toHaveBeenCalled();

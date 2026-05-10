@@ -2,7 +2,7 @@ import { Alert } from 'react-native';
 import { Image, Pressable, View } from '@/tw';
 import { Link, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { softDeleteSource } from '@/modules/storage';
+import { deleteSource } from '@/modules/storage';
 import { useDatabase } from './useDatabase';
 import { thumbnailBadge } from './thumbnailBadge';
 import { PinBadge } from './PinBadge';
@@ -48,7 +48,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
             if (process.env.EXPO_OS === 'ios') {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
-            await softDeleteSource(db, id);
+            await deleteSource(db, id);
           },
         },
       ],

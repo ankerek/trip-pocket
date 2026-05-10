@@ -243,15 +243,59 @@ export async function assignSourceTrip(
   notifyChange('trips');
 }
 
-export async function softDeleteSource(db: Database, id: string): Promise<void> {
-  const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE sources SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-    now,
-    now,
-    id,
-  );
+export type DeleteSourceOptions = {
+  unlinkFile?: (path: string) => void;
+};
+
+const defaultUnlink = (path: string): void => {
+  try {
+    new (require('expo-file-system').File)(path).delete();
+  } catch (err) {
+    console.warn('[deleteSource] unlink failed', path, err);
+  }
+};
+
+export async function deleteSource(
+  db: Database,
+  id: string,
+  opts: DeleteSourceOptions = {},
+): Promise<void> {
+  const unlink = opts.unlinkFile ?? defaultUnlink;
+  let filePath: string | null = null;
+
+  await db.withTransactionAsync(async () => {
+    const placeRows = await db.getAllAsync<{ place_id: string }>(
+      `SELECT place_id FROM place_sources WHERE source_id = ?`,
+      id,
+    );
+    const affectedPlaceIds = placeRows.map((r) => r.place_id);
+
+    const fileRow = await db.getFirstAsync<{ file_path: string | null }>(
+      `SELECT file_path FROM sources WHERE id = ?`,
+      id,
+    );
+    filePath = fileRow?.file_path ?? null;
+
+    await db.runAsync(`DELETE FROM tags WHERE source_id = ?`, id);
+    await db.runAsync(`DELETE FROM place_sources WHERE source_id = ?`, id);
+    await db.runAsync(`DELETE FROM sources WHERE id = ?`, id);
+
+    for (const placeId of affectedPlaceIds) {
+      const remaining = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM place_sources WHERE place_id = ?`,
+        placeId,
+      );
+      if ((remaining?.n ?? 0) === 0) {
+        await db.runAsync(`DELETE FROM places WHERE id = ?`, placeId);
+      }
+    }
+  });
+
+  if (filePath) unlink(filePath);
+
   notifyChange('sources');
+  notifyChange('place_sources');
+  notifyChange('places');
   notifyChange('trips');
 }
 

@@ -6,13 +6,14 @@ import {
   listSources,
   getSource,
   assignSourceTrip,
-  softDeleteSource,
+  deleteSource,
   listAllSources,
   listInboxSources,
   listSourcesByTrip,
   countSourcesByTrip,
 } from '../sources';
 import { createTrip } from '../trips';
+import { linkPlaceSource } from '../place_sources';
 import { provideDatabase, useLiveQuery } from '../live-query';
 
 const ownerId = '00000000-0000-0000-0000-000000000001';
@@ -71,7 +72,7 @@ describe('sources repository', () => {
     expect(rows.map((r) => r.id)).toEqual(['b', 'a']);
   });
 
-  it('filters out soft-deleted sources', async () => {
+  it('omits deleted sources from listings', async () => {
     const db = await freshDb();
     await insertSource(db, {
       id: 'a',
@@ -82,11 +83,7 @@ describe('sources repository', () => {
       capturedAt: '2026-05-01T00:00:00Z',
       ownerId,
     });
-    await db.runAsync(
-      'UPDATE sources SET deleted_at = ? WHERE id = ?',
-      '2026-05-04T00:00:00Z',
-      'a',
-    );
+    await db.runAsync('DELETE FROM sources WHERE id = ?', 'a');
     const rows = await listSources(db, { tripId: null });
     expect(rows).toEqual([]);
   });
@@ -131,7 +128,7 @@ describe('sources repository', () => {
 });
 
 describe('sources additions', () => {
-  it('getSource returns the active row; null for soft-deleted or missing', async () => {
+  it('getSource returns the row; null for deleted or missing', async () => {
     const db = await freshDb();
     await insertSource(db, {
       id: 'a',
@@ -144,11 +141,7 @@ describe('sources additions', () => {
     });
     expect((await getSource(db, 'a'))?.id).toBe('a');
 
-    await db.runAsync(
-      'UPDATE sources SET deleted_at = ? WHERE id = ?',
-      '2026-05-04T11:00:00Z',
-      'a',
-    );
+    await db.runAsync('DELETE FROM sources WHERE id = ?', 'a');
     expect(await getSource(db, 'a')).toBeNull();
     expect(await getSource(db, 'missing')).toBeNull();
   });
@@ -240,24 +233,21 @@ describe('sources additions', () => {
     expect(p2?.trip_id).toBe('t2');
   });
 
-  it('softDeleteSource sets deleted_at and removes the row from listings', async () => {
+  it('deleteSource removes the row, junctions, tags, and the file', async () => {
     const db = await freshDb();
+    const deletedFiles: string[] = [];
     await insertSource(db, {
-      id: 'a',
-      tripId: null,
-      filePath: '/x/a.jpg',
-      contentHash: 'h-a',
-      origin: 'manual',
-      capturedAt: '2026-05-04T10:00:00Z',
-      ownerId,
+      id: 'a', tripId: null, filePath: '/x/a.jpg',
+      contentHash: 'h-a', origin: 'manual',
+      capturedAt: '2026-05-04T10:00:00Z', ownerId,
     });
-    await softDeleteSource(db, 'a');
-    const row = await db.getFirstAsync<{ deleted_at: string | null }>(
-      'SELECT deleted_at FROM sources WHERE id = ?',
-      'a',
-    );
-    expect(row?.deleted_at).not.toBeNull();
+    await deleteSource(db, 'a', {
+      unlinkFile: (p) => deletedFiles.push(p),
+    });
+    const row = await db.getFirstAsync(`SELECT id FROM sources WHERE id = 'a'`);
+    expect(row).toBeNull();
     expect(await listInboxSources(db)).toEqual([]);
+    expect(deletedFiles).toEqual(['/x/a.jpg']);
   });
 
   it('listAllSources returns active rows regardless of trip, newest first', async () => {
@@ -290,7 +280,7 @@ describe('sources additions', () => {
       capturedAt: '2026-05-04T10:00:01Z',
       ownerId,
     });
-    await softDeleteSource(db, 'c');
+    await deleteSource(db, 'c', { unlinkFile: () => {} });
 
     const rows = await listAllSources(db);
     expect(rows.map((r) => r.id)).toEqual(['b', 'a']);
@@ -383,7 +373,7 @@ describe('sources additions', () => {
       capturedAt: '2026-05-04T10:00:03Z',
       ownerId,
     });
-    await softDeleteSource(db, 'b');
+    await deleteSource(db, 'b', { unlinkFile: () => {} });
 
     const counts = await countSourcesByTrip(db);
     expect(counts).toEqual({ t1: 1, t2: 1 });
@@ -586,5 +576,88 @@ describe('sources additions', () => {
 
     await waitFor(() => expect(inboxHook.result.current?.[0]?.n).toBe(0));
     await waitFor(() => expect(tripHook.result.current?.[0]?.n).toBe(1));
+  });
+
+  describe('deleteSource — orphan-prune places', () => {
+    const seedPlace = async (
+      db: Database,
+      placeId: string,
+      tripId: string | null,
+    ): Promise<void> => {
+      const now = '2026-05-10T10:00:00Z';
+      await db.runAsync(
+        `INSERT INTO places (id, trip_id, name, city, normalized_key,
+                             enrichment_status, owner_id, created_at, updated_at)
+         VALUES (?, ?, 'Place ' || ?, 'Tokyo', 'p-' || ?, 'pending', ?, ?, ?)`,
+        placeId, tripId, placeId, placeId, ownerId, now, now,
+      );
+    };
+    const link = async (
+      db: Database,
+      placeId: string,
+      sourceId: string,
+    ): Promise<void> => {
+      await linkPlaceSource(db, {
+        placeId, sourceId,
+        extractionModel: 'gemini', ownerId,
+      });
+    };
+
+    it('orphan-prunes a place whose only source was this one', async () => {
+      const db = await freshDb();
+      await insertSource(db, {
+        id: 's1', tripId: null, filePath: '/x/s1.jpg',
+        contentHash: 'h-s1', origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+      });
+      await seedPlace(db, 'pOnlyHere', null);
+      await link(db, 'pOnlyHere', 's1');
+
+      await deleteSource(db, 's1', { unlinkFile: () => {} });
+
+      const place = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'pOnlyHere'`);
+      expect(place).toBeNull();
+    });
+
+    it('preserves a place that has another live source', async () => {
+      const db = await freshDb();
+      await insertSource(db, {
+        id: 's1', tripId: null, filePath: '/x/s1.jpg',
+        contentHash: 'h-s1', origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+      });
+      await insertSource(db, {
+        id: 's2', tripId: null, filePath: '/x/s2.jpg',
+        contentHash: 'h-s2', origin: 'manual',
+        capturedAt: '2026-05-10T10:00:01Z', ownerId,
+      });
+      await seedPlace(db, 'pShared', null);
+      await link(db, 'pShared', 's1');
+      await link(db, 'pShared', 's2');
+
+      await deleteSource(db, 's1', { unlinkFile: () => {} });
+
+      const place = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'pShared'`);
+      expect(place).toBeTruthy();
+    });
+
+    it('removes tags attached to the deleted source', async () => {
+      const db = await freshDb();
+      await insertSource(db, {
+        id: 's1', tripId: null, filePath: '/x/s1.jpg',
+        contentHash: 'h-s1', origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+      });
+      await db.runAsync(
+        `INSERT INTO tags (id, source_id, kind, value, owner_id, created_at, updated_at)
+         VALUES ('tag1', 's1', 'food', 'sushi', ?, ?, ?)`,
+        ownerId, '2026-05-10T10:00:00Z', '2026-05-10T10:00:00Z',
+      );
+
+      await deleteSource(db, 's1', { unlinkFile: () => {} });
+
+      const tag = await db.getFirstAsync(`SELECT id FROM tags WHERE id = 'tag1'`);
+      expect(tag).toBeNull();
+    });
   });
 });

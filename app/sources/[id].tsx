@@ -5,7 +5,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   getSource,
-  softDeleteSource,
+  deleteSource,
   assignSourceTrip,
   useLiveQuery,
   type Source,
@@ -111,7 +111,7 @@ export default function SourceDetail() {
             if (process.env.EXPO_OS === 'ios') {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
-            await softDeleteSource(db, source.id);
+            await deleteSource(db, source.id);
             router.back();
           },
         },

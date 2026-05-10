@@ -9,13 +9,14 @@ export {
   listInboxSources,
   listSourcesByTrip,
   assignSourceTrip,
-  softDeleteSource,
+  deleteSource,
   countSourcesByTrip,
   type Source,
   type SourceKind,
   type SourceOrigin,
   type ProcessingStatus,
   type InsertSourceInput,
+  type DeleteSourceOptions,
 } from './sources';
 export {
   insertPlace,
