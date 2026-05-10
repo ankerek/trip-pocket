@@ -1,4 +1,4 @@
-import { ActionSheetIOS, Alert, Platform } from 'react-native';
+import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import {
@@ -9,58 +9,36 @@ import {
 } from '@/modules/capture';
 import type { Database } from '@/modules/storage';
 
+export type PickPhotosOptions = {
+  tripId?: string | null;
+};
+
 type Outcome = {
   imported: number;
   skipped: number;
   failed: number;
 };
 
-// Drives the iOS action sheet that appears when the user taps the
-// center capture FAB. Same import path as the existing camera-roll
-// header button — keeps OCR/extraction pipelines untouched.
-export function showCaptureActionSheet(db: Database) {
-  if (Platform.OS !== 'ios') {
-    void importFromLibrary(db);
-    return;
-  }
-
-  ActionSheetIOS.showActionSheetWithOptions(
-    {
-      options: ['Pick from Photos', 'Take photo', 'Cancel'],
-      cancelButtonIndex: 2,
-      title: 'Add screenshots',
-    },
-    (index) => {
-      if (index === 0) void importFromLibrary(db);
-      else if (index === 1) void importFromCamera(db);
-    },
-  );
-}
-
-async function importFromLibrary(db: Database) {
+// Opens the system photo library and imports the selected images. When
+// `tripId` is provided, freshly imported sources are assigned to that
+// trip up front so the user doesn't have to triage them from the Inbox.
+export async function pickPhotosForImport(
+  db: Database,
+  options: PickPhotosOptions = {},
+) {
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
     allowsMultipleSelection: true,
     selectionLimit: 20,
   });
   if (result.canceled) return;
-  await runImports(db, result.assets);
-}
-
-async function importFromCamera(db: Database) {
-  const perm = await ImagePicker.requestCameraPermissionsAsync();
-  if (!perm.granted) {
-    Alert.alert('Camera access denied');
-    return;
-  }
-  const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'] });
-  if (result.canceled) return;
-  await runImports(db, result.assets);
+  await runImports(db, result.assets, options.tripId ?? null);
 }
 
 async function runImports(
   db: Database,
   assets: ImagePicker.ImagePickerAsset[],
+  tripId: string | null,
 ) {
   const storage = getStorageDirectory().uri;
   const ownerId = getOrCreateOwnerId();
@@ -79,6 +57,7 @@ async function runImports(
           origin: 'manual',
           ownerId,
           capturedAt: now,
+          suggestedTripId: tripId,
           transfer: 'copy',
           storageDir: storage,
           fs,

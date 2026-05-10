@@ -3,6 +3,7 @@ import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
+import * as Haptics from 'expo-haptics';
 import { getTrip, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
@@ -11,7 +12,7 @@ import { groupPlacesByCountry } from '@/components/groupPlacesByCountry';
 import { displayCountry } from '@/components/CountryDisplay';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
-import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
+import { pickPhotosForImport } from '@/components/pickPhotos';
 import {
   DetailHeaderIconButton,
   DetailHeaderOverlay,
@@ -81,12 +82,27 @@ export default function TripDetail() {
     return ranked[0] ? buildCoverUrl(ranked[0].photo_name) : null;
   }, [places]);
 
+  const onAddScreenshots = () => {
+    if (!db || !id) return;
+    if (process.env.EXPO_OS === 'ios') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+    void pickPhotosForImport(db, { tripId: id });
+  };
+
   const headerRight = (
-    <DetailHeaderIconButton
-      icon="ellipsis"
-      accessibilityLabel="Edit trip"
-      onPress={() => router.push(`/trips/${id}/edit`)}
-    />
+    <View style={{ flexDirection: 'row', gap: 8 }}>
+      <DetailHeaderIconButton
+        icon="plus"
+        accessibilityLabel="Add screenshots to this trip"
+        onPress={onAddScreenshots}
+      />
+      <DetailHeaderIconButton
+        icon="ellipsis"
+        accessibilityLabel="Edit trip"
+        onPress={() => router.push(`/trips/${id}/edit`)}
+      />
+    </View>
   );
 
   if (trip === 'loading' || sources === null || places === null) {
@@ -128,14 +144,12 @@ export default function TripDetail() {
             <EmptyState
               icon="square.and.arrow.down"
               title="Nothing in this trip yet"
-              body={`Capture screenshots, then assign them to “${trip.name}” from your Inbox.`}
+              body={`Add screenshots from your camera roll — they'll be assigned to “${trip.name}” automatically.`}
               cta={{
                 label: 'Add from Photos',
-                onPress: () => {
-                  if (db) showCaptureActionSheet(db);
-                },
+                onPress: onAddScreenshots,
                 accessibilityHint:
-                  'Opens the camera roll to import screenshots into the inbox',
+                  'Imports screenshots from your camera roll into this trip',
               }}
             />
           </View>

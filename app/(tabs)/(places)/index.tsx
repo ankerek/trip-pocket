@@ -12,7 +12,7 @@ import { HeaderCaptureButton } from '@/components/HeaderCaptureButton';
 import { InboxBanner } from '@/components/InboxBanner';
 import { FilterPills, type FilterOption } from '@/components/FilterPills';
 import { EmptyState } from '@/components/EmptyState';
-import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
+import { pickPhotosForImport } from '@/components/pickPhotos';
 import { useDatabase } from '@/components/useDatabase';
 import { runForegroundIngest } from '@/modules/capture';
 import { useThemeColors } from '@/tw/theme';
@@ -137,7 +137,7 @@ export default function Pocket() {
           cta={{
             label: 'Add from Photos',
             onPress: () => {
-              if (db) showCaptureActionSheet(db);
+              if (db) void pickPhotosForImport(db);
             },
             accessibilityHint: 'Opens the camera roll to import screenshots',
           }}

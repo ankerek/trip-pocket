@@ -230,18 +230,23 @@ export default function PlaceDetail() {
             }}
           />
 
-          {/* Trip chip — top-right, aligned with the back button. */}
-          {tripName ? (
-            <View
-              pointerEvents="none"
-              style={{
+          {/* Trip chip — top-right, aligned with the back button. Tap to
+              open that trip's detail. */}
+          {tripName && place.tripId ? (
+            <Pressable
+              onPress={() => router.push(`/trips/${place.tripId}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Open trip ${tripName}`}
+              hitSlop={8}
+              style={({ pressed }) => ({
                 position: 'absolute',
                 top: insets.top + 8,
                 right: 14,
-              }}
+                opacity: pressed ? 0.85 : 1,
+              })}
             >
               <TripChip name={tripName} variant="overlay" />
-            </View>
+            </Pressable>
           ) : null}
 
           {/* Title stack — sits at the bottom of the photo over the dark
@@ -350,7 +355,6 @@ export default function PlaceDetail() {
           {place.formattedAddress ? (
             <MetaRow icon="mappin" text={place.formattedAddress} />
           ) : null}
-          {place.externalUrl ? <MetaRow icon="link" text={place.externalUrl} /> : null}
           <MetaRow
             icon="info.circle"
             text={enrichmentLabel(place.enrichmentStatus)}

@@ -2,7 +2,7 @@ import { Pressable } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Icon } from '@/components/Icon';
 import { useDatabase } from '@/components/useDatabase';
-import { showCaptureActionSheet } from '@/components/CaptureActionSheet';
+import { pickPhotosForImport } from '@/components/pickPhotos';
 import { useThemeColors } from '@/tw/theme';
 
 export function HeaderCaptureButton() {
@@ -15,11 +15,11 @@ export function HeaderCaptureButton() {
         if (process.env.EXPO_OS === 'ios') {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         }
-        showCaptureActionSheet(db);
+        void pickPhotosForImport(db);
       }}
       accessibilityRole="button"
       accessibilityLabel="Add place"
-      accessibilityHint="Add screenshots from Photos or take a new photo"
+      accessibilityHint="Pick screenshots from Photos to import"
       hitSlop={8}
       style={{ paddingHorizontal: 12 }}
     >
