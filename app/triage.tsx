@@ -359,39 +359,43 @@ function TriageCard({
   onSnapHaptic: () => void;
 }) {
   const total = places.length;
-  const heroAnimStyle = useAnimatedStyle(() => ({ height: heroHeight.value }));
+  // The hero stays at heroMax behind the sheet; expanding/collapsing
+  // animates the sheet's translateY only. Animating layout (`height`) here
+  // was very laggy because every shared-value tick re-ran Yoga across the
+  // entire subtree (and across every TriageCard mounted in the paging
+  // window). transform/opacity stays on the fast path.
+  const sheetAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: heroHeight.value - heroMin }],
+  }));
   // Both the hero and the grabber drive the same heroHeight via identical
   // pan logic. Two Gesture.Pan() instances are needed because each
   // GestureDetector takes its own. Internal state (`startHeight`) is shared
   // — only one gesture is active at a time.
   const startHeight = useSharedValue(heroMin);
-  const buildPan = () =>
-    Gesture.Pan()
-      .activeOffsetY([-8, 8])
-      .failOffsetX([-12, 12])
-      .onStart(() => {
-        startHeight.value = heroHeight.value;
-      })
-      .onUpdate((e) => {
-        const next = startHeight.value + e.translationY;
-        heroHeight.value = Math.max(heroMin, Math.min(heroMax, next));
-      })
-      .onEnd((e) => {
-        const mid = (heroMin + heroMax) / 2;
-        const goingDown =
-          e.velocityY > 300 || (e.velocityY > -300 && heroHeight.value > mid);
-        const target = goingDown ? heroMax : heroMin;
-        heroHeight.value = withSpring(target, { damping: 20, stiffness: 180 });
-        runOnJS(onSnapHaptic)();
-      });
-  const heroPan = buildPan();
-  const grabberPan = buildPan();
+  const heroPan = useMemo(
+    () => buildHeroPan({ heroHeight, heroMin, heroMax, startHeight, onSnapHaptic }),
+    [heroHeight, heroMin, heroMax, startHeight, onSnapHaptic],
+  );
+  const grabberPan = useMemo(
+    () => buildHeroPan({ heroHeight, heroMin, heroMax, startHeight, onSnapHaptic }),
+    [heroHeight, heroMin, heroMax, startHeight, onSnapHaptic],
+  );
   return (
     <View style={{ width, flex: 1 }}>
-      {/* Hero — animated height; entire hero is also a drag target. */}
+      {/* Hero — fixed at heroMax, sits behind the sheet. The visible
+          portion is whatever isn't covered by the sheet, so dragging the
+          sheet down "reveals" more hero without any layout work. */}
       <GestureDetector gesture={heroPan}>
-        <Animated.View
-          style={[{ width, backgroundColor: '#0c4a6e', overflow: 'hidden' }, heroAnimStyle]}
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: heroMax,
+            backgroundColor: '#0c4a6e',
+            overflow: 'hidden',
+          }}
         >
           {source.filePath ? (
             <ExpoImage
@@ -405,11 +409,23 @@ function TriageCard({
               <Icon name="photo" size={36} tintColor="#94a3b8" />
             </View>
           )}
-        </Animated.View>
+        </View>
       </GestureDetector>
 
-      {/* Sheet — scrolls vertically; grabber on top is also a drag handle. */}
-      <View style={{ flex: 1 }}>
+      {/* Sheet — fixed-size, slides via translateY. */}
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            top: heroMin,
+            left: 0,
+            right: 0,
+            bottom: 0,
+          },
+          sheetAnimStyle,
+        ]}
+      >
+        <View className="flex-1 bg-bg">
         <GestureDetector gesture={grabberPan}>
           <View
             className="items-center"
@@ -497,9 +513,43 @@ function TriageCard({
             />
           ))}
         </RNScrollView>
-      </View>
+        </View>
+      </Animated.View>
     </View>
   );
+}
+
+function buildHeroPan({
+  heroHeight,
+  heroMin,
+  heroMax,
+  startHeight,
+  onSnapHaptic,
+}: {
+  heroHeight: SharedValue<number>;
+  heroMin: number;
+  heroMax: number;
+  startHeight: SharedValue<number>;
+  onSnapHaptic: () => void;
+}) {
+  return Gesture.Pan()
+    .activeOffsetY([-8, 8])
+    .failOffsetX([-12, 12])
+    .onStart(() => {
+      startHeight.value = heroHeight.value;
+    })
+    .onUpdate((e) => {
+      const next = startHeight.value + e.translationY;
+      heroHeight.value = Math.max(heroMin, Math.min(heroMax, next));
+    })
+    .onEnd((e) => {
+      const mid = (heroMin + heroMax) / 2;
+      const goingDown =
+        e.velocityY > 300 || (e.velocityY > -300 && heroHeight.value > mid);
+      const target = goingDown ? heroMax : heroMin;
+      heroHeight.value = withSpring(target, { damping: 20, stiffness: 180 });
+      runOnJS(onSnapHaptic)();
+    });
 }
 
 function PlaceSelectRow({
