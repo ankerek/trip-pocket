@@ -11,9 +11,16 @@ import {
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 
+type CountSet = {
+  places: number;
+  sources: number;
+  cascadeDeletedPlaces: number;
+  cascadeSurvivingShared: number;
+};
+
 type LoadState =
   | { kind: 'loading' }
-  | { kind: 'loaded'; trip: Trip | null; count: number };
+  | { kind: 'loaded'; trip: Trip | null; counts: CountSet | null };
 
 export default function EditTrip() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,13 +34,57 @@ export default function EditTrip() {
     if (!db || !id) return;
     (async () => {
       const t = await getTrip(db, id);
-      const countRow = await db.getFirstAsync<{ n: number }>(
+      if (!t) {
+        if (!cancelled) setLoad({ kind: 'loaded', trip: null, counts: null });
+        return;
+      }
+      const placeCountRow = await db.getFirstAsync<{ n: number }>(
         `SELECT COUNT(*) AS n FROM places WHERE trip_id = ?`,
         id,
       );
+      const sourceCountRow = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM sources WHERE trip_id = ?`,
+        id,
+      );
+      // Places that cascade-delete: every junction points at a source in this trip.
+      const cascadeDeletedRow = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM places p
+          WHERE p.id IN (
+            SELECT DISTINCT place_id FROM place_sources
+             WHERE source_id IN (SELECT id FROM sources WHERE trip_id = ?)
+          )
+            AND NOT EXISTS (
+              SELECT 1 FROM place_sources ps
+               WHERE ps.place_id = p.id
+                 AND ps.source_id NOT IN (SELECT id FROM sources WHERE trip_id = ?)
+            )`,
+        id, id,
+      );
+      // Places that survive cascade because they have other-trip sources too.
+      const cascadeSharedRow = await db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM places p
+          WHERE (p.trip_id = ?
+                 OR p.id IN (SELECT DISTINCT place_id FROM place_sources
+                              WHERE source_id IN (SELECT id FROM sources WHERE trip_id = ?)))
+            AND EXISTS (
+              SELECT 1 FROM place_sources ps
+               WHERE ps.place_id = p.id
+                 AND ps.source_id NOT IN (SELECT id FROM sources WHERE trip_id = ?)
+            )`,
+        id, id, id,
+      );
       if (cancelled) return;
-      setLoad({ kind: 'loaded', trip: t, count: t ? countRow?.n ?? 0 : 0 });
-      if (t) setName(t.name);
+      setLoad({
+        kind: 'loaded',
+        trip: t,
+        counts: {
+          places: placeCountRow?.n ?? 0,
+          sources: sourceCountRow?.n ?? 0,
+          cascadeDeletedPlaces: cascadeDeletedRow?.n ?? 0,
+          cascadeSurvivingShared: cascadeSharedRow?.n ?? 0,
+        },
+      });
+      setName(t.name);
     })();
     return () => {
       cancelled = true;
@@ -69,7 +120,7 @@ export default function EditTrip() {
   }
 
   const trip = load.trip;
-  const count = load.count;
+  const counts = load.counts;
   const trimmed = name.trim();
   const canSave = trimmed.length > 0 && trimmed !== trip.name && db !== null;
 
@@ -86,11 +137,16 @@ export default function EditTrip() {
     }
   };
 
-  const onDelete = () => {
-    if (!db || !id) return;
+  const onDeleteUntriage = () => {
+    if (!db || !id || !counts) return;
+    const { sources: n, places: m } = counts;
+    const body =
+      n === 0 && m === 0
+        ? "This can't be undone."
+        : `${n} screenshot${n === 1 ? '' : 's'} and ${m} place${m === 1 ? '' : 's'} will move back to your Inbox.`;
     Alert.alert(
       `Delete '${trip.name}'?`,
-      `Its ${count} place${count === 1 ? '' : 's'} return${count === 1 ? 's' : ''} to Inbox.`,
+      body,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -101,7 +157,7 @@ export default function EditTrip() {
               if (process.env.EXPO_OS === 'ios') {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
               }
-              await deleteTrip(db, id);
+              await deleteTrip(db, id, 'untriage');
               router.back();
               setTimeout(() => router.back(), 0);
             } catch (err) {
@@ -112,6 +168,43 @@ export default function EditTrip() {
       ],
     );
   };
+
+  const onDeleteCascade = () => {
+    if (!db || !id || !counts) return;
+    const { sources: n, cascadeDeletedPlaces: m, cascadeSurvivingShared: s } = counts;
+    const title = `Delete '${trip.name}' and ${n} screenshot${n === 1 ? '' : 's'}, ${m} place${m === 1 ? '' : 's'}?`;
+    const lines: string[] = [];
+    if (s > 0) {
+      lines.push(`${s} place${s === 1 ? '' : 's'} shared with other trips will be moved to your Inbox.`);
+    }
+    lines.push("This can't be undone.");
+    Alert.alert(
+      title,
+      lines.join('\n\n'),
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete everything',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (process.env.EXPO_OS === 'ios') {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+              }
+              await deleteTrip(db, id, 'cascade');
+              router.back();
+              setTimeout(() => router.back(), 0);
+            } catch (err) {
+              Alert.alert('Could not delete trip', String(err));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const cascadeAvailable =
+    counts !== null && (counts.sources > 0 || counts.cascadeDeletedPlaces > 0);
 
   return (
     <>
@@ -185,7 +278,7 @@ export default function EditTrip() {
         <View style={{ height: 24 }} />
 
         <Pressable
-          onPress={onDelete}
+          onPress={onDeleteUntriage}
           accessibilityRole="button"
           accessibilityLabel="Delete trip"
           style={{
@@ -203,6 +296,26 @@ export default function EditTrip() {
             Delete trip
           </Text>
         </Pressable>
+
+        {cascadeAvailable ? (
+          <>
+            <View style={{ height: 8 }} />
+            <Pressable
+              onPress={onDeleteCascade}
+              accessibilityRole="button"
+              accessibilityLabel="Delete trip and everything in it"
+              style={{ paddingVertical: 10 }}
+              hitSlop={8}
+            >
+              <Text
+                className="text-center"
+                style={{ fontSize: 13, fontWeight: '500', color: '#dc2626' }}
+              >
+                Delete trip and everything in it
+              </Text>
+            </Pressable>
+          </>
+        ) : null}
       </ScrollView>
     </>
   );
