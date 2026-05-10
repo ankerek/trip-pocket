@@ -133,19 +133,13 @@ export async function transferJunctions(
      SELECT ?, source_id, extracted_at, raw_text, extracted_address,
             confidence, extraction_model, owner_id, created_at, updated_at
        FROM place_sources
-      WHERE place_id = ? AND deleted_at IS NULL
+      WHERE place_id = ?
      ON CONFLICT(place_id, source_id) DO NOTHING`,
     winnerId,
     loserId,
   );
-  // Soft-delete the loser's junction rows so it has no live attachments.
-  const now = new Date().toISOString();
   await db.runAsync(
-    `UPDATE place_sources
-        SET deleted_at = ?, updated_at = ?
-      WHERE place_id = ? AND deleted_at IS NULL`,
-    now,
-    now,
+    `DELETE FROM place_sources WHERE place_id = ?`,
     loserId,
   );
   notifyChange('place_sources');
