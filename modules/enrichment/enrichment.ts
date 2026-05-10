@@ -242,22 +242,14 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       loserId = winner === collision.id ? place.id : collision.id;
     }
 
-    const ts = getNow();
     await opts.db.withTransactionAsync(async () => {
-      // Order matters: soft-delete the loser FIRST so the partial UNIQUE on
-      // external_place_id doesn't fire when we promote the winner. Soft-deleted
-      // rows are excluded from the UNIQUE index (WHERE deleted_at IS NULL).
-      await opts.db.runAsync(
-        `UPDATE places SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-        ts,
-        ts,
-        loserId,
-      );
-
-      // Move junction rows from loser → winner with PK conflict tolerance.
+      // Order matters with hard-delete + non-partial UNIQUE on external_place_id:
+      //   1. Re-home all loser junctions onto the winner.
+      //   2. DELETE the loser place row (FK-safe now: junctions are on the winner).
+      //   3. Promote winner with enrichment columns (external_place_id passes
+      //      uniqueness because loser is physically gone).
       await transferJunctions(opts.db, loserId, winnerId);
-
-      // If winner is incoming (place), copy enrichment columns onto it.
+      await opts.db.runAsync(`DELETE FROM places WHERE id = ?`, loserId);
       if (winnerId === place.id) {
         await writeEnrichmentColumns(place.id, outcome);
       }

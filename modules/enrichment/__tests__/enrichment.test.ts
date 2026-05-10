@@ -337,14 +337,16 @@ describe('createEnricher', () => {
       expect(winner.trip_id).toBe('t1');
       expect(winner.deleted_at).toBeNull();
 
-      // Incoming is soft-deleted.
-      const loser = await getPlace(db, 'p-incoming');
-      expect(loser.deleted_at).not.toBeNull();
+      // Incoming is hard-deleted: row is gone entirely.
+      const loserRow = await db.getFirstAsync(
+        `SELECT id FROM places WHERE id = 'p-incoming'`,
+      );
+      expect(loserRow).toBeNull();
 
       // Junction migrated: the incoming source is now attached to the winner.
       const j = await db.getAllAsync<{ place_id: string; source_id: string }>(
         `SELECT place_id, source_id FROM place_sources
-          WHERE source_id = 's-incoming' AND deleted_at IS NULL`,
+          WHERE source_id = 's-incoming'`,
       );
       expect(j.map((r) => r.place_id)).toEqual(['p-existing']);
     });
@@ -381,9 +383,11 @@ describe('createEnricher', () => {
       expect(winner.external_place_id).toBe('ChIJ-test');
       expect(winner.deleted_at).toBeNull();
 
-      // Existing is soft-deleted.
-      const loser = await getPlace(db, 'p-existing');
-      expect(loser.deleted_at).not.toBeNull();
+      // Existing is hard-deleted: row is gone entirely.
+      const loserRow = await db.getFirstAsync(
+        `SELECT id FROM places WHERE id = 'p-existing'`,
+      );
+      expect(loserRow).toBeNull();
     });
 
     it('skips merge when both places have non-null but DIFFERENT trip_ids; keeps both alive', async () => {
@@ -446,10 +450,70 @@ describe('createEnricher', () => {
       // Existing wins; incoming is gone. The shared junction stays on the winner.
       const j = await db.getAllAsync<{ place_id: string; source_id: string }>(
         `SELECT place_id, source_id FROM place_sources
-          WHERE source_id = 's-shared' AND deleted_at IS NULL
+          WHERE source_id = 's-shared'
        ORDER BY place_id`,
       );
       expect(j.map((r) => r.place_id)).toEqual(['p-existing']);
+    });
+
+    it('hard-deletes the loser place row entirely (no soft-delete vestige)', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+         VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
+        NOW, NOW,
+      );
+      await seedPlace(db, {
+        id: 'p-existing',
+        name: 'A',
+        city: 'Tokyo',
+        tripId: 't1',
+        status: 'enriched',
+        externalPlaceId: 'ChIJ-test',
+      });
+      await seedSource(db, 's-incoming');
+      await seedPlace(db, { id: 'p-incoming', name: 'B', city: 'Tokyo' });
+      await attachSourceToPlace(db, 'p-incoming', 's-incoming', null);
+
+      const enricher = makeEnricher(db, async () => enrichedOutcome);
+      enricher.enqueueEnrichment('p-incoming');
+      await enricher._awaitIdle();
+
+      // Loser is gone; only winner survives.
+      const surviving = await db.getAllAsync<{ id: string }>(
+        `SELECT id FROM places WHERE id IN ('p-existing', 'p-incoming')`,
+      );
+      expect(surviving).toHaveLength(1);
+      expect(surviving[0]?.id).toBe('p-existing');
+    });
+
+    it('winner takes over external_place_id without UNIQUE violation', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+         VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
+        NOW, NOW,
+      );
+      // Existing has trip but is NOT yet enriched. Incoming will resolve to
+      // ChIJ-test, which existing already holds.
+      await seedPlace(db, {
+        id: 'p-existing',
+        name: 'A',
+        city: 'Tokyo',
+        tripId: null, // null so incoming wins via tie-break logic
+        status: 'enriched',
+        externalPlaceId: 'ChIJ-test',
+      });
+      await seedSource(db, 's-incoming');
+      await seedPlace(db, { id: 'p-incoming', name: 'B', city: 'Tokyo', tripId: 't1' });
+      await attachSourceToPlace(db, 'p-incoming', 's-incoming', null);
+
+      const enricher = makeEnricher(db, async () => enrichedOutcome);
+      enricher.enqueueEnrichment('p-incoming');
+      await enricher._awaitIdle();
+
+      const winner = await getPlace(db, 'p-incoming');
+      expect(winner.external_place_id).toBe('ChIJ-test');
     });
   });
 });
