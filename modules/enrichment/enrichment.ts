@@ -151,7 +151,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       created_at: string;
     }>(
       `SELECT id, name, city, trip_id, enrichment_status, created_at
-         FROM places WHERE id = ? AND deleted_at IS NULL`,
+         FROM places WHERE id = ?`,
       id,
     );
     if (!place) return null;
@@ -160,7 +160,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     const addrRow = await opts.db.getFirstAsync<{ extracted_address: string | null }>(
       `SELECT extracted_address
          FROM place_sources
-        WHERE place_id = ? AND deleted_at IS NULL AND extracted_address IS NOT NULL
+        WHERE place_id = ? AND extracted_address IS NOT NULL
      ORDER BY extracted_at DESC
         LIMIT 1`,
       id,
@@ -171,8 +171,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       `SELECT s.ocr_text
          FROM place_sources ps
          JOIN sources s ON s.id = ps.source_id
-        WHERE ps.place_id = ? AND ps.deleted_at IS NULL
-          AND s.deleted_at IS NULL
+        WHERE ps.place_id = ?
           AND s.ocr_text IS NOT NULL AND TRIM(s.ocr_text) != ''
      ORDER BY ps.extracted_at DESC
         LIMIT 1`,

@@ -7,31 +7,17 @@ import type { Migration } from '../db';
 // pre-restructure dev DB needs to delete it (`trip-pocket.db` in the
 // simulator app sandbox).
 //
+// Soft-delete column removed (see
+// docs/superpowers/specs/2026-05-10-delete-cascade-design.md). Delete is
+// hard. Devs with a pre-2026-05-10 dev DB also need to wipe.
+//
 // Tables, in dependency order:
-//   trips           — collections owned by the user
-//   sources         — every captured input (today only kind='screenshot';
-//                     future kinds: 'url', 'pasted'). Generalised name so
-//                     Instagram-post / URL ingestion lands in this slot
-//                     instead of forcing another rename later.
-//   places          — canonical Place. Each row is one real-world venue,
-//                     keyed for dedup by normalized_key (pre-enrichment,
-//                     non-unique — sole-match enforced in app code) and
-//                     by external_place_id once enrichment resolves it
-//                     (UNIQUE per owner among live rows).
-//   place_sources   — many-to-many junction. Carries per-extraction
-//                     metadata (raw_text, extracted_address, confidence,
-//                     extraction_model) and the standard syncable
-//                     columns. The only path between a place and the
-//                     source(s) it came from.
-//   tags            — kept on the source row for the transition; will
-//                     migrate to place-keyed tags in a follow-up.
-//   pending_imports — share-extension hand-off mailbox. Not synced.
-//   meta            — single-row settings table.
+//   trips, sources, places, place_sources, tags, pending_imports, meta
 //
 // FTS:
-//   places_fts      — name + city + description + concatenated raw_text
-//                     (capped 2KB per source) + extracted_address.
-//   sources_fts     — ocr_text + parent trip name + tag values.
+//   places_fts  — name + city + description + concatenated raw_text
+//                 (capped 2KB per source) + extracted_address.
+//   sources_fts — ocr_text + parent trip name + tag values.
 //
 // Triggers maintain both FTS docs across writes to places, place_sources,
 // sources, and indirectly trips/tags.
@@ -45,8 +31,7 @@ export const init: Migration = {
         color       TEXT,
         owner_id    TEXT NOT NULL,
         created_at  TEXT NOT NULL,
-        updated_at  TEXT NOT NULL,
-        deleted_at  TEXT
+        updated_at  TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS sources (
@@ -66,16 +51,15 @@ export const init: Migration = {
         owner_id          TEXT NOT NULL,
         created_at        TEXT NOT NULL,
         updated_at        TEXT NOT NULL,
-        deleted_at        TEXT,
         FOREIGN KEY (trip_id) REFERENCES trips(id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_sources_trip
-        ON sources(trip_id) WHERE deleted_at IS NULL;
+        ON sources(trip_id);
       CREATE INDEX IF NOT EXISTS idx_sources_captured_at
-        ON sources(captured_at DESC) WHERE deleted_at IS NULL;
+        ON sources(captured_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_hash
-        ON sources(content_hash) WHERE deleted_at IS NULL;
+        ON sources(content_hash);
 
       CREATE TABLE IF NOT EXISTS places (
         id                 TEXT PRIMARY KEY NOT NULL,
@@ -85,7 +69,6 @@ export const init: Migration = {
         category           TEXT,
         normalized_key     TEXT NOT NULL,
 
-        -- Enrichment-derived (NULL until /enrich resolves).
         external_place_id  TEXT,
         photo_name         TEXT,
         description        TEXT,
@@ -103,27 +86,25 @@ export const init: Migration = {
         owner_id           TEXT NOT NULL,
         created_at         TEXT NOT NULL,
         updated_at         TEXT NOT NULL,
-        deleted_at         TEXT,
         FOREIGN KEY (trip_id) REFERENCES trips(id)
       );
 
       -- Non-unique: sole-match dedup is enforced in modules/extraction
       -- so same-name chains (Starbucks-in-Tokyo) don't silently collapse.
       CREATE INDEX IF NOT EXISTS idx_places_normalized_key
-        ON places(normalized_key, owner_id) WHERE deleted_at IS NULL;
+        ON places(normalized_key, owner_id);
 
-      -- Owner-scoped uniqueness, partial index lets the merge soft-delete
-      -- a loser without violating the constraint.
+      -- Owner-scoped uniqueness on the resolved external id.
       CREATE UNIQUE INDEX IF NOT EXISTS idx_places_external_place_id
         ON places(external_place_id, owner_id)
-        WHERE external_place_id IS NOT NULL AND deleted_at IS NULL;
+        WHERE external_place_id IS NOT NULL;
 
       CREATE INDEX IF NOT EXISTS idx_places_trip
-        ON places(trip_id) WHERE deleted_at IS NULL;
+        ON places(trip_id);
 
       CREATE INDEX IF NOT EXISTS idx_places_enrichment_pending
         ON places(enrichment_status)
-        WHERE enrichment_status = 'pending' AND deleted_at IS NULL;
+        WHERE enrichment_status = 'pending';
 
       CREATE TABLE IF NOT EXISTS place_sources (
         place_id          TEXT NOT NULL,
@@ -136,14 +117,13 @@ export const init: Migration = {
         owner_id          TEXT NOT NULL,
         created_at        TEXT NOT NULL,
         updated_at        TEXT NOT NULL,
-        deleted_at        TEXT,
         PRIMARY KEY (place_id, source_id),
         FOREIGN KEY (place_id)  REFERENCES places(id),
         FOREIGN KEY (source_id) REFERENCES sources(id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_place_sources_source
-        ON place_sources(source_id) WHERE deleted_at IS NULL;
+        ON place_sources(source_id);
 
       CREATE TABLE IF NOT EXISTS tags (
         id            TEXT PRIMARY KEY NOT NULL,
@@ -153,7 +133,6 @@ export const init: Migration = {
         owner_id      TEXT NOT NULL,
         created_at    TEXT NOT NULL,
         updated_at    TEXT NOT NULL,
-        deleted_at    TEXT,
         FOREIGN KEY (source_id) REFERENCES sources(id)
       );
 
@@ -177,7 +156,6 @@ export const init: Migration = {
 
       CREATE TRIGGER IF NOT EXISTS places_fts_ai
       AFTER INSERT ON places
-      WHEN NEW.deleted_at IS NULL
       BEGIN
         INSERT INTO places_fts (place_id, content) VALUES (
           NEW.id,
@@ -186,7 +164,7 @@ export const init: Migration = {
       END;
 
       CREATE TRIGGER IF NOT EXISTS places_fts_au
-      AFTER UPDATE OF name, city, description, deleted_at ON places
+      AFTER UPDATE OF name, city, description ON places
       BEGIN
         DELETE FROM places_fts WHERE place_id = OLD.id;
         INSERT INTO places_fts (place_id, content)
@@ -194,11 +172,10 @@ export const init: Migration = {
                  NEW.name || ' ' || coalesce(NEW.city, '') || ' ' || coalesce(NEW.description, '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(substr(coalesce(raw_text, ''), 1, 2000), ' ')
                              FROM place_sources
-                            WHERE place_id = NEW.id AND deleted_at IS NULL), '') ||
+                            WHERE place_id = NEW.id), '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(coalesce(extracted_address, ''), ' ')
                              FROM place_sources
-                            WHERE place_id = NEW.id AND deleted_at IS NULL), '')
-           WHERE NEW.deleted_at IS NULL;
+                            WHERE place_id = NEW.id), '');
       END;
 
       CREATE TRIGGER IF NOT EXISTS places_fts_ad
@@ -209,7 +186,6 @@ export const init: Migration = {
 
       CREATE TRIGGER IF NOT EXISTS place_sources_fts_ai
       AFTER INSERT ON place_sources
-      WHEN NEW.deleted_at IS NULL
       BEGIN
         DELETE FROM places_fts WHERE place_id = NEW.place_id;
         INSERT INTO places_fts (place_id, content)
@@ -217,16 +193,16 @@ export const init: Migration = {
                  p.name || ' ' || coalesce(p.city, '') || ' ' || coalesce(p.description, '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(substr(coalesce(raw_text, ''), 1, 2000), ' ')
                              FROM place_sources
-                            WHERE place_id = p.id AND deleted_at IS NULL), '') ||
+                            WHERE place_id = p.id), '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(coalesce(extracted_address, ''), ' ')
                              FROM place_sources
-                            WHERE place_id = p.id AND deleted_at IS NULL), '')
+                            WHERE place_id = p.id), '')
             FROM places p
-           WHERE p.id = NEW.place_id AND p.deleted_at IS NULL;
+           WHERE p.id = NEW.place_id;
       END;
 
       CREATE TRIGGER IF NOT EXISTS place_sources_fts_au
-      AFTER UPDATE OF raw_text, extracted_address, deleted_at ON place_sources
+      AFTER UPDATE OF raw_text, extracted_address ON place_sources
       BEGIN
         DELETE FROM places_fts WHERE place_id = NEW.place_id;
         INSERT INTO places_fts (place_id, content)
@@ -234,12 +210,12 @@ export const init: Migration = {
                  p.name || ' ' || coalesce(p.city, '') || ' ' || coalesce(p.description, '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(substr(coalesce(raw_text, ''), 1, 2000), ' ')
                              FROM place_sources
-                            WHERE place_id = p.id AND deleted_at IS NULL), '') ||
+                            WHERE place_id = p.id), '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(coalesce(extracted_address, ''), ' ')
                              FROM place_sources
-                            WHERE place_id = p.id AND deleted_at IS NULL), '')
+                            WHERE place_id = p.id), '')
             FROM places p
-           WHERE p.id = NEW.place_id AND p.deleted_at IS NULL;
+           WHERE p.id = NEW.place_id;
       END;
 
       CREATE TRIGGER IF NOT EXISTS place_sources_fts_ad
@@ -251,12 +227,12 @@ export const init: Migration = {
                  p.name || ' ' || coalesce(p.city, '') || ' ' || coalesce(p.description, '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(substr(coalesce(raw_text, ''), 1, 2000), ' ')
                              FROM place_sources
-                            WHERE place_id = p.id AND deleted_at IS NULL), '') ||
+                            WHERE place_id = p.id), '') ||
                  coalesce((SELECT ' ' || GROUP_CONCAT(coalesce(extracted_address, ''), ' ')
                              FROM place_sources
-                            WHERE place_id = p.id AND deleted_at IS NULL), '')
+                            WHERE place_id = p.id), '')
             FROM places p
-           WHERE p.id = OLD.place_id AND p.deleted_at IS NULL;
+           WHERE p.id = OLD.place_id;
       END;
 
       CREATE VIRTUAL TABLE IF NOT EXISTS sources_fts USING fts5(
@@ -267,7 +243,6 @@ export const init: Migration = {
 
       CREATE TRIGGER IF NOT EXISTS sources_fts_ai
       AFTER INSERT ON sources
-      WHEN NEW.deleted_at IS NULL
       BEGIN
         INSERT INTO sources_fts (source_id, content)
           SELECT NEW.id,
@@ -275,11 +250,11 @@ export const init: Migration = {
                  coalesce(' ' || (SELECT name FROM trips WHERE id = NEW.trip_id), '') ||
                  coalesce(' ' || (SELECT GROUP_CONCAT(value, ' ')
                                     FROM tags
-                                   WHERE source_id = NEW.id AND deleted_at IS NULL), '');
+                                   WHERE source_id = NEW.id), '');
       END;
 
       CREATE TRIGGER IF NOT EXISTS sources_fts_au
-      AFTER UPDATE OF ocr_text, trip_id, deleted_at ON sources
+      AFTER UPDATE OF ocr_text, trip_id ON sources
       BEGIN
         DELETE FROM sources_fts WHERE source_id = OLD.id;
         INSERT INTO sources_fts (source_id, content)
@@ -288,8 +263,7 @@ export const init: Migration = {
                  coalesce(' ' || (SELECT name FROM trips WHERE id = NEW.trip_id), '') ||
                  coalesce(' ' || (SELECT GROUP_CONCAT(value, ' ')
                                     FROM tags
-                                   WHERE source_id = NEW.id AND deleted_at IS NULL), '')
-           WHERE NEW.deleted_at IS NULL;
+                                   WHERE source_id = NEW.id), '');
       END;
 
       CREATE TRIGGER IF NOT EXISTS sources_fts_ad

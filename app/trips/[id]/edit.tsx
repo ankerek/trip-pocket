@@ -28,7 +28,7 @@ export default function EditTrip() {
     (async () => {
       const t = await getTrip(db, id);
       const countRow = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM places WHERE trip_id = ? AND deleted_at IS NULL`,
+        `SELECT COUNT(*) AS n FROM places WHERE trip_id = ?`,
         id,
       );
       if (cancelled) return;

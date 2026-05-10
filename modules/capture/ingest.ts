@@ -28,11 +28,11 @@ export async function ingestPendingImports(
     try {
       let suggestedTripId = p.suggested_trip_id;
       if (suggestedTripId !== null) {
-        // Trip may have been soft-deleted (or never existed) between when the
+        // Trip may have been deleted (or never existed) between when the
         // share extension wrote the pending row and now. Falling back to Inbox
         // beats orphaning the source on a deleted trip.
         const live = await db.getFirstAsync<{ id: string }>(
-          `SELECT id FROM trips WHERE id = ? AND deleted_at IS NULL`,
+          `SELECT id FROM trips WHERE id = ?`,
           suggestedTripId,
         );
         if (!live) suggestedTripId = null;

@@ -27,8 +27,7 @@ const DEBUG_PLACES_SQL = `SELECT p.id, p.name, p.city,
                                  p.latitude, p.longitude
                             FROM place_sources ps
                             JOIN places p ON p.id = ps.place_id
-                           WHERE ps.source_id = ? AND ps.deleted_at IS NULL
-                             AND p.deleted_at IS NULL
+                           WHERE ps.source_id = ?
                         ORDER BY ps.extracted_at ASC`;
 
 export default function OcrDebugSheet() {

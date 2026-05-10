@@ -111,13 +111,10 @@ describe('ingestPendingImports', () => {
     expect(remaining.map((r) => r.id)).toEqual(['p1']);
   });
 
-  it('falls back to Inbox when suggested_trip_id points to a soft-deleted trip', async () => {
+  it('falls back to Inbox when suggested_trip_id points to a deleted trip', async () => {
     const db = await freshDb();
-    await db.runAsync(
-      `INSERT INTO trips (id, name, owner_id, created_at, updated_at, deleted_at)
-       VALUES ('t-gone', 'Old Trip', ?, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-06T00:00:00Z')`,
-      ownerId,
-    );
+    // No trip row at all: simulates a trip that was deleted before the
+    // share-extension hand-off was processed.
     await db.runAsync(
       `INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
        VALUES ('p1', '/appgroup/img1.jpg', 't-gone', '2026-05-07T10:00:00Z')`,

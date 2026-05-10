@@ -44,7 +44,6 @@ const EXTRACTED_SQL = `SELECT ps.source_id, p.id AS place_id, p.name, p.city, p.
                               p.enrichment_status, p.photo_name, ps.extracted_at
                          FROM place_sources ps
                          JOIN places p ON p.id = ps.place_id
-                        WHERE ps.deleted_at IS NULL AND p.deleted_at IS NULL
                      ORDER BY ps.extracted_at ASC`;
 
 const CATEGORY_ICON: Record<NonNullable<ExtractedPlace['category']> | 'null', string> = {

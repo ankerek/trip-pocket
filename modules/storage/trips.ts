@@ -29,7 +29,6 @@ type Row = {
   owner_id: string;
   created_at: string;
   updated_at: string;
-  deleted_at: string | null;
 };
 
 function rowToTrip(r: Row): Trip {
@@ -60,9 +59,8 @@ export async function createTrip(db: Database, input: InsertTripInput): Promise<
 
 export async function listTrips(db: Database): Promise<Trip[]> {
   const rows = await db.getAllAsync<Row>(
-    `SELECT id, name, color, owner_id, created_at, updated_at, deleted_at
+    `SELECT id, name, color, owner_id, created_at, updated_at
        FROM trips
-      WHERE deleted_at IS NULL
    ORDER BY name COLLATE NOCASE ASC`,
   );
   return rows.map(rowToTrip);
@@ -70,9 +68,9 @@ export async function listTrips(db: Database): Promise<Trip[]> {
 
 export async function getTrip(db: Database, id: string): Promise<Trip | null> {
   const row = await db.getFirstAsync<Row>(
-    `SELECT id, name, color, owner_id, created_at, updated_at, deleted_at
+    `SELECT id, name, color, owner_id, created_at, updated_at
        FROM trips
-      WHERE id = ? AND deleted_at IS NULL`,
+      WHERE id = ?`,
     id,
   );
   return row ? rowToTrip(row) : null;

@@ -21,10 +21,9 @@ const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_s
                        LEFT JOIN (
                               SELECT ps.source_id, COUNT(*) AS place_count
                                 FROM place_sources ps
-                               WHERE ps.deleted_at IS NULL
                             GROUP BY ps.source_id
                             ) p ON p.source_id = s.id
-                           WHERE s.deleted_at IS NULL AND s.trip_id = ?
+                           WHERE s.trip_id = ?
                         ORDER BY s.captured_at DESC`;
 
 const TRIP_PLACES_SQL = `SELECT id, name, city, category, photo_name,
@@ -32,7 +31,7 @@ const TRIP_PLACES_SQL = `SELECT id, name, city, category, photo_name,
                                 external_place_id, enrichment_status,
                                 latitude, longitude, formatted_address
                            FROM places
-                          WHERE trip_id = ? AND deleted_at IS NULL
+                          WHERE trip_id = ?
                        ORDER BY enriched_at DESC NULLS LAST, created_at DESC`;
 
 type ViewMode = 'grid' | 'map';

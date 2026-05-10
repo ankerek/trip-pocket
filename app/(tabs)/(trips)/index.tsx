@@ -26,12 +26,12 @@ type TripRowData = {
 
 const COUNT_SQL = `SELECT trip_id, COUNT(*) AS n
                      FROM places
-                    WHERE trip_id IS NOT NULL AND deleted_at IS NULL
+                    WHERE trip_id IS NOT NULL
                  GROUP BY trip_id`;
 
 const PREVIEWS_SQL = `SELECT id, name, photo_name, external_place_id
                         FROM places
-                       WHERE trip_id = ? AND deleted_at IS NULL
+                       WHERE trip_id = ?
                     ORDER BY enriched_at DESC NULLS LAST, created_at DESC
                        LIMIT 5`;
 

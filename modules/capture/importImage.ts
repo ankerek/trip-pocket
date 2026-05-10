@@ -33,9 +33,7 @@ export async function importImage(
   const contentHash = await input.fs.sha256(input.sourceUri);
 
   const existing = await db.getFirstAsync<{ id: string }>(
-    `SELECT id FROM sources
-      WHERE content_hash = ? AND deleted_at IS NULL
-      LIMIT 1`,
+    `SELECT id FROM sources WHERE content_hash = ? LIMIT 1`,
     contentHash,
   );
   if (existing) {

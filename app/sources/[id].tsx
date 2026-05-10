@@ -39,8 +39,7 @@ export default function SourceDetail() {
   // Live place count drives the toolbar icon (mappin.circle.fill vs
   // mappin.slash) so the button flips state the moment extraction commits.
   const placeCounts = useLiveQuery<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM place_sources
-      WHERE source_id = ? AND deleted_at IS NULL`,
+    `SELECT COUNT(*) AS n FROM place_sources WHERE source_id = ?`,
     id ? [id] : [],
     ['place_sources'],
   );

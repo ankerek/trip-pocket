@@ -91,9 +91,8 @@ const PLACE_SEARCH_SQL = `
          t.name        AS trip_name
     FROM places_fts
     JOIN places p ON p.id = places_fts.place_id
-    LEFT JOIN trips t ON t.id = p.trip_id AND t.deleted_at IS NULL
+    LEFT JOIN trips t ON t.id = p.trip_id
    WHERE places_fts MATCH ?
-     AND p.deleted_at IS NULL
      AND (? IS NULL OR p.trip_id = ?)
 ORDER BY rank
    LIMIT 50

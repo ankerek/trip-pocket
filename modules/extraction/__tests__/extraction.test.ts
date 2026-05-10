@@ -88,7 +88,7 @@ async function getPlacesForSource(
             ps.extracted_address, ps.raw_text, ps.confidence
        FROM place_sources ps
        JOIN places p ON p.id = ps.place_id
-      WHERE ps.source_id = ? AND ps.deleted_at IS NULL AND p.deleted_at IS NULL
+      WHERE ps.source_id = ?
    ORDER BY p.created_at ASC`,
     sourceId,
   );
@@ -273,7 +273,7 @@ describe('createExtractor', () => {
       expect(rows[0]?.place_id).toBe('p-existing');
 
       const placeCount = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM places WHERE deleted_at IS NULL`,
+        `SELECT COUNT(*) AS n FROM places`,
       );
       expect(placeCount?.n).toBe(1);
     });
@@ -305,7 +305,7 @@ describe('createExtractor', () => {
       expect(['p1', 'p2'].includes(rows[0]!.place_id)).toBe(false);
 
       const placeCount = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM places WHERE deleted_at IS NULL`,
+        `SELECT COUNT(*) AS n FROM places`,
       );
       expect(placeCount?.n).toBe(3);
     });
@@ -335,7 +335,7 @@ describe('createExtractor', () => {
       expect(rows[0]?.place_id).not.toBe('p-other');
 
       const myCount = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM places WHERE owner_id = 'owner-1' AND deleted_at IS NULL`,
+        `SELECT COUNT(*) AS n FROM places WHERE owner_id = 'owner-1'`,
       );
       expect(myCount?.n).toBe(1);
     });

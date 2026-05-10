@@ -11,12 +11,10 @@ const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category,
                            p.price_level, p.external_url
                       FROM place_sources ps
                       JOIN places p ON p.id = ps.place_id
-                     WHERE ps.source_id = ? AND ps.deleted_at IS NULL
-                       AND p.deleted_at IS NULL
+                     WHERE ps.source_id = ?
                   ORDER BY ps.extracted_at ASC`;
 
-const STATUS_SQL = `SELECT extraction_status FROM sources
-                     WHERE id = ? AND deleted_at IS NULL`;
+const STATUS_SQL = `SELECT extraction_status FROM sources WHERE id = ?`;
 
 type StatusRow = { extraction_status: 'pending' | 'done' | 'failed' };
 

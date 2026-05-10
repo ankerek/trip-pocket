@@ -95,7 +95,7 @@ export async function listSourcesForPlace(
   const rows = await db.getAllAsync<Row>(
     `SELECT ${ALL}
        FROM place_sources
-      WHERE place_id = ? AND deleted_at IS NULL
+      WHERE place_id = ?
    ORDER BY extracted_at ASC`,
     placeId,
   );
@@ -109,7 +109,7 @@ export async function listPlacesForSource(
   const rows = await db.getAllAsync<Row>(
     `SELECT ${ALL}
        FROM place_sources
-      WHERE source_id = ? AND deleted_at IS NULL
+      WHERE source_id = ?
    ORDER BY extracted_at ASC`,
     sourceId,
   );
@@ -151,7 +151,7 @@ export async function countLiveSourcesForPlace(
   placeId: string,
 ): Promise<number> {
   const row = await db.getFirstAsync<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM place_sources WHERE place_id = ? AND deleted_at IS NULL`,
+    `SELECT COUNT(*) AS n FROM place_sources WHERE place_id = ?`,
     placeId,
   );
   return row?.n ?? 0;

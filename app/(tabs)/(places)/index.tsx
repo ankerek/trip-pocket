@@ -26,8 +26,7 @@ const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category, p.photo_name,
                            p.latitude, p.longitude, p.formatted_address,
                            t.name AS trip_name, p.trip_id
                       FROM places p
-                 LEFT JOIN trips t ON t.id = p.trip_id AND t.deleted_at IS NULL
-                     WHERE p.deleted_at IS NULL
+                 LEFT JOIN trips t ON t.id = p.trip_id
                   ORDER BY p.enriched_at DESC NULLS LAST, p.created_at DESC`;
 
 // "Untriaged" means the user hasn't decided which trip the source
@@ -37,14 +36,12 @@ const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category, p.photo_name,
 // surface a "you have N skipped items" follow-up — future work).
 const INBOX_COUNT_SQL = `SELECT COUNT(*) AS n
                            FROM sources s
-                          WHERE s.deleted_at IS NULL
-                            AND s.trip_id IS NULL`;
+                          WHERE s.trip_id IS NULL`;
 
 const TRIPS_SQL = `SELECT t.id, t.name,
                           COUNT(p.id) AS place_count
                      FROM trips t
-                LEFT JOIN places p ON p.trip_id = t.id AND p.deleted_at IS NULL
-                    WHERE t.deleted_at IS NULL
+                LEFT JOIN places p ON p.trip_id = t.id
                  GROUP BY t.id
                  ORDER BY t.created_at DESC`;
 

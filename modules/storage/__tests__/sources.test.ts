@@ -553,14 +553,14 @@ describe('sources additions', () => {
 
     const inboxHook = renderHook(() =>
       useLiveQuery<{ n: number }>(
-        'SELECT COUNT(*) AS n FROM sources WHERE trip_id IS NULL AND deleted_at IS NULL',
+        'SELECT COUNT(*) AS n FROM sources WHERE trip_id IS NULL',
         [],
         ['sources'],
       ),
     );
     const tripHook = renderHook(() =>
       useLiveQuery<{ n: number }>(
-        'SELECT COUNT(*) AS n FROM sources WHERE trip_id = ? AND deleted_at IS NULL',
+        'SELECT COUNT(*) AS n FROM sources WHERE trip_id = ?',
         ['t1'],
         ['trips'],
       ),

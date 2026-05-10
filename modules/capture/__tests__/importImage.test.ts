@@ -156,9 +156,9 @@ describe('importImage', () => {
     const fs = makeFs({ sha256: sha });
 
     // The choreography: importImage runs sha256 → pre-check (no row found) → fs.copy
-    // → insertSource. We hijack fs.copy to insert a CONFLICTING active row mid-flight
-    // so that by the time importImage's own insert runs, the partial unique index
-    // `WHERE deleted_at IS NULL` fires SQLITE_CONSTRAINT.
+    // → insertSource. We hijack fs.copy to insert a CONFLICTING row mid-flight
+    // so that by the time importImage's own insert runs, the unique index on
+    // content_hash fires SQLITE_CONSTRAINT.
     fs.copy = jest.fn(async (_from, _to) => {
       await db.runAsync(
         `INSERT INTO sources

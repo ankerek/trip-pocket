@@ -128,7 +128,7 @@ export async function insertPlace(db: Database, input: InsertPlaceInput): Promis
 
 export async function getPlace(db: Database, id: string): Promise<Place | null> {
   const row = await db.getFirstAsync<Row>(
-    `SELECT ${ALL} FROM places WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT ${ALL} FROM places WHERE id = ?`,
     id,
   );
   return row ? rowToPlace(row) : null;
@@ -145,7 +145,7 @@ export async function findSoleMatchByNormalizedKey(
 ): Promise<string | null> {
   const rows = await db.getAllAsync<{ id: string }>(
     `SELECT id FROM places
-      WHERE normalized_key = ? AND owner_id = ? AND deleted_at IS NULL
+      WHERE normalized_key = ? AND owner_id = ?
       LIMIT 2`,
     normalizedKey,
     ownerId,
@@ -161,8 +161,7 @@ export async function listPlaces(
     const rows = await db.getAllAsync<Row>(
       `SELECT ${ALL}
          FROM places
-        WHERE deleted_at IS NULL
-          AND ((? IS NULL AND trip_id IS NULL) OR trip_id = ?)
+        WHERE ((? IS NULL AND trip_id IS NULL) OR trip_id = ?)
      ORDER BY created_at DESC`,
       filter.tripId ?? null,
       filter.tripId ?? null,
@@ -170,7 +169,7 @@ export async function listPlaces(
     return rows.map(rowToPlace);
   }
   const rows = await db.getAllAsync<Row>(
-    `SELECT ${ALL} FROM places WHERE deleted_at IS NULL ORDER BY created_at DESC`,
+    `SELECT ${ALL} FROM places ORDER BY created_at DESC`,
   );
   return rows.map(rowToPlace);
 }
@@ -184,7 +183,7 @@ export async function movePlaceToTrip(
   let movedSources = false;
   await db.withTransactionAsync(async () => {
     await db.runAsync(
-      `UPDATE places SET trip_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+      `UPDATE places SET trip_id = ?, updated_at = ? WHERE id = ?`,
       tripId,
       now,
       placeId,
@@ -198,10 +197,9 @@ export async function movePlaceToTrip(
         `UPDATE sources
             SET trip_id = ?, updated_at = ?
           WHERE trip_id IS NULL
-            AND deleted_at IS NULL
             AND id IN (
               SELECT source_id FROM place_sources
-               WHERE place_id = ? AND deleted_at IS NULL
+               WHERE place_id = ?
             )`,
         tripId,
         now,
@@ -342,7 +340,6 @@ export async function findCollidingByExternalId(
     `SELECT ${ALL}
        FROM places
       WHERE external_place_id = ? AND owner_id = ? AND id != ?
-        AND deleted_at IS NULL
       LIMIT 1`,
     externalPlaceId,
     ownerId,
@@ -355,7 +352,7 @@ export async function countPlacesByTrip(db: Database): Promise<Record<string, nu
   const rows = await db.getAllAsync<{ trip_id: string; n: number }>(
     `SELECT trip_id, COUNT(*) AS n
        FROM places
-      WHERE deleted_at IS NULL AND trip_id IS NOT NULL
+      WHERE trip_id IS NOT NULL
    GROUP BY trip_id`,
   );
   const out: Record<string, number> = {};

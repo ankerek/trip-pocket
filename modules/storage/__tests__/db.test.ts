@@ -90,3 +90,56 @@ describe('initial migration (0001)', () => {
     expect(names).not.toContain('screenshots_fts');
   });
 });
+
+describe('schema shape — post-soft-delete-removal', () => {
+  it('no table has a deleted_at column', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    for (const table of ['trips', 'sources', 'places', 'place_sources', 'tags']) {
+      const cols = await db.getAllAsync<{ name: string }>(
+        `SELECT name FROM pragma_table_info(?)`,
+        table,
+      );
+      expect(cols.find((c) => c.name === 'deleted_at')).toBeUndefined();
+    }
+  });
+
+  it('no index SQL mentions deleted_at', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    const indexes = await db.getAllAsync<{ name: string; sql: string | null }>(
+      `SELECT name, sql FROM sqlite_master
+        WHERE type = 'index' AND sql IS NOT NULL`,
+    );
+    for (const ix of indexes) {
+      expect(ix.sql).not.toMatch(/deleted_at/);
+    }
+  });
+
+  it('FTS triggers populate places_fts on INSERT and rebuild on UPDATE OF name', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    const ownerId = 'o1';
+    await db.runAsync(
+      `INSERT INTO places (id, trip_id, name, city, normalized_key,
+                           enrichment_status, owner_id, created_at, updated_at)
+       VALUES ('p1', NULL, 'Sushi Bar', 'Tokyo', 'sushi-bar|tokyo',
+               'pending', ?, ?, ?)`,
+      ownerId, '2026-05-10T10:00:00Z', '2026-05-10T10:00:00Z',
+    );
+    let row = await db.getFirstAsync<{ content: string }>(
+      `SELECT content FROM places_fts WHERE place_id = 'p1'`,
+    );
+    expect(row?.content).toMatch(/Sushi Bar/);
+
+    await db.runAsync(
+      `UPDATE places SET name = 'Maru Tonkatsu', updated_at = ? WHERE id = 'p1'`,
+      '2026-05-10T10:01:00Z',
+    );
+    row = await db.getFirstAsync<{ content: string }>(
+      `SELECT content FROM places_fts WHERE place_id = 'p1'`,
+    );
+    expect(row?.content).toMatch(/Maru Tonkatsu/);
+    expect(row?.content).not.toMatch(/Sushi Bar/);
+  });
+});

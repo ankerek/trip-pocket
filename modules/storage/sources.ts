@@ -97,7 +97,7 @@ function rowToSource(r: Row): Source {
 
 export async function getSource(db: Database, id: string): Promise<Source | null> {
   const row = await db.getFirstAsync<Row>(
-    `SELECT ${ALL_COLUMNS} FROM sources WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT ${ALL_COLUMNS} FROM sources WHERE id = ?`,
     id,
   );
   return row ? rowToSource(row) : null;
@@ -110,8 +110,7 @@ export async function listSources(
   const rows = await db.getAllAsync<Row>(
     `SELECT ${ALL_COLUMNS}
        FROM sources
-      WHERE deleted_at IS NULL
-        AND ((? IS NULL AND trip_id IS NULL) OR trip_id = ?)
+      WHERE ((? IS NULL AND trip_id IS NULL) OR trip_id = ?)
    ORDER BY captured_at DESC`,
     filter.tripId,
     filter.tripId,
@@ -121,7 +120,7 @@ export async function listSources(
 
 export async function listAllSources(db: Database): Promise<Source[]> {
   const rows = await db.getAllAsync<Row>(
-    `SELECT ${ALL_COLUMNS} FROM sources WHERE deleted_at IS NULL ORDER BY captured_at DESC`,
+    `SELECT ${ALL_COLUMNS} FROM sources ORDER BY captured_at DESC`,
   );
   return rows.map(rowToSource);
 }
@@ -130,7 +129,7 @@ export async function listInboxSources(db: Database): Promise<Source[]> {
   const rows = await db.getAllAsync<Row>(
     `SELECT ${ALL_COLUMNS}
        FROM sources
-      WHERE deleted_at IS NULL AND trip_id IS NULL
+      WHERE trip_id IS NULL
    ORDER BY captured_at DESC`,
   );
   return rows.map(rowToSource);
@@ -143,7 +142,7 @@ export async function listSourcesByTrip(
 ): Promise<Source[]> {
   const sql = `SELECT ${ALL_COLUMNS}
                  FROM sources
-                WHERE deleted_at IS NULL AND trip_id = ?
+                WHERE trip_id = ?
              ORDER BY captured_at DESC
              ${limit !== undefined ? 'LIMIT ?' : ''}`;
   const rows =
@@ -296,7 +295,7 @@ export async function countSourcesByTrip(db: Database): Promise<Record<string, n
   const rows = await db.getAllAsync<{ trip_id: string; n: number }>(
     `SELECT trip_id, COUNT(*) AS n
        FROM sources
-      WHERE deleted_at IS NULL AND trip_id IS NOT NULL
+      WHERE trip_id IS NOT NULL
    GROUP BY trip_id`,
   );
   const out: Record<string, number> = {};

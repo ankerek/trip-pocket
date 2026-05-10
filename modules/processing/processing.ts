@@ -53,7 +53,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
 
   async function processOne(id: string): Promise<{ retry: boolean }> {
     const row = await opts.db.getFirstAsync<{ file_path: string }>(
-      `SELECT file_path FROM sources WHERE id = ? AND deleted_at IS NULL`,
+      `SELECT file_path FROM sources WHERE id = ?`,
       id,
     );
     if (!row) return { retry: false };
@@ -96,7 +96,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     // retry-on-relaunch path is runStartupRecovery (called once per process).
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources
-        WHERE ocr_status = 'pending' AND deleted_at IS NULL
+        WHERE ocr_status = 'pending'
      ORDER BY captured_at ASC`,
     );
     for (const r of rows) enqueueOcr(r.id);
@@ -106,7 +106,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     await opts.db.runAsync(
       `UPDATE sources
           SET ocr_status = 'pending', updated_at = ?
-        WHERE ocr_status = 'failed' AND deleted_at IS NULL`,
+        WHERE ocr_status = 'failed'`,
       getNow(),
     );
   }

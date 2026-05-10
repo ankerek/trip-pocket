@@ -28,7 +28,7 @@ type SourceStripItem = {
   trip_name: string | null;
 };
 
-const TRIP_NAME_SQL = `SELECT name FROM trips WHERE id = ? AND deleted_at IS NULL LIMIT 1`;
+const TRIP_NAME_SQL = `SELECT name FROM trips WHERE id = ? LIMIT 1`;
 
 export default function PlaceDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -51,8 +51,7 @@ export default function PlaceDetail() {
        FROM place_sources ps
        JOIN sources s ON s.id = ps.source_id
   LEFT JOIN trips t ON t.id = s.trip_id
-      WHERE ps.place_id = ? AND ps.deleted_at IS NULL
-        AND s.deleted_at IS NULL
+      WHERE ps.place_id = ?
    ORDER BY ps.extracted_at ASC`,
     id ? [id] : [],
     ['place_sources', 'sources', 'trips'],

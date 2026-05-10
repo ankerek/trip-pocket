@@ -103,7 +103,6 @@ async function getPlace(
   description: string | null;
   latitude: number | null;
   trip_id: string | null;
-  deleted_at: string | null;
 }> {
   const row = await db.getFirstAsync<{
     enrichment_status: string;
@@ -112,9 +111,8 @@ async function getPlace(
     description: string | null;
     latitude: number | null;
     trip_id: string | null;
-    deleted_at: string | null;
   }>(
-    `SELECT enrichment_status, external_place_id, enriched_at, description, latitude, trip_id, deleted_at
+    `SELECT enrichment_status, external_place_id, enriched_at, description, latitude, trip_id
        FROM places WHERE id = ?`,
     id,
   );
@@ -335,7 +333,6 @@ describe('createEnricher', () => {
       const winner = await getPlace(db, 'p-existing');
       expect(winner.enrichment_status).toBe('enriched');
       expect(winner.trip_id).toBe('t1');
-      expect(winner.deleted_at).toBeNull();
 
       // Incoming is hard-deleted: row is gone entirely.
       const loserRow = await db.getFirstAsync(
@@ -381,7 +378,6 @@ describe('createEnricher', () => {
       expect(winner.enrichment_status).toBe('enriched');
       expect(winner.trip_id).toBe('t1');
       expect(winner.external_place_id).toBe('ChIJ-test');
-      expect(winner.deleted_at).toBeNull();
 
       // Existing is hard-deleted: row is gone entirely.
       const loserRow = await db.getFirstAsync(
@@ -415,8 +411,7 @@ describe('createEnricher', () => {
 
       const existing = await getPlace(db, 'p-existing');
       const incoming = await getPlace(db, 'p-incoming');
-      expect(existing.deleted_at).toBeNull();
-      expect(incoming.deleted_at).toBeNull();
+      // Both rows still exist (skip-merge path).
       expect(existing.external_place_id).toBe('ChIJ-test');
       // Incoming is left without external_place_id (UNIQUE forbids two live rows).
       expect(incoming.external_place_id).toBeNull();

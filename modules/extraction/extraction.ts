@@ -91,7 +91,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
 
   async function processOne(id: string): Promise<ProcessOutcome> {
     const row = await opts.db.getFirstAsync<{ ocr_text: string | null; trip_id: string | null }>(
-      `SELECT ocr_text, trip_id FROM sources WHERE id = ? AND deleted_at IS NULL`,
+      `SELECT ocr_text, trip_id FROM sources WHERE id = ?`,
       id,
     );
     if (!row) return { kind: 'done' };
@@ -251,7 +251,6 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       `SELECT id FROM sources
         WHERE extraction_status = 'pending'
           AND ocr_status = 'done'
-          AND deleted_at IS NULL
      ORDER BY captured_at ASC`,
     );
     for (const r of rows) enqueueExtraction(r.id);
@@ -261,7 +260,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     await opts.db.runAsync(
       `UPDATE sources
           SET extraction_status = 'pending', updated_at = ?
-        WHERE extraction_status = 'failed' AND deleted_at IS NULL`,
+        WHERE extraction_status = 'failed'`,
       getNow(),
     );
   }
