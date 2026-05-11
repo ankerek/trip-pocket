@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.trippocket.app",
+      "buildNumber": "1",
       "icon": "./assets/AppIcon.icon",
       "supportsTablet": false,
       "entitlements": {

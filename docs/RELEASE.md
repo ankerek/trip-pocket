@@ -127,6 +127,75 @@ eas submit --platform ios --latest
 
 ---
 
+## Each release — local build alternative
+
+EAS' free tier queues can be slow. The same TestFlight release can be produced from a local Xcode archive in ~8–12 min instead of waiting. Both paths are kept supported; pick whichever is faster on the day.
+
+**One-time setup (done once per machine):**
+
+- Copy `.env.local.example` to `.env.local` and paste your real `SENTRY_AUTH_TOKEN` (Organization Token, `org:ci` scope) and `EXPO_PUBLIC_SENTRY_DSN` (project DSN). The file is gitignored.
+- Ensure Xcode is installed and your Apple Developer team (`WL5ALL46C4`) is signed in (Xcode → Settings → Accounts).
+
+**Each release:**
+
+### L1. Bump the build number
+
+Open `app.json` and increment `ios.buildNumber` by one (e.g. `"1"` → `"2"`). App Store Connect rejects builds with duplicate `(version, buildNumber)` pairs.
+
+### L2. Source the env vars
+
+```sh
+export $(cat .env.local | xargs)
+```
+
+Both `SENTRY_AUTH_TOKEN` and `EXPO_PUBLIC_SENTRY_DSN` must be in the shell environment when Xcode runs the archive — the `@sentry/react-native` Xcode build phase reads them at archive time.
+
+### L3. Regenerate the iOS project from app.json
+
+```sh
+npx expo prebuild --platform ios
+```
+
+Materializes the share-extension target (via `plugins/with-share-extension`) and ensures `ios/` reflects the current `app.json`. Safe to re-run — won't blow away non-generated files.
+
+### L4. Archive in Xcode
+
+```sh
+open ios/TripPocket.xcworkspace
+```
+
+- Scheme: **Trip Pocket** (top-left next to play/stop).
+- Destination: **Any iOS Device (arm64)** (top of the device list).
+- Configuration: **Release** (Edit Scheme → Run / Archive → Build Configuration).
+- **Product → Archive**.
+
+The first archive takes ~10 min (Hermes bundle + native compile + dSYM generation). Subsequent archives are faster with cache hits.
+
+When complete, **Organizer** opens automatically with the new archive selected.
+
+### L5. Upload to App Store Connect
+
+In Organizer:
+
+- Click **Distribute App** → **App Store Connect** → **Next**.
+- Distribution options: defaults are fine. Check **Upload your app's symbols** (gives Apple the dSYMs).
+- Distribution signing: **Automatically manage signing** (assuming Xcode is set up with your team). Confirm both `com.trippocket.app` and `com.trippocket.app.share` certificates are issued.
+- **Upload**.
+
+Upload takes ~2 min. Same processing window as the EAS path (~15–30 min until "Ready to Test").
+
+### L6. Verify Sentry release
+
+Same as step 6 of the EAS flow — open Sentry → Releases, confirm `com.trippocket.app@<version>+<buildNumber>` appears within a few minutes. The Xcode build phase that the Sentry plugin patched should have uploaded JS sourcemaps + native dSYMs automatically.
+
+If the release didn't appear, the most common cause is `SENTRY_AUTH_TOKEN` not being in the shell env at archive time — `export $(cat .env.local | xargs)` only affects the current shell, and Xcode picks up the env from however *it* was launched. If Xcode was already open before you exported, quit and reopen it from the same shell.
+
+### L7. Paste release notes
+
+Same as step 5 of the EAS flow — paste `whatsnew/en-US.txt` into ASC's What to Test field once the build is processed.
+
+---
+
 ## Troubleshooting
 
 ### `Build number is already used`
