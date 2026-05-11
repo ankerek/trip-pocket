@@ -1,0 +1,1 @@
+First TestFlight build of Trip Pocket — capture from the share sheet, browse in Pocket, tap to see AI-extracted places.

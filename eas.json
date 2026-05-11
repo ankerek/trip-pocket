@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 12.0.0"
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "dev": {
@@ -15,6 +16,21 @@
       "distribution": "internal",
       "ios": {
         "simulator": true
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "ios": {
+        "simulator": false
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleTeamId": "WL5ALL46C4",
+        "ascAppId": "6768290313"
       }
     }
   }
