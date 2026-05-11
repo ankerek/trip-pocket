@@ -114,8 +114,10 @@ export function classifyImportError(err: unknown): CaptureErrorKind;
 **Detection:** match (case-insensitive) on the error's `code`, `message`, or stringified form for any of:
 - `ENOSPC`
 - `NSFileWriteOutOfSpaceError` (Cocoa file write, no space)
-- Cocoa error code `640` (volume full) / `642` (file write out of space)
+- Cocoa `NSCocoaErrorDomain` code `640` (`NSFileWriteOutOfSpaceError`)
 - substrings `"no space"`, `"out of space"`, `"out of storage"`, `"database or disk is full"` (SQLite full-disk error from `insertSource`)
+
+Cocoa `642` is **`NSFileWriteVolumeReadOnlyError`**, *not* out-of-space, and is intentionally excluded — matching it would surface "Your device is out of storage" for a read-only-volume failure (an unrelated, much rarer condition we don't address in this pass).
 
 Anything not matching is `'unknown'`. We do not classify network / extraction / enrichment errors here — those have their own taxonomy in the worker pipeline.
 
@@ -123,23 +125,28 @@ Anything not matching is `'unknown'`. We do not classify network / extraction / 
 
 ```ts
 type Outcome = {
-  imported: number;
-  failed: number;
+  imported: number;   // includes 'duplicate' results from importImage (same net state for the user)
+  failed: number;     // hard failures + items skipped after storage-full short-circuit
   storageFull: number;
   denied: boolean;
 };
 ```
 
+**Duplicate handling:** `importImage` returns `{ status: 'imported' | 'duplicate' }`. Both are terminal user-successes (the image is in the user's library — either newly or from a prior import) and both count toward `imported`. We do **not** add a separate `skipped`/`duplicate` toast; the in-app grid update is feedback enough, and a friend importing the same screenshot twice doesn't need to be told. Today's wire-up only counts `'imported'` — this pass fixes that.
+
+**Concurrency and storage-full short-circuit:** the importer currently runs 4 concurrent workers (`pickPhotos.ts:47-72`). On the first `'storage-full'` classification, a shared `storageFullDetected` flag is set. Each worker checks it before pulling the next item from the queue; if set, the worker drains the remaining queue without calling `importImage` (any items already in flight finish — best-effort stop, no cancellation). Drained items are counted in `failed` (they're failures from the user's POV — we tried, the device was full, we gave up). The `storageFull` field still counts only items where the classifier matched, so toast rule precedence is: any `storageFull > 0` → storage-full message regardless of other counts.
+
 **Changes:**
 1. Before `launchImageLibraryAsync`, call `ensurePhotosAccess()`. If `'denied'`, return `{ imported: 0, failed: 0, storageFull: 0, denied: true }`. No toast — the Alert already explained it.
-2. Per-asset `catch` calls `classifyImportError(err)`. If `'storage-full'`, increment `storageFull` and `failed`. Stop processing remaining assets in the batch on the first storage-full (further writes will also fail).
-3. After the loop, fire exactly one toast based on outcome:
+2. Per-asset `catch` calls `classifyImportError(err)`. If `'storage-full'`, increment `storageFull` and `failed`, set `storageFullDetected`. Other failures increment `failed` only.
+3. Workers check `storageFullDetected` before each `queue.shift()`; if set, drain the queue, counting each remaining item as `failed`.
+4. After all workers settle, fire exactly one toast based on outcome (priority order):
    - `denied` → none.
+   - `storageFull > 0` → `{ kind: 'error', message: "Your device is out of storage" }`. No action — iOS does not allow a deeplink to Storage settings (`Linking.openSettings()` only opens the app's own settings page, which is not what the user needs here). Priority over partial / total failure rules below.
    - `imported > 0 && failed === 0` → none. (Silent success; the existing in-app live query updates the grid.)
-   - `storageFull > 0` → `{ kind: 'error', message: "Your device is out of storage" }`. No action — iOS does not allow a deeplink to Storage settings (`Linking.openSettings()` only opens the app's own settings page, which is not what the user needs here).
    - `failed > 0 && imported > 0` → `{ kind: 'error', message: "${failed} of ${total} photos didn't import" }`.
    - `failed > 0 && imported === 0` → `{ kind: 'error', message: "Couldn't import photos" }`.
-4. Existing haptic logic stays.
+5. Existing haptic logic stays.
 
 ### 5. Share extension — `native/ShareExtension/`
 
@@ -165,6 +172,7 @@ When `saveError != nil`, the picker UI is replaced (or overlaid) with:
 **Implementation notes:**
 - Disambiguate "no attachment" from "image load failed": no attachment is a user-error (they shared something we can't read), and the body copy reflects that.
 - Time-bound retries: don't limit them. The user is in front of the sheet and can dismiss.
+- **No file leaks on Retry.** `PendingImportWriter.write` (`native/ShareExtension/PendingImportWriter.swift:22-33, 82-84`) generates a fresh UUID destination, copies the image into the app-group inbox, then opens SQLite and inserts the row. If the DB step throws (`PendingImportError.dbFailed`), the copied file is orphaned today. Under the new Retry loop, every retry on a persistent DB-failure would copy another orphan. Fix as part of this pass: `PendingImportWriter.write` must remove the copied file on any post-copy failure (DB open, table create, prepare, step). Wrap the post-copy work in a `do { ... } catch { try? FileManager.default.removeItem(at: destURL); throw }` pattern. Retry then starts clean.
 - Telemetry: we *do not* add anything new for the share extension here. Sentry's React Native SDK does not cover the extension target. Adding `sentry-cocoa` to the extension is a separate sub-project if we want signal on these failures; for this pass we accept that share-extension errors are user-surfaced only.
 
 ## Wire-up summary
@@ -179,6 +187,7 @@ When `saveError != nil`, the picker UI is replaced (or overlaid) with:
 | `tw/theme.ts` | Add `dangerBg` / `dangerText` for light + dark schemes. |
 | `native/ShareExtension/ShareViewController.swift` | Refactor `handleSave` to report errors back to the view rather than calling `cancel()`. |
 | `native/ShareExtension/TripPickerView.swift` | Add `saveError` state + error overlay with Retry / Cancel. Constructor extended with `onError` callback. |
+| `native/ShareExtension/PendingImportWriter.swift` | On any post-copy failure (DB open / create / prepare / step), remove the just-copied file before re-throwing. Prevents Retry from leaking app-group inbox files on a persistent DB-failure. |
 
 ## Data flow
 
