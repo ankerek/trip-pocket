@@ -142,7 +142,7 @@ export default function Trips() {
               )}
               ListEmptyComponent={
                 <Text
-                  className="px-4 pb-3 text-text-muted"
+                  className="pb-3 text-text-muted"
                   style={{ fontSize: 12 }}
                 >
                   No places yet

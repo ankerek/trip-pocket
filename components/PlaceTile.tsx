@@ -129,25 +129,18 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
           >
             {place.name}
           </Text>
-          {place.rating !== null ? (
+          {place.rating !== null || place.city ? (
             <Text
+              numberOfLines={1}
               style={{
                 fontSize: 11,
                 color: 'rgba(255,255,255,0.85)',
                 fontVariant: ['tabular-nums'],
               }}
             >
-              ★ {place.rating.toFixed(1)}
-              {place.price_level !== null && place.price_level > 0
-                ? ' · '.concat('$'.repeat(place.price_level))
-                : ''}
-            </Text>
-          ) : place.city ? (
-            <Text
-              numberOfLines={1}
-              style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)' }}
-            >
-              {place.city}
+              {place.city ?? ''}
+              {place.city && place.rating !== null ? ' · ' : ''}
+              {place.rating !== null ? `★ ${place.rating.toFixed(1)}` : ''}
             </Text>
           ) : null}
         </View>

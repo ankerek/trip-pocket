@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, ToastAndroid } from 'react-native';
+import { Alert, Platform, ToastAndroid } from 'react-native';
+import { MenuView } from '@react-native-menu/menu';
 import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,7 +22,7 @@ import { SkeletonBlock, SkeletonLines, SkeletonLine } from '@/components/Skeleto
 import { StatusPill } from '@/components/StatusPill';
 import { openInMaps, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
-import { DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
+import { DetailHeaderOverlay, DetailHeaderIconButton } from '@/components/DetailHeaderOverlay';
 import { useThemeColors } from '@/tw/theme';
 
 type SourceStripItem = {
@@ -441,45 +442,40 @@ export default function PlaceDetail() {
           ))}
         </ScrollView>
 
-        {/* Footer destructive actions. */}
-        <View className="px-4 pb-4 pt-4">
-          {inTrip ? (
-            <Pressable
-              onPress={onUnassign}
-              className="mb-2 rounded-2xl py-3 bg-surface border-hairline"
-              accessibilityRole="button"
-              accessibilityLabel="Remove from trip"
-              style={{ borderWidth: 1 }}
-            >
-              <Text
-                className="text-center text-text"
-                style={{ fontSize: 14, fontWeight: '500' }}
-              >
-                Remove from trip
-              </Text>
-            </Pressable>
-          ) : null}
-          <Pressable
-            onPress={confirmDelete}
-            className="rounded-2xl py-3"
-            accessibilityRole="button"
-            accessibilityLabel="Delete place"
-            style={{
-              borderWidth: 1,
-              borderColor: 'rgba(220,38,38,0.30)',
-              backgroundColor: 'rgba(220,38,38,0.08)',
-            }}
-          >
-            <Text
-              className="text-center"
-              style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}
-            >
-              Delete place
-            </Text>
-          </Pressable>
-        </View>
       </ScrollView>
-      <DetailHeaderOverlay />
+      <DetailHeaderOverlay
+        right={
+          <MenuView
+            title=""
+            shouldOpenOnLongPress={false}
+            onPressAction={({ nativeEvent }) => {
+              if (nativeEvent.event === 'remove') onUnassign();
+              else if (nativeEvent.event === 'delete') confirmDelete();
+            }}
+            actions={[
+              ...(inTrip
+                ? [{
+                    id: 'remove',
+                    title: 'Remove from trip',
+                    image: Platform.OS === 'ios' ? 'tray.and.arrow.up' : undefined,
+                  }]
+                : []),
+              {
+                id: 'delete',
+                title: 'Delete place',
+                attributes: { destructive: true },
+                image: Platform.OS === 'ios' ? 'trash' : undefined,
+              },
+            ]}
+          >
+            <DetailHeaderIconButton
+              icon="ellipsis"
+              accessibilityLabel="More options"
+              onPress={() => {}}
+            />
+          </MenuView>
+        }
+      />
 
       <TripPicker
         visible={pickerVisible}
@@ -497,7 +493,6 @@ export default function PlaceDetail() {
           if (process.env.EXPO_OS === 'ios') {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           }
-          toast(pickerMode === 'assign' ? `Added to ${result.tripName}` : `Moved to ${result.tripName}`);
         }}
       />
     </>
