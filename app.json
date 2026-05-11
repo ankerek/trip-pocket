@@ -67,8 +67,8 @@
       [
         "@sentry/react-native",
         {
-          "organization": "REPLACE_BEFORE_FIRST_PROD_BUILD",
-          "project": "REPLACE_BEFORE_FIRST_PROD_BUILD",
+          "organization": "cong-nguyen",
+          "project": "trip-pocket-ios",
           "url": "https://sentry.io/"
         }
       ]
