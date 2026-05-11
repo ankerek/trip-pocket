@@ -2,6 +2,7 @@ import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
 import { findSoleMatchByNormalizedKey, normalizePlaceKey } from '@/modules/storage/places';
 import { linkPlaceSource } from '@/modules/storage/place_sources';
+import { pipelineStep, pipelineError } from '@/lib/observability';
 
 export type ExtractedPlaceInput = {
   name: string;
@@ -24,12 +25,15 @@ export type ExtractionResult = {
 };
 
 export type ExtractionErrorKind =
-  | { kind: 'permanent' }                       // 4xx (non-429) — immediate `failed`
-  | { kind: 'retryable' }                       // 5xx, timeout, TLS — counts toward 3-try budget
+  | { kind: 'permanent' } // 4xx (non-429) — immediate `failed`
+  | { kind: 'retryable' } // 5xx, timeout, TLS — counts toward 3-try budget
   | { kind: 'deferred'; retryAfterMs: number }; // 429 — re-enqueue, do NOT count toward budget
 
 export class ExtractionError extends Error {
-  constructor(message: string, public readonly classification: ExtractionErrorKind) {
+  constructor(
+    message: string,
+    public readonly classification: ExtractionErrorKind,
+  ) {
     super(message);
     this.name = 'ExtractionError';
   }
@@ -63,8 +67,7 @@ type ProcessOutcome =
 export function createExtractor(opts: CreateExtractorOptions): Extractor {
   const maxRetries = opts.maxRetries ?? 3;
   const getNow = opts.now ?? (() => new Date().toISOString());
-  const setTimer =
-    opts.setTimer ?? ((cb: () => void, ms: number) => globalThis.setTimeout(cb, ms));
+  const setTimer = opts.setTimer ?? ((cb: () => void, ms: number) => globalThis.setTimeout(cb, ms));
   const uuid = opts.uuid ?? defaultUuid;
 
   let chain: Promise<void> = Promise.resolve();
@@ -117,15 +120,14 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       return { kind: 'done' };
     }
 
+    pipelineStep('extraction');
     let result: ExtractionResult;
     try {
       result = await opts.extract(ocrText);
     } catch (err) {
       const classification =
-        err instanceof ExtractionError
-          ? err.classification
-          : ({ kind: 'retryable' } as const);
-      return classifyFailure(id, classification);
+        err instanceof ExtractionError ? err.classification : ({ kind: 'retryable' } as const);
+      return classifyFailure(id, classification, err);
     }
 
     // Per-call dedup: drop case-insensitive name + trimmed-city + trimmed-address
@@ -165,7 +167,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       // FK violation (source hard-deleted between load and insert) is permanent;
       // anything else is treated as retryable.
       const isPermanent = String(err).includes('FOREIGN KEY');
-      return classifyFailure(id, isPermanent ? { kind: 'permanent' } : { kind: 'retryable' });
+      return classifyFailure(id, isPermanent ? { kind: 'permanent' } : { kind: 'retryable' }, err);
     }
 
     notifyChange('places');
@@ -187,11 +189,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     // so SQL has one canonical "unknown" representation.
     const countryCode = candidate.country_code === '' ? null : candidate.country_code;
 
-    const existing = await findSoleMatchByNormalizedKey(
-      opts.db,
-      normalizedKey,
-      opts.ownerId,
-    );
+    const existing = await findSoleMatchByNormalizedKey(opts.db, normalizedKey, opts.ownerId);
     if (existing) {
       // Spec: a re-attached source nudges a previously 'not-found' place back
       // to 'pending' so the user gets one more enrichment attempt with the new
@@ -242,17 +240,20 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
   function classifyFailure(
     id: string,
     classification: ExtractionErrorKind,
+    err: unknown,
   ): ProcessOutcome {
     if (classification.kind === 'deferred') {
       return { kind: 'deferred', retryAfterMs: classification.retryAfterMs };
     }
     if (classification.kind === 'permanent') {
+      pipelineError('extraction', err);
       void markFailed(id);
       return { kind: 'done' };
     }
     const next = (retryCount.get(id) ?? 0) + 1;
     retryCount.set(id, next);
     if (next < maxRetries) return { kind: 'retry' };
+    pipelineError('extraction', err);
     void markFailed(id);
     return { kind: 'done' };
   }

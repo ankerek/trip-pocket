@@ -2,6 +2,7 @@ import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
 import { findCollidingByExternalId } from '@/modules/storage/places';
 import { transferJunctions } from '@/modules/storage/place_sources';
+import { pipelineStep, pipelineError } from '@/lib/observability';
 
 // /enrich response, mirrors the worker's enrichResponseSchema.
 export type EnrichOutcome =
@@ -36,15 +37,16 @@ export type EnrichRequestPayload = {
 export type EnrichErrorKind = 'permanent' | 'retryable' | 'rate-limited';
 
 export class EnrichmentError extends Error {
-  constructor(message: string, public readonly classification: EnrichErrorKind) {
+  constructor(
+    message: string,
+    public readonly classification: EnrichErrorKind,
+  ) {
     super(message);
     this.name = 'EnrichmentError';
   }
 }
 
-export type EnrichmentRunner = (
-  payload: EnrichRequestPayload,
-) => Promise<EnrichOutcome>;
+export type EnrichmentRunner = (payload: EnrichRequestPayload) => Promise<EnrichOutcome>;
 
 export type Enricher = {
   enqueueEnrichment(placeId: string): void;
@@ -121,6 +123,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       return;
     }
 
+    pipelineStep('enrichment');
     let outcome: EnrichOutcome | EnrichmentError;
     try {
       outcome = await opts.enrich({
@@ -136,6 +139,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     }
 
     if (outcome instanceof EnrichmentError) {
+      pipelineError('enrichment', outcome);
       await enqueueWrite(() => applyError(id));
       notifyChange('places');
       return;
@@ -195,10 +199,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     };
   }
 
-  async function applyOutcome(
-    place: PlaceSnapshot,
-    outcome: EnrichOutcome,
-  ): Promise<void> {
+  async function applyOutcome(place: PlaceSnapshot, outcome: EnrichOutcome): Promise<void> {
     if (outcome.kind === 'not-found') {
       await markNotFound(place.id);
       return;
@@ -219,9 +220,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
 
     // Trip-equality merge eligibility: equal trip_ids or one side NULL.
     const eligible =
-      place.trip_id === collision.tripId ||
-      place.trip_id === null ||
-      collision.tripId === null;
+      place.trip_id === collision.tripId || place.trip_id === null || collision.tripId === null;
 
     if (!eligible) {
       // Skip the merge: leave both places live, do not write external_place_id

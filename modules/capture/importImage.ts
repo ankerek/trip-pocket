@@ -3,6 +3,7 @@ import type { Database } from '@/modules/storage/db';
 import { insertSource } from '@/modules/storage/sources';
 import { notifyChange } from '@/modules/storage/live-query';
 import { getProcessor } from '@/modules/processing';
+import { pipelineStep, pipelineError } from '@/lib/observability';
 
 export type ImportFs = {
   sha256: (uri: string) => Promise<string>;
@@ -30,6 +31,7 @@ export async function importImage(
   db: Database,
   input: ImportImageInput,
 ): Promise<ImportImageResult> {
+  pipelineStep('share_import');
   const contentHash = await input.fs.sha256(input.sourceUri);
 
   const existing = await db.getFirstAsync<{ id: string }>(
@@ -44,9 +46,7 @@ export async function importImage(
   // expo-file-system's Directory.uri can come back with a trailing slash; strip
   // it so we never produce `file://.../sources//<id>.jpg`. Some iOS code paths
   // choke on the double slash even though the filesystem itself doesn't.
-  const dir = input.storageDir.endsWith('/')
-    ? input.storageDir.slice(0, -1)
-    : input.storageDir;
+  const dir = input.storageDir.endsWith('/') ? input.storageDir.slice(0, -1) : input.storageDir;
   const targetUri = `${dir}/${sourceId}.jpg`;
 
   if (input.transfer === 'move') {
@@ -57,6 +57,7 @@ export async function importImage(
   console.log('[importImage]', input.transfer, input.sourceUri, '->', targetUri);
 
   try {
+    pipelineStep('storage');
     await insertSource(db, {
       id: sourceId,
       kind: 'screenshot',
@@ -76,6 +77,7 @@ export async function importImage(
     } catch {
       // Swallow unlink failures — the original error is what the caller cares about.
     }
+    pipelineError('storage', err);
     throw err;
   }
 

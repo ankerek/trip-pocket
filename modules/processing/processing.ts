@@ -1,6 +1,7 @@
 import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
 import { getExtractor } from '@/modules/extraction';
+import { pipelineStep, pipelineError } from '@/lib/observability';
 
 export type OcrRunner = (imagePath: string) => Promise<string>;
 
@@ -58,6 +59,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     );
     if (!row) return { retry: false };
 
+    pipelineStep('ocr');
     try {
       const text = await opts.ocr(row.file_path);
       await opts.db.runAsync(
@@ -74,10 +76,11 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       // (Jest, share extension, web).
       getExtractor()?.enqueueExtraction(id);
       return { retry: false };
-    } catch {
+    } catch (err) {
       const next = (retryCount.get(id) ?? 0) + 1;
       retryCount.set(id, next);
       if (next < maxRetries) return { retry: true };
+      pipelineError('ocr', err);
       await opts.db.runAsync(
         `UPDATE sources
             SET ocr_status = 'failed', updated_at = ?

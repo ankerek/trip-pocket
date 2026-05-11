@@ -1,12 +1,11 @@
 import '../global.css';
+import * as Sentry from '@sentry/react-native';
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-} from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { initSentry, attachInstallId } from '@/lib/observability';
+import { ErrorFallback } from '@/components/ErrorFallback';
 import {
   openDatabase,
   runMigrations,
@@ -21,11 +20,7 @@ import {
   cleanupOrphanSources,
   runForegroundIngest,
 } from '@/modules/capture';
-import {
-  createProcessor,
-  provideProcessor,
-  type Processor,
-} from '@/modules/processing';
+import { createProcessor, provideProcessor, type Processor } from '@/modules/processing';
 import {
   createExtractor,
   extractFromProxy,
@@ -43,6 +38,12 @@ import { recognizeText } from '@/modules/vision-ocr';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
 import { warmMapAppDetection } from '@/lib/openInMaps';
+
+try {
+  initSentry();
+} catch {
+  // Sentry init must never block app boot.
+}
 
 const SHARED_HEADER_OPTIONS = {
   headerTransparent: true,
@@ -72,6 +73,7 @@ export default function RootLayout() {
       const db = await openDatabase('trip-pocket.db', getAppGroupContainerUri());
       await runMigrations(db, migrations);
       provideDatabase(db);
+      void attachInstallId();
 
       // OCR pipeline. createProcessor + provideProcessor wires up the
       // singleton importImage talks to. runStartupRecovery is the
@@ -113,9 +115,7 @@ export default function RootLayout() {
       // Place enrichment runner. On-demand: triggered when the user opens
       // a place card whose status is 'pending' or 'failed'. No sweep, no
       // startup recovery — the user re-opening the card is the retry signal.
-      const enrichProxyUrl = Constants.expoConfig?.extra?.enrichmentProxyUrl as
-        | string
-        | undefined;
+      const enrichProxyUrl = Constants.expoConfig?.extra?.enrichmentProxyUrl as string | undefined;
       const enricher = createEnricher({
         db,
         ownerId,
@@ -151,76 +151,72 @@ export default function RootLayout() {
 
   if (!ready) return null;
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="settings"
-          options={{
-            headerShown: true,
-            presentation: 'formSheet',
-            sheetGrabberVisible: true,
-            sheetAllowedDetents: [0.5, 1.0],
-            title: 'Settings',
-            ...SHARED_HEADER_OPTIONS,
-          }}
-        />
-        <Stack.Screen
-          name="triage"
-          options={{
-            headerShown: false,
-            presentation: 'fullScreenModal',
-            animation: 'slide_from_bottom',
-          }}
-        />
-        <Stack.Screen
-          name="places/[id]"
-          options={DETAIL_ROUTE_OPTIONS}
-        />
-        <Stack.Screen name="sources/[id]" />
-        <Stack.Screen
-          name="trips/[id]"
-          options={DETAIL_ROUTE_OPTIONS}
-        />
-        <Stack.Screen
-          name="trips/new"
-          options={{
-            headerShown: true,
-            presentation: 'modal',
-            title: 'New trip',
-            ...SHARED_HEADER_OPTIONS,
-          }}
-        />
-        <Stack.Screen
-          name="trips/[id]/edit"
-          options={{
-            headerShown: true,
-            presentation: 'modal',
-            title: 'Edit trip',
-            ...SHARED_HEADER_OPTIONS,
-          }}
-        />
-        <Stack.Screen
-          name="sources/[id]/ocr-debug"
-          options={{
-            headerShown: true,
-            presentation: 'formSheet',
-            sheetGrabberVisible: true,
-            sheetAllowedDetents: [0.5, 1.0],
-            title: 'OCR debug',
-          }}
-        />
-        <Stack.Screen
-          name="sources/[id]/places-found"
-          options={{
-            headerShown: true,
-            presentation: 'formSheet',
-            sheetGrabberVisible: true,
-            sheetAllowedDetents: [0.5, 1.0],
-            title: 'Places',
-          }}
-        />
-      </Stack>
-    </ThemeProvider>
+    <Sentry.ErrorBoundary fallback={ErrorFallback}>
+      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="settings"
+            options={{
+              headerShown: true,
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              sheetAllowedDetents: [0.5, 1.0],
+              title: 'Settings',
+              ...SHARED_HEADER_OPTIONS,
+            }}
+          />
+          <Stack.Screen
+            name="triage"
+            options={{
+              headerShown: false,
+              presentation: 'fullScreenModal',
+              animation: 'slide_from_bottom',
+            }}
+          />
+          <Stack.Screen name="places/[id]" options={DETAIL_ROUTE_OPTIONS} />
+          <Stack.Screen name="sources/[id]" />
+          <Stack.Screen name="trips/[id]" options={DETAIL_ROUTE_OPTIONS} />
+          <Stack.Screen
+            name="trips/new"
+            options={{
+              headerShown: true,
+              presentation: 'modal',
+              title: 'New trip',
+              ...SHARED_HEADER_OPTIONS,
+            }}
+          />
+          <Stack.Screen
+            name="trips/[id]/edit"
+            options={{
+              headerShown: true,
+              presentation: 'modal',
+              title: 'Edit trip',
+              ...SHARED_HEADER_OPTIONS,
+            }}
+          />
+          <Stack.Screen
+            name="sources/[id]/ocr-debug"
+            options={{
+              headerShown: true,
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              sheetAllowedDetents: [0.5, 1.0],
+              title: 'OCR debug',
+            }}
+          />
+          <Stack.Screen
+            name="sources/[id]/places-found"
+            options={{
+              headerShown: true,
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              sheetAllowedDetents: [0.5, 1.0],
+              title: 'Places',
+            }}
+          />
+        </Stack>
+      </ThemeProvider>
+    </Sentry.ErrorBoundary>
   );
 }

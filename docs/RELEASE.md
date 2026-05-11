@@ -57,6 +57,23 @@ Two paths — pick one, not both:
 
 **Done when:** your own Apple ID appears in the Internal Group.
 
+### 6. Configure Sentry
+
+- Create the Sentry organization (suggested slug: `trip-pocket`) and a project for iOS (suggested slug: `trip-pocket-ios`).
+- Edit `app.json` → `expo.plugins[@sentry/react-native]` and replace the two `REPLACE_BEFORE_FIRST_PROD_BUILD` placeholders with the real `organization` and `project` slugs.
+- Sentry → **Settings → Account → API → Auth Tokens** → create a token with scope `project:write` and `project:releases`. Copy the value.
+- Sentry → project → **Settings → Client Keys (DSN)** → copy the DSN.
+- Push both as project-scoped EAS secrets so they auto-inject into every build:
+
+  ```sh
+  eas secret:create --scope project --name SENTRY_AUTH_TOKEN --value <token>
+  eas secret:create --scope project --name EXPO_PUBLIC_SENTRY_DSN --value <dsn>
+  ```
+
+- Sentry → project → **Settings → Performance & SDK → Limits** (or **Project Settings → Limits**) → set the per-project event rate limit to ~100 events/minute. Guard-rail against a runaway loop draining the free-tier quota (5k/month).
+
+**Done when:** `eas secret:list` shows both names with `Scope: project`, and the two slugs in `app.json` are real values.
+
 ---
 
 ## Each release
@@ -94,6 +111,19 @@ eas submit --platform ios --latest
 - Open App Store Connect → app → **TestFlight** tab. The new build appears with status `Processing` → `Ready to Test` within ~30 minutes.
 - Click the build, scroll to **Test Details** → **What to Test**, paste the contents of `whatsnew/en-US.txt`, **Save**.
 - Internal testers receive an email once the build is ready. Confirm on your own device that the install + launch works.
+
+### 6. Confirm Sentry release visible
+
+- Open Sentry → project → **Releases**. The newly built release should appear as `com.trippocket.app@<version>+<buildNumber>` (e.g. `com.trippocket.app@0.3.0+7`) within a few minutes of the build finishing.
+- If it doesn't appear, sourcemap upload failed silently. Check the EAS build log for the `eas-build-on-success` step and re-run it locally if needed:
+
+  ```sh
+  RELEASE="com.trippocket.app@$(node -e 'console.log(require(\"./app.json\").expo.version)')+<buildNumber>" \
+    SENTRY_AUTH_TOKEN=<token> \
+    npx sentry-expo-upload-sourcemaps --release "$RELEASE" dist
+  ```
+
+  Without the release visible, crashes from this build will arrive with unsymbolicated stacks.
 
 ---
 
