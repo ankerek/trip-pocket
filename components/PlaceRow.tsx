@@ -75,6 +75,7 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
       onPress={() => router.push(`/places/${place.id}`)}
       className="flex-row items-center gap-3 border-hairline px-4 py-3"
       style={{ borderBottomWidth: 1 }}
+      haptic={false}
       accessibilityRole="button"
       accessibilityLabel={`Open ${place.name}`}
     >

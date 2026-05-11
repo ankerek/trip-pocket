@@ -107,6 +107,7 @@ export default function Trips() {
           <PressableScale
             onPress={() => router.push(`/trips/${item.trip.id}`)}
             className="mb-3 overflow-hidden rounded-2xl border border-hairline bg-surface"
+            haptic={false}
             accessibilityRole="button"
             accessibilityLabel={`${item.trip.name}, ${item.count} place${item.count === 1 ? '' : 's'}`}
           >

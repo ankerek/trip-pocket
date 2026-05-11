@@ -58,6 +58,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
     <PressableScale
       onPress={() => router.push(`/places/${place.id}`)}
       className="overflow-hidden rounded-xl bg-surface"
+      haptic={false}
       accessibilityRole="button"
       accessibilityLabel={place.name}
       accessibilityHint={place.city ? `In ${place.city}. Opens place detail.` : 'Opens place detail.'}
