@@ -4,11 +4,18 @@ import * as Application from 'expo-application';
 import { getInstallId } from './install-id';
 
 function computeRelease(): string | undefined {
-  const bundleId = Constants.expoConfig?.ios?.bundleIdentifier;
-  const version = Constants.expoConfig?.version;
-  const build = Application.nativeBuildVersion;
-  if (!bundleId || !version || !build) return undefined;
-  return `${bundleId}@${version}+${build}`;
+  try {
+    const bundleId = Constants.expoConfig?.ios?.bundleIdentifier;
+    const version = Constants.expoConfig?.version;
+    // Native getter — throws "Cannot find native module 'ExpoApplication'" if
+    // expo-application isn't linked (stale Pods after adding the dep). Releases
+    // without a build tag are acceptable; a startup crash is not.
+    const build = Application.nativeBuildVersion;
+    if (!bundleId || !version || !build) return undefined;
+    return `${bundleId}@${version}+${build}`;
+  } catch {
+    return undefined;
+  }
 }
 
 let initialized = false;

@@ -154,11 +154,31 @@ Both `SENTRY_AUTH_TOKEN` and `EXPO_PUBLIC_SENTRY_DSN` must be in the shell envir
 
 ```sh
 npx expo prebuild --platform ios
+(cd ios && pod install)
 ```
 
 Materializes the share-extension target (via `plugins/with-share-extension`) and ensures `ios/` reflects the current `app.json`. Safe to re-run — won't blow away non-generated files.
 
+The explicit `pod install` is non-negotiable: `expo prebuild` skips pod-install when its native-fingerprint heuristic decides nothing changed, which silently drops newly-added native deps (e.g. `expo-application`, `@sentry/react-native`) from the build. Sanity-check before archiving:
+
+```sh
+grep -c "EXApplication" ios/Podfile.lock          # expect ≥ 1 if expo-application is in package.json
+grep -c "RNSentry"      ios/Podfile.lock          # expect ≥ 1 since Sentry is wired
+```
+
+Zero in either column = the archive will crash on launch with `Cannot find native module 'X'`. Re-run `pod install` until both are non-zero.
+
 ### L4. Archive in Xcode
+
+Before archiving, prove `Info.plist` agrees with `app.json` — Xcode and sentry-cli both read `CFBundleVersion`, not `app.json`. If they drift, the archive ships with the *old* build number, ASC rejects the upload as a duplicate, and the Sentry source-map artifact gets tagged with the wrong release/dist.
+
+```sh
+EXPECTED=$(node -e "console.log(require('./app.json').expo.ios.buildNumber)")
+ACTUAL=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/TripPocket/Info.plist)
+[ "$EXPECTED" = "$ACTUAL" ] || { echo "DRIFT: app.json says $EXPECTED, Info.plist says $ACTUAL — re-run L3"; }
+```
+
+Then open Xcode:
 
 ```sh
 open ios/TripPocket.xcworkspace
@@ -184,11 +204,17 @@ In Organizer:
 
 Upload takes ~2 min. Same processing window as the EAS path (~15–30 min until "Ready to Test").
 
-### L6. Verify Sentry release
+### L6. Verify Sentry source maps + release
 
-Same as step 6 of the EAS flow — open Sentry → Releases, confirm `com.trippocket.app@<version>+<buildNumber>` appears within a few minutes. The Xcode build phase that the Sentry plugin patched should have uploaded JS sourcemaps + native dSYMs automatically.
+`@sentry/react-native` uses the **debug-id artifact bundle** flow, not legacy release-tagged source maps. That means:
 
-If the release didn't appear, the most common cause is `SENTRY_AUTH_TOKEN` not being in the shell env at archive time — `export $(cat .env.local | xargs)` only affects the current shell, and Xcode picks up the env from however *it* was launched. If Xcode was already open before you exported, quit and reopen it from the same shell.
+- **Source maps**: Sentry → project → **Settings → Source Maps** lists "artifact bundles" by debug id. A new bundle should appear within ~1 min of the archive finishing.
+- **Release** (separate concept): the SDK tags events with release `com.trippocket.app@<version>+<buildNumber>`; this appears on Sentry → **Releases** once the first event from that build lands (not at upload time).
+
+To prove the pipeline end-to-end after install, hit Settings → Diagnostics → "Send test event". Open the event in Sentry — the JS frames must show readable source (not raw Hermes offsets). If they don't, Sentry shows a "missing debug id" hint at the top of the stack and the fix is almost always one of:
+
+- `SENTRY_AUTH_TOKEN` not in the shell env at archive time → upload skipped silently. `export $(cat .env.local | xargs)` only affects the current shell; if Xcode was already open, quit and reopen it from that shell. Verify in `~/Library/Developer/Xcode/DerivedData/TripPocket-*/Logs/Build/*.xcactivitylog`: look for `Source Map Upload Report` and `Upload type: artifact bundle`.
+- `metro.config.js` not wrapped with Sentry's serializer → debug id ends up in the uploaded map but not in the shipped Hermes bundle, so events can't claim the map. The wrapper is `getSentryExpoConfig` from `@sentry/react-native/metro`; without it, the bundle is "orphan."
 
 ### L7. Paste release notes
 
