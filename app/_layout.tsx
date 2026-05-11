@@ -6,6 +6,7 @@ import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { initSentry, attachInstallId } from '@/lib/observability';
 import { ErrorFallback } from '@/components/ErrorFallback';
+import { ErrorToast } from '@/components/ErrorToast';
 import {
   openDatabase,
   runMigrations,
@@ -216,6 +217,7 @@ export default function RootLayout() {
             }}
           />
         </Stack>
+        <ErrorToast />
       </ThemeProvider>
     </Sentry.ErrorBoundary>
   );

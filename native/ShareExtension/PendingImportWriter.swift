@@ -26,6 +26,18 @@ struct PendingImportWriter {
             throw PendingImportError.copyFailed
         }
 
+        // Any failure past this point must remove the just-copied file. The user
+        // can tap Retry from the share-sheet UI; without cleanup, every retry
+        // on a persistent DB-failure would orphan another inbox image.
+        do {
+            try insertPendingRow(groupURL: groupURL, destURL: destURL, suggestedTripId: suggestedTripId)
+        } catch {
+            try? FileManager.default.removeItem(at: destURL)
+            throw error
+        }
+    }
+
+    private func insertPendingRow(groupURL: URL, destURL: URL, suggestedTripId: String?) throws {
         let dbURL = groupURL.appendingPathComponent("trip-pocket.db")
         var db: OpaquePointer?
         guard sqlite3_open(dbURL.path, &db) == SQLITE_OK else {

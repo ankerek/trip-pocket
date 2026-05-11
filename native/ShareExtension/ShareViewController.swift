@@ -3,14 +3,24 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 class ShareViewController: UIViewController {
+    private let errorState = SaveErrorState()
+    private var lastTripId: String?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         let host = UIHostingController(rootView: TripPickerView(
             onSave: { [weak self] tripId in
+                self?.lastTripId = tripId
                 self?.handleSave(tripId: tripId)
             },
             onCancel: { [weak self] in
                 self?.cancel()
+            },
+            errorState: errorState,
+            onRetry: { [weak self] in
+                guard let self else { return }
+                self.errorState.set(nil)
+                self.handleSave(tripId: self.lastTripId)
             }
         ))
         addChild(host)
@@ -29,15 +39,13 @@ class ShareViewController: UIViewController {
         guard let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
               let provider = item.attachments?.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) })
         else {
-            cancel()
+            errorState.set(.noImage)
             return
         }
         provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
             guard let self else { return }
             guard let url = self.materializeImage(data) else {
-                // loadItem's completion block runs on an arbitrary queue;
-                // cancelRequest must be called on the main thread.
-                DispatchQueue.main.async { self.cancel() }
+                self.errorState.set(.writeFailed)
                 return
             }
             do {
@@ -46,7 +54,7 @@ class ShareViewController: UIViewController {
                     self.extensionContext?.completeRequest(returningItems: nil)
                 }
             } catch {
-                DispatchQueue.main.async { self.cancel() }
+                self.errorState.set(.writeFailed)
             }
         }
     }
