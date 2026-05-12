@@ -73,10 +73,14 @@ export async function fetchInstagramViaApify(
   // post URL — we pass the canonical post URL and it scrapes that one post.
   // No separate `directUrls` field on this actor (confirmed against the
   // actor's input schema in Apify console).
+  //
+  // Explicit `dataDetailLevel: "details"` because we depend on `childPosts`
+  // for carousel slides 2..N — the actor's `basicData` level omits that.
   const body = {
     username: [canonicalUrl],
     resultsLimit: 1,
     skipPinnedPosts: false,
+    dataDetailLevel: 'details',
   };
 
   const controller = new AbortController();
@@ -138,7 +142,18 @@ export async function fetchInstagramViaApify(
   }
 
   const raw = items[0] as ApifyRawItem;
-  return mapApifyItem(raw, canonicalUrl);
+  const mapped = mapApifyItem(raw, canonicalUrl);
+  // One-line diagnostic so `wrangler tail` confirms what the actor actually
+  // returned (counts only — never log caption text or URLs to keep with the
+  // proxy's privacy posture). If imageUrls < expected for a carousel, this
+  // tells us at a glance.
+  console.log(
+    'extract-proxy/apify: ok',
+    'type=' + (raw.type ?? 'unknown'),
+    'slides=' + mapped.imageUrls.length,
+    'captionLen=' + mapped.caption.length,
+  );
+  return mapped;
 }
 
 export function mapApifyItem(
