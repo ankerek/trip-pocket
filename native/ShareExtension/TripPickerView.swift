@@ -2,8 +2,9 @@ import SwiftUI
 import Combine
 
 enum ShareSaveError {
-    case noImage
-    case writeFailed
+    case noContent       // share intent had neither an image nor a URL we can read
+    case unsupportedLink // shared URL is from a platform Trip Pocket doesn't support yet
+    case writeFailed     // I/O or DB failure while persisting the pending row
 }
 
 // Drives the picker's error overlay. Owned by ShareViewController so it can
@@ -102,17 +103,20 @@ struct TripPickerView: View {
 
     private func headline(for error: ShareSaveError) -> String {
         switch error {
-        case .noImage: return "No image to save"
+        case .noContent: return "Nothing to save"
+        case .unsupportedLink: return "Link not supported yet"
         case .writeFailed: return "Couldn't save"
         }
     }
 
     private func body(for error: ShareSaveError) -> String {
         switch error {
-        case .noImage:
-            return "This share didn't include an image we can read."
+        case .noContent:
+            return "This share didn't include an image or a supported link."
+        case .unsupportedLink:
+            return "Trip Pocket can save Instagram and TikTok posts so far. Share a post from either app to try again."
         case .writeFailed:
-            return "Trip Pocket couldn't save the screenshot. Try again, or open Trip Pocket if the problem keeps happening."
+            return "Trip Pocket couldn't save this share. Try again, or open Trip Pocket if the problem keeps happening."
         }
     }
 }

@@ -151,7 +151,14 @@ export const init: Migration = {
 
       CREATE TABLE IF NOT EXISTS pending_imports (
         id                TEXT PRIMARY KEY NOT NULL,
-        app_group_path    TEXT NOT NULL,
+        kind              TEXT NOT NULL DEFAULT 'image'
+                          CHECK (kind IN ('image','url')),
+        -- Populated when kind='image': file:// URI pointing at the App Group
+        -- inbox copy of the shared screenshot. NULL for kind='url'.
+        app_group_path    TEXT,
+        -- Populated when kind='url': the raw URL the user shared. NULL for
+        -- kind='image'. Canonicalisation happens during ingest, not here.
+        url               TEXT,
         suggested_trip_id TEXT,
         created_at        TEXT NOT NULL
       );
