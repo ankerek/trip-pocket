@@ -1,5 +1,8 @@
 import { openDatabase, runMigrations, getMigrationVersion, type Database } from '../db';
 import { migrations } from '../migrations';
+import { init } from '../migrations/0001_init';
+import { urlShare } from '../migrations/0002_url_share';
+import { pendingImportsNullablePath } from '../migrations/0003_pending_imports_nullable_path';
 
 describe('runMigrations', () => {
   it('starts at version 0 on a fresh database', async () => {
@@ -69,7 +72,10 @@ describe('url-share migration (0002)', () => {
       new Date().toISOString(),
     );
 
-    await runMigrations(db, migrations);
+    // Scope to [init, urlShare] — later migrations rebuild sources and rely on
+    // the full column set, which this test's intentionally sparse legacy
+    // schema doesn't provide.
+    await runMigrations(db, [init, urlShare]);
 
     const srcCols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(sources)`);
     expect(srcCols.map((c) => c.name)).toEqual(
@@ -91,7 +97,7 @@ describe('url-share migration (0002)', () => {
     expect(cols.map((c) => c.name)).toEqual(
       expect.arrayContaining(['platform', 'caption']),
     );
-    expect(await getMigrationVersion(db)).toBe(3);
+    expect(await getMigrationVersion(db)).toBe(4);
   });
 });
 
@@ -137,7 +143,9 @@ describe('pending_imports nullable-path migration (0003)', () => {
     );
     expect(before.find((c) => c.name === 'app_group_path')?.notnull).toBe(1);
 
-    await runMigrations(db, migrations);
+    // Scope to migrations that touch pending_imports; later 0004 rebuilds the
+    // `sources` table, which this test's stale-DB fixture doesn't create.
+    await runMigrations(db, [init, urlShare, pendingImportsNullablePath]);
 
     const after = await db.getAllAsync<{ name: string; notnull: number }>(
       `PRAGMA table_info(pending_imports)`,
@@ -165,7 +173,7 @@ describe('pending_imports nullable-path migration (0003)', () => {
       'i1', 'image', 'file:///x.jpg', null, null, '2026-05-11T10:00:00Z',
     );
 
-    await runMigrations(db, migrations);
+    await runMigrations(db, [init, urlShare, pendingImportsNullablePath]);
 
     const rows = await db.getAllAsync<{
       id: string; kind: string; app_group_path: string | null;
@@ -185,7 +193,121 @@ describe('pending_imports nullable-path migration (0003)', () => {
         WHERE type='table' AND name LIKE 'pending_imports%'`,
     );
     expect(tables.map((t) => t.name)).toEqual(['pending_imports']);
-    expect(await getMigrationVersion(db)).toBe(3);
+    expect(await getMigrationVersion(db)).toBe(4);
+  });
+});
+
+describe('image-kind rename migration (0004)', () => {
+  // Pre-2026-05-13, file-based sources used `kind='screenshot'`. The name was
+  // misleading — the column also covers photographed pictures, downloaded
+  // images, and worker-fetched cover thumbnails. 0004 rebuilds `sources` with
+  // a relaxed CHECK (kind IN ('image','url','pasted')) and rewrites existing
+  // rows from 'screenshot' to 'image'. FK enforcement is deferred to commit
+  // so `place_sources.source_id -> sources.id` survives the drop+rename.
+
+  async function dbAtV3(): Promise<Database> {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, [init, urlShare, pendingImportsNullablePath]);
+    return db;
+  }
+
+  it("renames 'screenshot' rows to 'image' and tightens the CHECK", async () => {
+    const db = await dbAtV3();
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, content_hash, origin, captured_at, owner_id, created_at, updated_at)
+       VALUES (?, 'screenshot', 'h1', 'share', ?, 'o1', ?, ?)`,
+      'src1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+    );
+
+    await runMigrations(db, migrations);
+
+    const row = await db.getFirstAsync<{ kind: string }>(
+      `SELECT kind FROM sources WHERE id = ?`, 'src1',
+    );
+    expect(row?.kind).toBe('image');
+
+    // The CHECK now rejects 'screenshot' (no client should write it anymore).
+    await expect(
+      db.runAsync(
+        `INSERT INTO sources (id, kind, content_hash, origin, captured_at, owner_id, created_at, updated_at)
+         VALUES (?, 'screenshot', ?, 'share', ?, 'o1', ?, ?)`,
+        'src2', 'h2', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z',
+      ),
+    ).rejects.toThrow();
+
+    // 'image' inserts succeed.
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, content_hash, origin, captured_at, owner_id, created_at, updated_at)
+       VALUES (?, 'image', ?, 'share', ?, 'o1', ?, ?)`,
+      'src3', 'h3', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z',
+    );
+  });
+
+  it('preserves the sources_fts index across the rebuild', async () => {
+    const db = await dbAtV3();
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, content_hash, origin, ocr_text, captured_at, owner_id, created_at, updated_at)
+       VALUES (?, 'screenshot', 'h1', 'share', 'sushi restaurant tokyo', ?, 'o1', ?, ?)`,
+      'src1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+    );
+
+    const before = await db.getAllAsync<{ source_id: string }>(
+      `SELECT source_id FROM sources_fts WHERE content MATCH ?`, 'sushi',
+    );
+    expect(before).toEqual([{ source_id: 'src1' }]);
+
+    await runMigrations(db, migrations);
+
+    // Existing FTS rows survive — INSERT … SELECT preserved the source ids.
+    const after = await db.getAllAsync<{ source_id: string }>(
+      `SELECT source_id FROM sources_fts WHERE content MATCH ?`, 'sushi',
+    );
+    expect(after).toEqual([{ source_id: 'src1' }]);
+
+    // New inserts go through the recreated triggers.
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, content_hash, origin, ocr_text, captured_at, owner_id, created_at, updated_at)
+       VALUES (?, 'image', 'h2', 'share', 'ramen shop osaka', ?, 'o1', ?, ?)`,
+      'src2', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z',
+    );
+    const ramen = await db.getAllAsync<{ source_id: string }>(
+      `SELECT source_id FROM sources_fts WHERE content MATCH ?`, 'ramen',
+    );
+    expect(ramen).toEqual([{ source_id: 'src2' }]);
+  });
+
+  it('preserves place_sources FK references across the drop+rename', async () => {
+    const db = await dbAtV3();
+    // trip -> source -> place_sources(place_id, source_id)
+    await db.runAsync(
+      `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      't1', 'Japan', 'o1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+    );
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, trip_id, content_hash, origin, captured_at, owner_id, created_at, updated_at)
+       VALUES (?, 'screenshot', ?, 'h1', 'share', ?, 'o1', ?, ?)`,
+      'src1', 't1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+    );
+    await db.runAsync(
+      `INSERT INTO places (id, trip_id, name, normalized_key, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      'p1', 't1', 'Sushi Bar', 'sushi-bar', 'o1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+    );
+    await db.runAsync(
+      `INSERT INTO place_sources (place_id, source_id, extracted_at, extraction_model, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      'p1', 'src1', '2026-05-01T00:00:00Z', 'test', 'o1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+    );
+
+    await runMigrations(db, migrations);
+
+    // place_sources row still resolves through to the (renamed) sources row.
+    const joined = await db.getFirstAsync<{ source_id: string; kind: string }>(
+      `SELECT ps.source_id, s.kind
+         FROM place_sources ps JOIN sources s ON s.id = ps.source_id`,
+    );
+    expect(joined).toEqual({ source_id: 'src1', kind: 'image' });
   });
 });
 

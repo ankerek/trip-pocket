@@ -153,13 +153,13 @@ export default function Pocket() {
         <EmptyState
           icon="square.and.arrow.down"
           title="No places yet"
-          body="Share a screenshot or an Instagram / TikTok link to Trip Pocket — or pull some in from your camera roll."
+          body="Share an image or an Instagram / TikTok link to Trip Pocket — or pull some in from your Photos library."
           cta={{
             label: 'Add from Photos',
             onPress: () => {
               if (db) void pickPhotosForImport(db);
             },
-            accessibilityHint: 'Opens the camera roll to import screenshots',
+            accessibilityHint: 'Opens Photos to import images into the inbox',
           }}
         />
       </>

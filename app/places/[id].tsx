@@ -148,7 +148,7 @@ export default function PlaceDetail() {
     const body =
       orphanCount === 0
         ? "This can't be undone."
-        : `${orphanCount} screenshot${orphanCount === 1 ? '' : 's'} it came from will also be deleted. This can't be undone.`;
+        : `${orphanCount} source${orphanCount === 1 ? '' : 's'} it came from will also be deleted. This can't be undone.`;
     Alert.alert(
       'Delete this place?',
       body,
@@ -395,7 +395,7 @@ export default function PlaceDetail() {
             className="text-text-muted"
             style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.6, textTransform: 'uppercase' }}
           >
-            Found in {sources?.length ?? 0} screenshot{(sources?.length ?? 0) === 1 ? '' : 's'}
+            Found in {sources?.length ?? 0} source{(sources?.length ?? 0) === 1 ? '' : 's'}
           </Text>
         </View>
         <ScrollView
@@ -410,7 +410,7 @@ export default function PlaceDetail() {
               className="overflow-hidden rounded-xl bg-surface"
               style={{ width: 88, height: 110 }}
               accessibilityRole="button"
-              accessibilityLabel="Open source screenshot"
+              accessibilityLabel="Open source"
             >
               {src.file_path ? (
                 <Image

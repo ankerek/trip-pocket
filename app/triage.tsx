@@ -220,7 +220,7 @@ export default function Triage() {
         ? "This can't be undone."
         : `${placesCount} place${placesCount === 1 ? '' : 's'} extracted from it will also be deleted. This can't be undone.`;
     Alert.alert(
-      'Delete this screenshot?',
+      'Delete this source?',
       body,
       [
         { text: 'Cancel', style: 'cancel' },
@@ -567,7 +567,7 @@ function TriageCard({
             className="items-center"
             style={{ paddingTop: 8, paddingBottom: 4 }}
             accessibilityRole="adjustable"
-            accessibilityLabel="Drag to resize the screenshot"
+            accessibilityLabel="Drag to resize the source"
           >
             <View
               className="bg-text-muted"
@@ -850,7 +850,7 @@ function CtaTray({
           onPress={onSkip}
           accessibilityRole="button"
           accessibilityLabel="Skip for now"
-          accessibilityHint="Leaves this screenshot in the inbox and goes to the next"
+          accessibilityHint="Leaves this source in the inbox and goes to the next"
           className="mt-2 rounded-2xl items-center justify-center bg-surface border-hairline"
           style={{ paddingVertical: 12, borderWidth: 1 }}
         >
@@ -862,8 +862,8 @@ function CtaTray({
         <Pressable
           onPress={onDelete}
           accessibilityRole="button"
-          accessibilityLabel="Delete screenshot"
-          accessibilityHint="Permanently delete this screenshot and any extracted places."
+          accessibilityLabel="Delete source"
+          accessibilityHint="Permanently delete this source and any extracted places."
           className="mt-2 items-center justify-center"
           style={{ paddingVertical: 10 }}
           hitSlop={8}

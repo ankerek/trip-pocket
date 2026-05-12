@@ -26,7 +26,7 @@ export async function ensurePhotosAccess(): Promise<PhotosAccess> {
 function showDeniedAlert(): void {
   Alert.alert(
     'Photos access is off',
-    'Trip Pocket needs photo access to add screenshots. Turn it on in Settings.',
+    'Trip Pocket needs photo access to import images. Turn it on in Settings.',
     [
       { text: 'Not now', style: 'cancel' },
       { text: 'Open Settings', onPress: () => void Linking.openSettings() },

@@ -9,11 +9,11 @@ describe('ProcessingBanner', () => {
 
   it('renders the singular form at count=1', () => {
     const { getByText } = render(<ProcessingBanner count={1} />);
-    expect(getByText('Processing 1 screenshot…')).toBeTruthy();
+    expect(getByText('Processing 1 source…')).toBeTruthy();
   });
 
   it('renders the plural form at count>1', () => {
     const { getByText } = render(<ProcessingBanner count={3} />);
-    expect(getByText('Processing 3 screenshots…')).toBeTruthy();
+    expect(getByText('Processing 3 sources…')).toBeTruthy();
   });
 });

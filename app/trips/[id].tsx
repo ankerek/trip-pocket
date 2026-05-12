@@ -101,7 +101,7 @@ export default function TripDetail() {
     return ranked[0] ? buildCoverUrl(ranked[0].photo_name) : null;
   }, [places]);
 
-  const onAddScreenshots = () => {
+  const onAddFromPhotos = () => {
     if (!db || !id) return;
     if (process.env.EXPO_OS === 'ios') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -113,8 +113,8 @@ export default function TripDetail() {
     <View style={{ flexDirection: 'row', gap: 8 }}>
       <DetailHeaderIconButton
         icon="plus"
-        accessibilityLabel="Add screenshots to this trip"
-        onPress={onAddScreenshots}
+        accessibilityLabel="Add photos to this trip"
+        onPress={onAddFromPhotos}
       />
       <DetailHeaderIconButton
         icon="ellipsis"
@@ -165,12 +165,12 @@ export default function TripDetail() {
             <EmptyState
               icon="square.and.arrow.down"
               title="Nothing in this trip yet"
-              body={`Add screenshots from your camera roll — they'll be assigned to “${trip.name}” automatically.`}
+              body={`Add photos from your library — they'll be assigned to “${trip.name}” automatically.`}
               cta={{
                 label: 'Add from Photos',
-                onPress: onAddScreenshots,
+                onPress: onAddFromPhotos,
                 accessibilityHint:
-                  'Imports screenshots from your camera roll into this trip',
+                  'Imports photos from your library into this trip',
               }}
             />
           </View>

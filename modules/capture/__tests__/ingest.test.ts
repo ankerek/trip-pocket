@@ -53,7 +53,7 @@ describe('ingestPendingImports', () => {
     const rows = await listSources(db, { tripId: null });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      kind: 'screenshot',
+      kind: 'image',
       filePath: expect.stringContaining('/sandbox/'),
       origin: 'share',
       tripId: null,
@@ -173,7 +173,7 @@ describe('ingestPendingImports', () => {
          (id, kind, trip_id, file_path, url, content_hash, origin,
           ocr_status, extraction_status, captured_at,
           owner_id, created_at, updated_at)
-       VALUES ('seed', 'screenshot', NULL, '/sandbox/seed.jpg', NULL, 'sha-of:/appgroup/dup.jpg', 'share',
+       VALUES ('seed', 'image', NULL, '/sandbox/seed.jpg', NULL, 'sha-of:/appgroup/dup.jpg', 'share',
                'pending', 'pending', '2026-05-04T09:00:00Z',
                ?, '2026-05-04T09:00:00Z', '2026-05-04T09:00:00Z')`,
       ownerId,

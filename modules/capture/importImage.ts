@@ -60,7 +60,7 @@ export async function importImage(
     pipelineStep('storage');
     await insertSource(db, {
       id: sourceId,
-      kind: 'screenshot',
+      kind: 'image',
       tripId: input.suggestedTripId ?? null,
       filePath: targetUri,
       contentHash,

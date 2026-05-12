@@ -17,7 +17,7 @@ type ProcessingBannerProps = {
 export function ProcessingBanner({ count }: ProcessingBannerProps) {
   const colors = useThemeColors();
   if (count === 0) return null;
-  const label = `Processing ${count} screenshot${count === 1 ? '' : 's'}…`;
+  const label = `Processing ${count} source${count === 1 ? '' : 's'}…`;
   return (
     <View
       accessibilityRole="text"

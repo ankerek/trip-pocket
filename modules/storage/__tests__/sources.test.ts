@@ -40,7 +40,7 @@ describe('sources repository', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       id: 'a',
-      kind: 'screenshot',
+      kind: 'image',
       platform: null,
       tripId: null,
       filePath: '/sandbox/a.jpg',

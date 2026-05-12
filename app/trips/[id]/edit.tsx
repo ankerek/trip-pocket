@@ -145,7 +145,7 @@ export default function EditTrip() {
     const body =
       n === 0 && m === 0
         ? "This can't be undone."
-        : `${n} screenshot${n === 1 ? '' : 's'} and ${m} place${m === 1 ? '' : 's'} will move back to your Inbox.`;
+        : `${n} source${n === 1 ? '' : 's'} and ${m} place${m === 1 ? '' : 's'} will move back to your Inbox.`;
     Alert.alert(
       `Delete '${trip.name}'?`,
       body,
@@ -174,7 +174,7 @@ export default function EditTrip() {
   const onDeleteCascade = () => {
     if (!db || !id || !counts) return;
     const { sources: n, cascadeDeletedPlaces: m, cascadeSurvivingShared: s } = counts;
-    const title = `Delete '${trip.name}' and ${n} screenshot${n === 1 ? '' : 's'}, ${m} place${m === 1 ? '' : 's'}?`;
+    const title = `Delete '${trip.name}' and ${n} source${n === 1 ? '' : 's'}, ${m} place${m === 1 ? '' : 's'}?`;
     const lines: string[] = [];
     if (s > 0) {
       lines.push(`${s} place${s === 1 ? '' : 's'} shared with other trips will be moved to your Inbox.`);
