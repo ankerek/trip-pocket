@@ -123,8 +123,8 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     }
 
     if (!row.file_path) {
-      // kind='screenshot' with no file_path is a malformed row — shouldn't
-      // happen since importImage moves the file before insert. Bail.
+      // kind='image' with no file_path is a malformed row — shouldn't happen
+      // since importImage moves the file before insert. Bail.
       return { retry: false };
     }
 
@@ -245,7 +245,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources
         WHERE ocr_status = 'pending'
-          AND (kind = 'screenshot' OR file_path IS NOT NULL OR caption IS NOT NULL)
+          AND (kind = 'image' OR file_path IS NOT NULL OR caption IS NOT NULL)
      ORDER BY captured_at ASC`,
     );
     for (const r of rows) enqueueOcr(r.id);

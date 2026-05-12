@@ -1,7 +1,7 @@
 import type { Database } from './db';
 import { notifyChange } from './live-query';
 
-export type SourceKind = 'screenshot' | 'url' | 'pasted';
+export type SourceKind = 'image' | 'url' | 'pasted';
 export type SourcePlatform = 'instagram' | 'tiktok';
 export type SourceOrigin = 'share' | 'auto' | 'manual';
 export type ProcessingStatus = 'pending' | 'done' | 'failed';
@@ -27,7 +27,7 @@ export type Source = {
 
 export type InsertSourceInput = {
   id: string;
-  kind?: SourceKind; // defaults to 'screenshot'
+  kind?: SourceKind; // defaults to 'image'
   platform?: SourcePlatform | null;
   tripId: string | null;
   filePath?: string | null;
@@ -47,7 +47,7 @@ export async function insertSource(db: Database, input: InsertSourceInput): Prom
       owner_id, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
     input.id,
-    input.kind ?? 'screenshot',
+    input.kind ?? 'image',
     input.platform ?? null,
     input.tripId,
     input.filePath ?? null,

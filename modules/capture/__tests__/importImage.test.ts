@@ -57,7 +57,7 @@ describe('importImage', () => {
 
     const rows = await listSources(db, { tripId: null });
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe('screenshot');
+    expect(rows[0]?.kind).toBe('image');
     expect(rows[0]?.origin).toBe('manual');
     expect(rows[0]?.contentHash).toBe('sha-of:/picker/img1.jpg');
     expect(rows[0]?.filePath?.startsWith('/sandbox/')).toBe(true);
@@ -165,7 +165,7 @@ describe('importImage', () => {
            (id, kind, trip_id, file_path, url, content_hash, origin,
             ocr_status, extraction_status, captured_at,
             owner_id, created_at, updated_at)
-         VALUES ('racer', 'screenshot', NULL, '/sandbox/racer.jpg', NULL, 'h-collision', 'manual',
+         VALUES ('racer', 'image', NULL, '/sandbox/racer.jpg', NULL, 'h-collision', 'manual',
                  'pending', 'pending', '2026-05-04T09:00:00Z',
                  ?, '2026-05-04T09:00:00Z', '2026-05-04T09:00:00Z')`,
         ownerId,

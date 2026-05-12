@@ -153,7 +153,7 @@ function toMapTarget(place: MapsUrlInput): MapTarget {
 function buildSubtitle(place: PlaceRowData): string {
   const sourceFragment =
     place.source_count !== undefined && place.source_count > 1
-      ? `${place.source_count} screenshots`
+      ? `${place.source_count} sources`
       : null;
   // Preference order: enriched formatted_address (filled by enrichment),
   // OCR-extracted street address, plain city. The first non-empty wins.

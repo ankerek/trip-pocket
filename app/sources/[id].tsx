@@ -135,7 +135,7 @@ export default function SourceDetail() {
         ? "This can't be undone."
         : `${orphanCount} place${orphanCount === 1 ? '' : 's'} extracted from it will also be deleted. This can't be undone.`;
     Alert.alert(
-      'Delete this screenshot?',
+      'Delete this source?',
       body,
       [
         { text: 'Cancel', style: 'cancel' },

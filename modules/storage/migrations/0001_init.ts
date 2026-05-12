@@ -25,6 +25,11 @@ import type { Migration } from '../db';
 // it into `ocr_text` before extraction. Both NULL for screenshots.
 // Devs with a pre-2026-05-12-url-share dev DB need to wipe.
 //
+// `kind='screenshot'` is preserved here as the original literal; migration
+// 0004 (2026-05-13) rebuilds `sources` with `kind IN ('image','url','pasted')`
+// and rewrites existing rows. Fresh installs land at 0001's old CHECK and
+// then 0004 rebuilds; the rebuild on an empty table is free.
+//
 // Tables, in dependency order:
 //   trips, sources, places, place_sources, tags, pending_imports, meta
 //

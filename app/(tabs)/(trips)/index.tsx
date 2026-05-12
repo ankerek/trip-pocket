@@ -82,7 +82,7 @@ export default function Trips() {
         <EmptyState
           icon="folder.badge.plus"
           title="No trips yet"
-          body="Trips group your screenshots together — like “Japan” or “Lisbon weekend”."
+          body="Trips group your sources together — like “Japan” or “Lisbon weekend”."
           cta={{
             label: 'Create your first trip',
             onPress: () => router.push('/trips/new'),

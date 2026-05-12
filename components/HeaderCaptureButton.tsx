@@ -19,7 +19,7 @@ export function HeaderCaptureButton() {
       }}
       accessibilityRole="button"
       accessibilityLabel="Add place"
-      accessibilityHint="Pick screenshots from Photos to import"
+      accessibilityHint="Add from Photos"
       hitSlop={8}
       style={{ paddingHorizontal: 12 }}
     >
