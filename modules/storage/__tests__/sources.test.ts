@@ -41,11 +41,55 @@ describe('sources repository', () => {
     expect(rows[0]).toMatchObject({
       id: 'a',
       kind: 'screenshot',
+      platform: null,
       tripId: null,
       filePath: '/sandbox/a.jpg',
       url: null,
       origin: 'share',
     });
+  });
+
+  it('persists kind=url with platform="instagram" and a url', async () => {
+    const db = await freshDb();
+    await insertSource(db, {
+      id: 'u',
+      kind: 'url',
+      platform: 'instagram',
+      tripId: null,
+      filePath: null,
+      url: 'https://www.instagram.com/p/ABC123/',
+      contentHash: 'hash-url',
+      origin: 'share',
+      capturedAt: '2026-05-12T10:00:00Z',
+      ownerId,
+    });
+    const rows = await listSources(db, { tripId: null });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'u',
+      kind: 'url',
+      platform: 'instagram',
+      filePath: null,
+      url: 'https://www.instagram.com/p/ABC123/',
+    });
+  });
+
+  it('rejects an unsupported platform value at the DB layer', async () => {
+    const db = await freshDb();
+    // CHECK constraint should refuse 'youtube' for now (only IG + TikTok).
+    await expect(
+      insertSource(db, {
+        id: 'y',
+        kind: 'url',
+        platform: 'youtube' as never,
+        tripId: null,
+        url: 'https://youtube.com/watch?v=x',
+        contentHash: 'hash-yt',
+        origin: 'share',
+        capturedAt: '2026-05-12T10:00:00Z',
+        ownerId,
+      }),
+    ).rejects.toThrow();
   });
 
   it('lists sources ordered newest first by captured_at', async () => {
