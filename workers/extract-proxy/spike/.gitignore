@@ -1,0 +1,5 @@
+# Spike artifacts — kept locally for inspection but not committed.
+# The HTML dumps contain cache-busted CDN URLs that rot, and the JSON dump
+# can contain large parsed blobs that bloat the repo without long-term value.
+dump-*.html
+spike-output.json
