@@ -43,6 +43,13 @@ export type CreateProcessorOptions = {
    */
   fetchPost?: UrlFetcher;
   downloadImage?: ImageDownloader;
+  /**
+   * Best-effort temp-file deletion for IG carousel slides 2..N. After OCR'ing
+   * a slide we don't keep the bytes locally — the WebView playback in the
+   * source detail screen pulls slides from IG's CDN on demand. Defaults to
+   * a no-op (the runtime wires this to expo-file-system; tests can spy on it).
+   */
+  disposeFile?: (path: string) => Promise<void>;
   maxRetries?: number;
   now?: () => string;
 };
@@ -220,21 +227,110 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       return { retry: false };
     }
 
-    // Image download is best-effort. Failures here downgrade to caption-only.
-    let downloadedPath: string | null = null;
-    if (result.imageUrls.length > 0 && opts.downloadImage) {
+    // Single-image (length 0 or 1): existing flow. Download the cover (if
+    // any) to a permanent path; OCR runs as a separate stage via enqueueOcr.
+    //
+    // Carousel (length > 1): orchestrate download + OCR + cleanup inline so
+    // the slide bytes never outlive their OCR pass. Only the cover persists.
+    if (result.imageUrls.length <= 1) {
+      let downloadedPath: string | null = null;
+      if (result.imageUrls.length === 1 && opts.downloadImage) {
+        try {
+          downloadedPath = await opts.downloadImage(result.imageUrls[0]!);
+        } catch (err) {
+          // Don't fail the whole source on a CDN hiccup. Caption alone is
+          // often enough (list-style IG posts).
+          console.warn('[processor] image download failed', id, err);
+        }
+      }
+      await applyUrlFetchResult(opts.db, id, downloadedPath, result.caption);
+      enqueueOcr(id);
+      return { retry: false };
+    }
+
+    // Carousel path. Cover (imageUrls[0]) is persisted; slides [1..N) are
+    // downloaded, OCR'd, and immediately deleted. Per-slide failures (download
+    // or OCR) are tolerated — we just skip that slide's contribution.
+    if (!opts.downloadImage) {
+      // No downloader provisioned (test posture). Treat as caption-only.
+      await applyUrlFetchResult(opts.db, id, null, result.caption);
+      enqueueOcr(id);
+      return { retry: false };
+    }
+
+    let coverPath: string | null = null;
+    try {
+      coverPath = await opts.downloadImage(result.imageUrls[0]!);
+    } catch (err) {
+      console.warn('[processor] cover download failed', id, err);
+    }
+
+    if (!coverPath) {
+      // Without a cover image, even the carousel collapses to caption-only —
+      // matches the single-image-failure UX.
+      await applyUrlFetchResult(opts.db, id, null, result.caption);
+      enqueueOcr(id);
+      return { retry: false };
+    }
+
+    const slidePaths: string[] = [];
+    for (let i = 1; i < result.imageUrls.length; i++) {
       try {
-        downloadedPath = await opts.downloadImage(result.imageUrls[0]!);
+        const p = await opts.downloadImage(result.imageUrls[i]!);
+        slidePaths.push(p);
       } catch (err) {
-        // Don't fail the whole source on a CDN hiccup. Caption alone is
-        // often enough (list-style IG posts).
-        console.warn('[processor] image download failed', id, err);
+        console.warn('[processor] slide download failed', id, i, err);
       }
     }
 
-    await applyUrlFetchResult(opts.db, id, downloadedPath, result.caption);
-    // Whether or not we downloaded an image, OCR is the next stage.
-    enqueueOcr(id);
+    // OCR cover first, then each successfully downloaded slide. Failures are
+    // logged and skipped; we never let one slide's error sink the source.
+    const ocrSegments: string[] = [];
+    try {
+      const coverText = await opts.ocr(coverPath);
+      if (coverText.length > 0) ocrSegments.push(coverText);
+    } catch (err) {
+      console.warn('[processor] cover OCR failed', id, err);
+    }
+    for (const slidePath of slidePaths) {
+      try {
+        const t = await opts.ocr(slidePath);
+        if (t.length > 0) ocrSegments.push(t);
+      } catch (err) {
+        console.warn('[processor] slide OCR failed', id, err);
+      }
+    }
+    if (result.caption.length > 0) ocrSegments.push(result.caption);
+
+    const finalText = ocrSegments.join(CAPTION_SEPARATOR);
+
+    // Persist atomically: file_path → cover, caption → caption, ocr_text →
+    // final concat, ocr_status → done. After this row update, a crash leaves
+    // a complete source (extraction may still re-run, which is fine).
+    await applyUrlFetchResult(opts.db, id, coverPath, result.caption);
+    await opts.db.runAsync(
+      `UPDATE sources
+          SET ocr_text = ?, ocr_status = 'done', updated_at = ?
+        WHERE id = ?`,
+      finalText,
+      getNow(),
+      id,
+    );
+    notifyChange('sources');
+
+    // Drop the slide bytes. Best-effort: a failure here is a stranded temp
+    // file, not a data integrity problem.
+    if (opts.disposeFile) {
+      for (const slidePath of slidePaths) {
+        try {
+          await opts.disposeFile(slidePath);
+        } catch (err) {
+          console.warn('[processor] slide cleanup failed', id, err);
+        }
+      }
+    }
+
+    getExtractor()?.enqueueExtraction(id);
     return { retry: false };
   }
 
