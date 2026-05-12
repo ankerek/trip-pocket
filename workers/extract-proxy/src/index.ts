@@ -19,6 +19,10 @@ export interface Env {
   AI_GATEWAY_NAME: string;
   CF_AIG_TOKEN: string;
   RATE_LIMIT: RateLimitBinding;
+  // Apify: actor id is a plain var (defaulted in wrangler.toml), token is a
+  // secret. Both are read by /fetch-post for the IG carousel / og-failure path.
+  APIFY_TOKEN?: string;
+  APIFY_ACTOR_ID?: string;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' } as const;
