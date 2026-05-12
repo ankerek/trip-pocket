@@ -5,6 +5,7 @@ import {
 } from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
 import { handleEnrich } from './enrich';
+import { handleFetchPost } from './fetch-post';
 import { handlePhoto } from './photo';
 
 export interface RateLimitBinding {
@@ -189,6 +190,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   const path = url.pathname;
   if (path === '/extract') return handleExtract(request, env);
   if (path === '/enrich') return handleEnrich(request, env);
+  if (path === '/fetch-post') return handleFetchPost(request, env);
   if (path.startsWith('/photo/')) return handlePhoto(request, env);
   return errorResponse('not-found', 404);
 }
