@@ -54,6 +54,8 @@ og: is still fetched for `/p/` posts because that's how we cheaply distinguish s
 
 **Unknown `efg` defaults to carousel-treatment.** If the `efg` query param is missing on `og:image`, the base64 decode fails, or the decoded token isn't in `{single, CAROUSEL_ITEM, CLIPS}`, the worker calls Apify. Rationale: extraction quality matters more than the marginal Apify cost, and an "unknown" reading is a canary for IG changing its og-tag generation pipeline. The `route` telemetry field tags these calls as `og_then_apify_unknown_efg` so we can see if the unknown rate climbs and update the decoder.
 
+**Soft-degrade when Apify is not configured.** If `APIFY_TOKEN` or `APIFY_ACTOR_ID` is unset in the worker env, every dispatch path that would have called Apify silently falls back to the og: result (carousels lose slides 2..N — exactly the v0.2.1 behavior). The og:-failed-then-Apify-fallback case surfaces the og: error directly. This is intentional: it lets us deploy the worker without committing to Apify spend, and enable the Apify path later by `wrangler secret put APIFY_TOKEN` with no code change. The trade-off is that the carousel extraction-quality gap stays open until the token lands — which is acceptable because, by spec, the gap was already shipped in v0.2.1.
+
 ### Response shape (extends v0.2.1)
 
 ```json
