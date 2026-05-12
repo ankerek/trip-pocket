@@ -91,7 +91,101 @@ describe('url-share migration (0002)', () => {
     expect(cols.map((c) => c.name)).toEqual(
       expect.arrayContaining(['platform', 'caption']),
     );
-    expect(await getMigrationVersion(db)).toBe(2);
+    expect(await getMigrationVersion(db)).toBe(3);
+  });
+});
+
+describe('pending_imports nullable-path migration (0003)', () => {
+  // Pre-2026-05-12 dev DBs declared `pending_imports.app_group_path TEXT NOT NULL`.
+  // The URL-share path (added in 4b5a10b) inserts NULL for `app_group_path`,
+  // which fired SQLite's NOT NULL constraint and surfaced as "Couldn't save"
+  // in the iOS share extension. SQLite ALTER TABLE cannot drop NOT NULL, so a
+  // table rebuild is the only fix.
+
+  async function makeStaleDb(): Promise<Database> {
+    const db = await openDatabase(':memory:');
+    // Simulate the pre-2026-05-12 schema: app_group_path NOT NULL, no kind/url.
+    await db.execAsync(`
+      CREATE TABLE pending_imports (
+        id TEXT PRIMARY KEY NOT NULL,
+        app_group_path TEXT NOT NULL,
+        suggested_trip_id TEXT,
+        created_at TEXT NOT NULL
+      );
+    `);
+    // Then simulate what 0002's ALTERs did to that table on an upgraded
+    // install — they add kind/url but leave app_group_path's NOT NULL alone.
+    await db.execAsync(`
+      ALTER TABLE pending_imports ADD COLUMN kind TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image','url'));
+      ALTER TABLE pending_imports ADD COLUMN url TEXT;
+    `);
+    await db.runAsync(
+      'INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)',
+      new Date().toISOString(),
+    );
+    await db.runAsync(
+      'INSERT INTO schema_migrations (version, applied_at) VALUES (2, ?)',
+      new Date().toISOString(),
+    );
+    return db;
+  }
+
+  it('drops NOT NULL on app_group_path so kind="url" inserts succeed', async () => {
+    const db = await makeStaleDb();
+    const before = await db.getAllAsync<{ name: string; notnull: number }>(
+      `PRAGMA table_info(pending_imports)`,
+    );
+    expect(before.find((c) => c.name === 'app_group_path')?.notnull).toBe(1);
+
+    await runMigrations(db, migrations);
+
+    const after = await db.getAllAsync<{ name: string; notnull: number }>(
+      `PRAGMA table_info(pending_imports)`,
+    );
+    expect(after.find((c) => c.name === 'app_group_path')?.notnull).toBe(0);
+
+    // The actual bug: kind='url' rows must be insertable with NULL path.
+    await db.runAsync(
+      `INSERT INTO pending_imports (id, kind, app_group_path, url, suggested_trip_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      'u1', 'url', null, 'https://instagram.com/p/ABC/', null,
+      '2026-05-12T10:00:00Z',
+    );
+    const rows = await db.getAllAsync<{ id: string; kind: string }>(
+      `SELECT id, kind FROM pending_imports`,
+    );
+    expect(rows).toEqual([{ id: 'u1', kind: 'url' }]);
+  });
+
+  it('preserves existing rows during the rebuild', async () => {
+    const db = await makeStaleDb();
+    await db.runAsync(
+      `INSERT INTO pending_imports (id, kind, app_group_path, url, suggested_trip_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      'i1', 'image', 'file:///x.jpg', null, null, '2026-05-11T10:00:00Z',
+    );
+
+    await runMigrations(db, migrations);
+
+    const rows = await db.getAllAsync<{
+      id: string; kind: string; app_group_path: string | null;
+    }>(`SELECT id, kind, app_group_path FROM pending_imports`);
+    expect(rows).toEqual([
+      { id: 'i1', kind: 'image', app_group_path: 'file:///x.jpg' },
+    ]);
+  });
+
+  it('is a no-op when app_group_path is already nullable (fresh installs)', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+
+    // Only one pending_imports table; no leftover *_new from the rebuild path.
+    const tables = await db.getAllAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master
+        WHERE type='table' AND name LIKE 'pending_imports%'`,
+    );
+    expect(tables.map((t) => t.name)).toEqual(['pending_imports']);
+    expect(await getMigrationVersion(db)).toBe(3);
   });
 });
 

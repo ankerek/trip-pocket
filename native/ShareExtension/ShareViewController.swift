@@ -1,6 +1,9 @@
 import UIKit
 import SwiftUI
 import UniformTypeIdentifiers
+import os
+
+private let log = Logger(subsystem: "com.trippocket.share", category: "ShareViewController")
 
 class ShareViewController: UIViewController {
     private let errorState = SaveErrorState()
@@ -75,6 +78,7 @@ class ShareViewController: UIViewController {
                     self.extensionContext?.completeRequest(returningItems: nil)
                 }
             } catch {
+                log.error("handleUrlAttachment: write failed: \(String(describing: error), privacy: .public)")
                 self.errorState.set(.writeFailed)
             }
         }
@@ -84,6 +88,7 @@ class ShareViewController: UIViewController {
         provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
             guard let self else { return }
             guard let url = self.materializeImage(data) else {
+                log.error("handleImageAttachment: materializeImage returned nil")
                 self.errorState.set(.writeFailed)
                 return
             }
@@ -93,6 +98,7 @@ class ShareViewController: UIViewController {
                     self.extensionContext?.completeRequest(returningItems: nil)
                 }
             } catch {
+                log.error("handleImageAttachment: write failed: \(String(describing: error), privacy: .public)")
                 self.errorState.set(.writeFailed)
             }
         }

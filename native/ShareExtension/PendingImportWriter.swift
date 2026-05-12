@@ -1,5 +1,8 @@
 import Foundation
 import SQLite3
+import os
+
+private let log = Logger(subsystem: "com.trippocket.share", category: "PendingImportWriter")
 
 enum PendingImportError: Error {
     case noAppGroup
@@ -13,6 +16,7 @@ struct PendingImportWriter {
     func write(imageAt sourceURL: URL, suggestedTripId: String?) throws {
         guard let groupURL = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+            log.error("write(imageAt:): no App Group container for \(self.appGroupId, privacy: .public)")
             throw PendingImportError.noAppGroup
         }
 
@@ -23,6 +27,7 @@ struct PendingImportWriter {
         do {
             try FileManager.default.copyItem(at: sourceURL, to: destURL)
         } catch {
+            log.error("write(imageAt:): copy failed \(sourceURL.path, privacy: .public) -> \(destURL.path, privacy: .public): \(String(describing: error), privacy: .public)")
             throw PendingImportError.copyFailed
         }
 
@@ -48,6 +53,7 @@ struct PendingImportWriter {
     func write(url shareUrl: String, suggestedTripId: String?) throws {
         guard let groupURL = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+            log.error("write(url:): no App Group container for \(self.appGroupId, privacy: .public)")
             throw PendingImportError.noAppGroup
         }
 
@@ -70,6 +76,7 @@ struct PendingImportWriter {
         let dbURL = groupURL.appendingPathComponent("trip-pocket.db")
         var db: OpaquePointer?
         guard sqlite3_open(dbURL.path, &db) == SQLITE_OK else {
+            log.error("insertPendingRow: sqlite3_open failed at \(dbURL.path, privacy: .public)")
             throw PendingImportError.dbFailed
         }
         defer { sqlite3_close(db) }
@@ -94,6 +101,7 @@ struct PendingImportWriter {
             );
         """
         if sqlite3_exec(db, create, nil, nil, nil) != SQLITE_OK {
+            log.error("insertPendingRow: CREATE TABLE failed: \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
             throw PendingImportError.dbFailed
         }
 
@@ -114,6 +122,7 @@ struct PendingImportWriter {
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insert, -1, &stmt, nil) == SQLITE_OK else {
+            log.error("insertPendingRow: prepare INSERT failed: \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
             throw PendingImportError.dbFailed
         }
         defer { sqlite3_finalize(stmt) }
@@ -146,6 +155,7 @@ struct PendingImportWriter {
         sqlite3_bind_text(stmt, 6, createdAt, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
+            log.error("insertPendingRow: step INSERT failed kind=\(kind, privacy: .public): \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
             throw PendingImportError.dbFailed
         }
     }
