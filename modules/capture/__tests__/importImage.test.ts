@@ -205,7 +205,9 @@ describe('importImage', () => {
       const enqueueOcr = jest.fn<void, [string]>();
       const processor: Processor = {
         enqueueOcr,
+        enqueueUrlFetch: jest.fn<void, [string]>(),
         runOcrSweep: jest.fn().mockResolvedValue(undefined),
+        runUrlFetchSweep: jest.fn().mockResolvedValue(undefined),
         runStartupRecovery: jest.fn().mockResolvedValue(undefined),
         _awaitIdle: jest.fn().mockResolvedValue(undefined),
       };

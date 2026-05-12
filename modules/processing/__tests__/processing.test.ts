@@ -7,7 +7,14 @@ import {
 } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
 import * as liveQuery from '@/modules/storage/live-query';
-import { createProcessor, type OcrRunner, type Processor } from '../processing';
+import {
+  createProcessor,
+  type OcrRunner,
+  type Processor,
+  type UrlFetcher,
+  type ImageDownloader,
+} from '../processing';
+import { FetchPostError } from '@/modules/capture/fetchPostFromProxy';
 import {
   provideExtractor,
   _resetExtractorForTests,
@@ -346,6 +353,241 @@ describe('createProcessor', () => {
       await drain(p);
 
       expect(enqueueExtraction).not.toHaveBeenCalled();
+    });
+
+    describe('URL fetch path (kind="url")', () => {
+      async function seedUrlSource(db: Database, id: string, url: string): Promise<void> {
+        const now = '2026-05-12T10:00:00.000Z';
+        await db.runAsync(
+          `INSERT INTO sources (
+            id, kind, platform, trip_id, file_path, url, content_hash, origin,
+            ocr_status, extraction_status, captured_at,
+            owner_id, created_at, updated_at
+          ) VALUES (?, 'url', 'instagram', NULL, NULL, ?, ?, 'share', 'pending', 'pending', ?, 'owner-1', ?, ?)`,
+          id,
+          url,
+          `hash-${id}`,
+          now,
+          now,
+          now,
+        );
+      }
+
+      it('fetches the post, downloads image, writes caption, chains into OCR', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+        const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+          platform: 'instagram',
+          permalink: 'https://instagram.com/p/ABC/',
+          caption: 'Mt Fuji is gorgeous',
+          imageUrls: ['https://cdn.example/cover.jpg'],
+          author: 'someone',
+        });
+        const downloadImage: ImageDownloader = jest
+          .fn()
+          .mockResolvedValue('/storage/cover.jpg');
+        const ocr: OcrRunner = jest.fn().mockResolvedValue('Mt Fuji');
+
+        const p = createProcessor({ db, ocr, fetchPost, downloadImage });
+        p.enqueueUrlFetch('u1');
+        await drain(p);
+
+        const row = await db.getFirstAsync<{
+          file_path: string | null;
+          caption: string | null;
+          ocr_status: string;
+          ocr_text: string | null;
+        }>(`SELECT file_path, caption, ocr_status, ocr_text FROM sources WHERE id = 'u1'`);
+        expect(row?.file_path).toBe('/storage/cover.jpg');
+        expect(row?.caption).toBe('Mt Fuji is gorgeous');
+        expect(row?.ocr_status).toBe('done');
+        // OCR + separator + caption
+        expect(row?.ocr_text).toBe('Mt Fuji\n---\nMt Fuji is gorgeous');
+        expect(downloadImage).toHaveBeenCalledWith('https://cdn.example/cover.jpg');
+        expect(ocr).toHaveBeenCalledWith('/storage/cover.jpg');
+      });
+
+      it('falls back to caption-only when image download fails', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+        const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+          platform: 'instagram',
+          permalink: 'https://instagram.com/p/ABC/',
+          caption: 'just the words',
+          imageUrls: ['https://cdn.example/cover.jpg'],
+          author: null,
+        });
+        const downloadImage: ImageDownloader = jest
+          .fn()
+          .mockRejectedValue(new Error('CDN 404'));
+        const ocr: OcrRunner = jest.fn();
+
+        const p = createProcessor({ db, ocr, fetchPost, downloadImage });
+        p.enqueueUrlFetch('u1');
+        await drain(p);
+
+        const row = await db.getFirstAsync<{
+          file_path: string | null;
+          caption: string | null;
+          ocr_status: string;
+          ocr_text: string | null;
+        }>(`SELECT file_path, caption, ocr_status, ocr_text FROM sources WHERE id = 'u1'`);
+        expect(row?.file_path).toBeNull();
+        expect(row?.caption).toBe('just the words');
+        expect(row?.ocr_status).toBe('done');
+        expect(row?.ocr_text).toBe('just the words');
+        expect(ocr).not.toHaveBeenCalled();
+      });
+
+      it('skips download when imageUrls is empty', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+        const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+          platform: 'instagram',
+          permalink: 'https://instagram.com/p/ABC/',
+          caption: 'no cover available',
+          imageUrls: [],
+          author: null,
+        });
+        const downloadImage: ImageDownloader = jest.fn();
+        const ocr: OcrRunner = jest.fn();
+
+        const p = createProcessor({ db, ocr, fetchPost, downloadImage });
+        p.enqueueUrlFetch('u1');
+        await drain(p);
+
+        expect(downloadImage).not.toHaveBeenCalled();
+        expect(ocr).not.toHaveBeenCalled();
+        const row = await db.getFirstAsync<{ ocr_text: string | null }>(
+          `SELECT ocr_text FROM sources WHERE id = 'u1'`,
+        );
+        expect(row?.ocr_text).toBe('no cover available');
+      });
+
+      it('retries retryable worker failures up to maxRetries, leaves extraction_status pending', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+        const fetchPost: UrlFetcher = jest
+          .fn()
+          .mockRejectedValue(new FetchPostError('boom', { kind: 'retryable' }));
+        const p = createProcessor({
+          db,
+          ocr: jest.fn(),
+          fetchPost,
+          maxRetries: 3,
+        });
+        p.enqueueUrlFetch('u1');
+        await drain(p);
+
+        expect(fetchPost).toHaveBeenCalledTimes(3);
+        const row = await db.getFirstAsync<{
+          ocr_status: string;
+          extraction_status: string;
+        }>(`SELECT ocr_status, extraction_status FROM sources WHERE id = 'u1'`);
+        expect(row?.ocr_status).toBe('failed');
+        // Retryable-exhausted: extraction_status stays 'pending' so startup
+        // recovery promotes this row back to 'pending' next launch.
+        expect(row?.extraction_status).toBe('pending');
+      });
+
+      it('runStartupRecovery skips rows with extraction_status=failed (permanent URL failures)', async () => {
+        const db = await freshDb();
+        // Seed two URL rows: one permanently failed, one retryable-exhausted.
+        await seedUrlSource(db, 'perm', 'https://instagram.com/p/PERM/');
+        await seedUrlSource(db, 'retry', 'https://instagram.com/p/RETRY/');
+        await db.runAsync(
+          `UPDATE sources SET ocr_status='failed', extraction_status='failed' WHERE id='perm'`,
+        );
+        await db.runAsync(
+          `UPDATE sources SET ocr_status='failed', extraction_status='pending' WHERE id='retry'`,
+        );
+
+        const p = createProcessor({ db, ocr: jest.fn() });
+        await p.runStartupRecovery();
+
+        const perm = await db.getFirstAsync<{ ocr_status: string }>(
+          `SELECT ocr_status FROM sources WHERE id='perm'`,
+        );
+        const retry = await db.getFirstAsync<{ ocr_status: string }>(
+          `SELECT ocr_status FROM sources WHERE id='retry'`,
+        );
+        expect(perm?.ocr_status).toBe('failed');
+        expect(retry?.ocr_status).toBe('pending');
+      });
+
+      it('does not retry permanent worker failures', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+        const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
+          new FetchPostError('private', { kind: 'permanent', code: 'private' }),
+        );
+        const p = createProcessor({
+          db,
+          ocr: jest.fn(),
+          fetchPost,
+          maxRetries: 3,
+        });
+        p.enqueueUrlFetch('u1');
+        await drain(p);
+
+        expect(fetchPost).toHaveBeenCalledTimes(1);
+        const row = await db.getFirstAsync<{
+          ocr_status: string;
+          extraction_status: string;
+        }>(`SELECT ocr_status, extraction_status FROM sources WHERE id = 'u1'`);
+        expect(row?.ocr_status).toBe('failed');
+        expect(row?.extraction_status).toBe('failed');
+      });
+
+      it('runUrlFetchSweep picks up kind=url rows with NULL file_path AND NULL caption', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+        // Already-fetched URL row — should be skipped by the sweep.
+        await db.runAsync(
+          `INSERT INTO sources (
+            id, kind, platform, trip_id, file_path, url, caption, content_hash, origin,
+            ocr_status, extraction_status, captured_at,
+            owner_id, created_at, updated_at
+          ) VALUES ('u2', 'url', 'tiktok', NULL, '/p.jpg', ?, 'old caption', 'h2',
+                    'share', 'pending', 'pending', ?, 'o', ?, ?)`,
+          'https://tiktok.com/@u/video/123',
+          '2026-05-11T10:00:00.000Z',
+          '2026-05-11T10:00:00.000Z',
+          '2026-05-11T10:00:00.000Z',
+        );
+
+        const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+          platform: 'instagram',
+          permalink: 'https://instagram.com/p/ABC/',
+          caption: 'cap',
+          imageUrls: [],
+          author: null,
+        });
+        const p = createProcessor({ db, ocr: jest.fn(), fetchPost });
+        await p.runUrlFetchSweep();
+        await drain(p);
+
+        expect(fetchPost).toHaveBeenCalledTimes(1);
+        expect(fetchPost).toHaveBeenCalledWith('https://instagram.com/p/ABC/');
+      });
+
+      it('enqueueUrlFetch is a no-op when no fetcher provisioned', async () => {
+        const db = await freshDb();
+        await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+        // Provision processor WITHOUT fetchPost — kind='url' rows should be ignored.
+        const p = createProcessor({ db, ocr: jest.fn() });
+        p.enqueueUrlFetch('u1');
+        await drain(p);
+        const row = await db.getFirstAsync<{ ocr_status: string }>(
+          `SELECT ocr_status FROM sources WHERE id = 'u1'`,
+        );
+        expect(row?.ocr_status).toBe('pending');
+      });
     });
 
     it('is a no-op when no extractor has been provided', async () => {

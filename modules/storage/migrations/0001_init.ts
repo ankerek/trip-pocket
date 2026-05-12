@@ -17,9 +17,12 @@ import type { Migration } from '../db';
 // enrichment time. Devs with a pre-2026-05-10-country dev DB need to
 // wipe.
 //
-// `sources.platform` added per
+// `sources.platform` and `sources.caption` added per
 // docs/superpowers/specs/2026-05-12-url-share-extraction-design.md.
-// Carries 'instagram' / 'tiktok' for kind='url' rows; NULL for screenshots.
+// `platform` carries 'instagram' / 'tiktok' for kind='url' rows
+// (NULL for screenshots). `caption` carries the og:description text
+// fetched from IG / TikTok by the worker; the OCR stage concatenates
+// it into `ocr_text` before extraction. Both NULL for screenshots.
 // Devs with a pre-2026-05-12-url-share dev DB need to wipe.
 //
 // Tables, in dependency order:
@@ -52,6 +55,7 @@ export const init: Migration = {
         trip_id           TEXT,
         file_path         TEXT,
         url               TEXT,
+        caption           TEXT,
         content_hash      TEXT NOT NULL,
         origin            TEXT NOT NULL CHECK (origin IN ('share','auto','manual')),
         ocr_status        TEXT NOT NULL DEFAULT 'pending'

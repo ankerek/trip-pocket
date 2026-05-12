@@ -2,6 +2,8 @@ import * as Sentry from '@sentry/react-native';
 
 export type PipelineStage =
   | 'share_import'
+  | 'url_share_import'
+  | 'url_fetch'
   | 'storage'
   | 'ocr'
   | 'extraction'

@@ -153,7 +153,7 @@ export default function Pocket() {
         <EmptyState
           icon="square.and.arrow.down"
           title="No places yet"
-          body="Share a screenshot to Trip Pocket from Photos, Instagram, or TikTok — or pull some in from your camera roll."
+          body="Share a screenshot or an Instagram / TikTok link to Trip Pocket — or pull some in from your camera roll."
           cta={{
             label: 'Add from Photos',
             onPress: () => {

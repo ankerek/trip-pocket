@@ -88,6 +88,7 @@ const config: ExpoConfig = {
     extractionProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/extract',
     enrichmentProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/enrich',
     photoProxyUrlBase: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/photo',
+    fetchPostProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/fetch-post',
     appVariant: IS_DEV ? 'development' : 'production',
     eas: {
       projectId: '2dee30ac-eb35-4cc6-80d7-4e6a664237b5',

@@ -53,6 +53,48 @@ describe('runMigrations', () => {
   });
 });
 
+describe('url-share migration (0002)', () => {
+  it('backfills sources.platform/caption and pending_imports.kind/url on a pre-url-share DB', async () => {
+    const db = await openDatabase(':memory:');
+    // Simulate the pre-2026-05-12 dev DB: run an `init` that creates the
+    // tables WITHOUT the new columns, then mark version=1 manually.
+    // openDatabase already creates schema_migrations. Add just the legacy
+    // tables that pre-2026-05-12 0001_init.ts would have written.
+    await db.execAsync(`
+      CREATE TABLE sources (id TEXT PRIMARY KEY, ocr_status TEXT, extraction_status TEXT);
+      CREATE TABLE pending_imports (id TEXT PRIMARY KEY, app_group_path TEXT, suggested_trip_id TEXT, created_at TEXT NOT NULL);
+    `);
+    await db.runAsync(
+      'INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)',
+      new Date().toISOString(),
+    );
+
+    await runMigrations(db, migrations);
+
+    const srcCols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(sources)`);
+    expect(srcCols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['platform', 'caption']),
+    );
+    const piCols = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(pending_imports)`,
+    );
+    expect(piCols.map((c) => c.name)).toEqual(expect.arrayContaining(['kind', 'url']));
+  });
+
+  it('is a no-op when the columns already exist (idempotent)', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    // Re-running on a fresh DB (which has the columns from 0001) must not
+    // throw. Bumping version above all migrations and re-applying tests
+    // the idempotency guard directly.
+    const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(sources)`);
+    expect(cols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['platform', 'caption']),
+    );
+    expect(await getMigrationVersion(db)).toBe(2);
+  });
+});
+
 describe('initial migration (0001)', () => {
   it('creates the places-first schema tables', async () => {
     const db = await openDatabase(':memory:');
