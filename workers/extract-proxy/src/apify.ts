@@ -104,7 +104,24 @@ export async function fetchInstagramViaApify(
     throw new ApifyError(500, 'apify-actor-not-found');
   }
   if (resp.status === 429) throw new ApifyError(502, 'apify-rate-limited');
-  if (!resp.ok) throw new ApifyError(502, 'apify-upstream');
+  if (!resp.ok) {
+    // Capture Apify's error body for debugging. Workers logs only — we still
+    // surface a generic apify-upstream to the client. Truncate to keep log
+    // lines bounded; Apify error JSON is normally well under 1 KB.
+    let detail = '';
+    try {
+      const t = await resp.text();
+      detail = t.slice(0, 800);
+    } catch {
+      // ignore
+    }
+    console.error(
+      'extract-proxy/apify: non-2xx',
+      resp.status,
+      detail || '(empty body)',
+    );
+    throw new ApifyError(502, 'apify-upstream');
+  }
 
   let items: unknown;
   try {
