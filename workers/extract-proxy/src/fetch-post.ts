@@ -243,10 +243,12 @@ async function fetchInstagram(
     };
   } catch (err) {
     if (err instanceof ApifyError) {
-      // og:-was-fine-but-Apify-failed (carousel/unknown): no graceful fallback
-      // to og:-only, per spec — half a carousel is worse than a clean failure.
+      // Surface the specific Apify failure to Workers logs (apify-auth /
+      // apify-empty / apify-rate-limited / apify-timeout / apify-upstream)
+      // so `wrangler tail` shows what actually went wrong. The client
+      // response stays generic — same reasoning as the rest of the proxy.
+      console.error('extract-proxy/fetch-post: apify-failed', err.code, err.status);
       if (ogResult) throw new UpstreamError(502, 'fetch-failed');
-      // og:-also-failed: og: error is more informative (404 = deleted post).
       if (ogError) throw ogError;
       throw new UpstreamError(502, 'fetch-failed');
     }
