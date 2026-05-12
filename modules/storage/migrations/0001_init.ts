@@ -17,6 +17,11 @@ import type { Migration } from '../db';
 // enrichment time. Devs with a pre-2026-05-10-country dev DB need to
 // wipe.
 //
+// `sources.platform` added per
+// docs/superpowers/specs/2026-05-12-url-share-extraction-design.md.
+// Carries 'instagram' / 'tiktok' for kind='url' rows; NULL for screenshots.
+// Devs with a pre-2026-05-12-url-share dev DB need to wipe.
+//
 // Tables, in dependency order:
 //   trips, sources, places, place_sources, tags, pending_imports, meta
 //
@@ -43,6 +48,7 @@ export const init: Migration = {
       CREATE TABLE IF NOT EXISTS sources (
         id                TEXT PRIMARY KEY NOT NULL,
         kind              TEXT NOT NULL CHECK (kind IN ('screenshot','url','pasted')),
+        platform          TEXT CHECK (platform IS NULL OR platform IN ('instagram','tiktok')),
         trip_id           TEXT,
         file_path         TEXT,
         url               TEXT,

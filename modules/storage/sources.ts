@@ -2,12 +2,14 @@ import type { Database } from './db';
 import { notifyChange } from './live-query';
 
 export type SourceKind = 'screenshot' | 'url' | 'pasted';
+export type SourcePlatform = 'instagram' | 'tiktok';
 export type SourceOrigin = 'share' | 'auto' | 'manual';
 export type ProcessingStatus = 'pending' | 'done' | 'failed';
 
 export type Source = {
   id: string;
   kind: SourceKind;
+  platform: SourcePlatform | null;
   tripId: string | null;
   filePath: string | null;
   url: string | null;
@@ -25,6 +27,7 @@ export type Source = {
 export type InsertSourceInput = {
   id: string;
   kind?: SourceKind; // defaults to 'screenshot'
+  platform?: SourcePlatform | null;
   tripId: string | null;
   filePath?: string | null;
   url?: string | null;
@@ -38,12 +41,13 @@ export async function insertSource(db: Database, input: InsertSourceInput): Prom
   const now = new Date().toISOString();
   await db.runAsync(
     `INSERT INTO sources (
-      id, kind, trip_id, file_path, url, content_hash, origin,
+      id, kind, platform, trip_id, file_path, url, content_hash, origin,
       ocr_status, extraction_status, captured_at,
       owner_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
     input.id,
     input.kind ?? 'screenshot',
+    input.platform ?? null,
     input.tripId,
     input.filePath ?? null,
     input.url ?? null,
@@ -59,6 +63,7 @@ export async function insertSource(db: Database, input: InsertSourceInput): Prom
 type Row = {
   id: string;
   kind: SourceKind;
+  platform: SourcePlatform | null;
   trip_id: string | null;
   file_path: string | null;
   url: string | null;
@@ -74,12 +79,13 @@ type Row = {
 };
 
 const ALL_COLUMNS =
-  'id, kind, trip_id, file_path, url, content_hash, origin, ocr_status, ocr_text, extraction_status, captured_at, owner_id, created_at, updated_at';
+  'id, kind, platform, trip_id, file_path, url, content_hash, origin, ocr_status, ocr_text, extraction_status, captured_at, owner_id, created_at, updated_at';
 
 function rowToSource(r: Row): Source {
   return {
     id: r.id,
     kind: r.kind,
+    platform: r.platform,
     tripId: r.trip_id,
     filePath: r.file_path,
     url: r.url,
