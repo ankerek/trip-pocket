@@ -509,6 +509,109 @@ describe('handleFetchPost — Instagram', () => {
       expect(resp.headers.get('cache-control')).toBe('no-store');
     });
 
+    describe('soft-degrade when Apify is not configured', () => {
+      it('carousel post: returns og: result instead of calling Apify', async () => {
+        const html = IG_OG_HTML('og caption', IG_COVER_CAROUSEL, 'X on Instagram');
+        let apifyCalled = false;
+        global.fetch = scriptedFetch([
+          {
+            match: (url) => url === 'https://www.instagram.com/p/CAR/',
+            response: () =>
+              new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+          },
+          {
+            match: (url) => url.includes('api.apify.com'),
+            response: () => {
+              apifyCalled = true;
+              return new Response('[]', { status: 200 });
+            },
+          },
+        ]);
+
+        // makeEnv() leaves APIFY_TOKEN / APIFY_ACTOR_ID unset.
+        const resp = await handleFetchPost(
+          postJson({ url: 'https://www.instagram.com/p/CAR/' }),
+          makeEnv(),
+        );
+        expect(resp.status).toBe(200);
+        expect(apifyCalled).toBe(false);
+        const body = (await resp.json()) as FetchPostResponse;
+        // Carousel collapses to slide-1 cover + caption — v0.2.1 behavior.
+        expect(body.caption).toBe('og caption');
+        expect(body.imageUrls).toEqual([IG_COVER_CAROUSEL]);
+        // Cache 1d (og:-only path), not 7d.
+        expect(resp.headers.get('cache-control')).toContain('s-maxage=86400');
+      });
+
+      it('unknown efg: returns og: result instead of calling Apify', async () => {
+        const html = IG_OG_HTML('cap', 'https://cdn/no-efg.jpg', 'X on Instagram');
+        let apifyCalled = false;
+        global.fetch = scriptedFetch([
+          {
+            match: (url) => url === 'https://www.instagram.com/p/UNK/',
+            response: () =>
+              new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+          },
+          {
+            match: (url) => url.includes('api.apify.com'),
+            response: () => {
+              apifyCalled = true;
+              return new Response('[]', { status: 200 });
+            },
+          },
+        ]);
+        const resp = await handleFetchPost(
+          postJson({ url: 'https://www.instagram.com/p/UNK/' }),
+          makeEnv(),
+        );
+        expect(resp.status).toBe(200);
+        expect(apifyCalled).toBe(false);
+      });
+
+      it('og:-failed with no Apify: surfaces the og: error (502)', async () => {
+        global.fetch = scriptedFetch([
+          {
+            match: (url) => url === 'https://www.instagram.com/p/X/',
+            response: () =>
+              new Response('<html><head></head></html>', {
+                status: 200,
+                headers: { 'content-type': 'text/html' },
+              }),
+          },
+        ]);
+        const resp = await handleFetchPost(
+          postJson({ url: 'https://www.instagram.com/p/X/' }),
+          makeEnv(),
+        );
+        expect(resp.status).toBe(502);
+      });
+
+      it('partial config (token but no actor id) is still degraded', async () => {
+        const html = IG_OG_HTML('cap', IG_COVER_CAROUSEL, 'X on Instagram');
+        let apifyCalled = false;
+        global.fetch = scriptedFetch([
+          {
+            match: (url) => url === 'https://www.instagram.com/p/CAR/',
+            response: () =>
+              new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+          },
+          {
+            match: (url) => url.includes('api.apify.com'),
+            response: () => {
+              apifyCalled = true;
+              return new Response('[]', { status: 200 });
+            },
+          },
+        ]);
+        const resp = await handleFetchPost(
+          postJson({ url: 'https://www.instagram.com/p/CAR/' }),
+          makeEnv({ APIFY_TOKEN: 'tok' }), // no APIFY_ACTOR_ID
+        );
+        expect(resp.status).toBe(200);
+        expect(apifyCalled).toBe(false);
+      });
+    });
+
     it('/reel/ URLs never go to Apify, even on success', async () => {
       const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
       let apifyCalled = false;

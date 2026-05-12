@@ -214,6 +214,17 @@ async function fetchInstagram(
     return { result: ogResult, cacheKind: 'og' };
   }
 
+  // Soft-degrade: if Apify isn't configured, ship the og: result when we have
+  // one (carousel loses slides 2..N — matches v0.2.1 behavior pre-Apify).
+  // This lets us deploy without an APIFY_TOKEN and add it later without a
+  // code change. og:-failed + no-Apify surfaces the original og: error.
+  const apifyConfigured = Boolean(env.APIFY_TOKEN && env.APIFY_ACTOR_ID);
+  if (!apifyConfigured) {
+    if (ogResult) return { result: ogResult, cacheKind: 'og' };
+    if (ogError) throw ogError;
+    throw new UpstreamError(502, 'fetch-failed');
+  }
+
   // Stage 2: Apify. Authoritative when it fires.
   try {
     const apify = await fetchInstagramViaApify(canonical, {
