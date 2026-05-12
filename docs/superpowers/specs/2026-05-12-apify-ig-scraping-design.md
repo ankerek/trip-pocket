@@ -47,9 +47,12 @@ Calls `sones/instagram-posts-scraper-lowcost` (configurable via `APIFY_ACTOR_ID`
 | `/reel/`, `/tv/` | yes | n/a | no | og: |
 | `/p/` | yes | `single` | no | og: |
 | `/p/` | yes | `CAROUSEL_ITEM` | **yes** | **Apify** (og: discarded) |
+| `/p/` | yes | unknown / missing / decode-fail | **yes** | **Apify** (og: discarded) |
 | any | failed / empty | n/a | yes | Apify (full replacement) |
 
 og: is still fetched for `/p/` posts because that's how we cheaply distinguish single from carousel. The fetch is sub-second; we discard its body when Apify fires.
+
+**Unknown `efg` defaults to carousel-treatment.** If the `efg` query param is missing on `og:image`, the base64 decode fails, or the decoded token isn't in `{single, CAROUSEL_ITEM, CLIPS}`, the worker calls Apify. Rationale: extraction quality matters more than the marginal Apify cost, and an "unknown" reading is a canary for IG changing its og-tag generation pipeline. The `route` telemetry field tags these calls as `og_then_apify_unknown_efg` so we can see if the unknown rate climbs and update the decoder.
 
 ### Response shape (extends v0.2.1)
 
@@ -69,7 +72,7 @@ og: is still fetched for `/p/` posts because that's how we cheaply distinguish s
 
 `imageUrls[0]` is always the cover. For carousels, `imageUrls[1..N]` are the additional slides from Apify's `childPosts`. For single posts and reels, the array has length 1.
 
-Error response shape unchanged from v0.2.1.
+**Error response shape unchanged from v0.2.1.** All terminal failures — whether og: failed and Apify-fallback also failed, or a known-carousel Apify call failed — emit the existing `502 fetch_failed`. The phone-side UX is identical for every terminal failure (tile placeholder + "couldn't load — re-share to retry"), so the worker doesn't need a new code to disambiguate. The carousel-vs-not distinction lives entirely in worker telemetry (`route` + `apify_outcome` fields, see Telemetry section).
 
 ## Actor choice and cost model
 
@@ -98,9 +101,17 @@ The official `apify/instagram-post-scraper` exposes these fields exactly; the lo
 
 ## Caching
 
-`Cache-Control: public, s-maxage=604800` (7 days) for any response that involved an Apify call. og:-only responses keep the existing 1-day cache. Cache key is the normalized canonical URL — same key the v0.2.1 spec defined. Cache hit semantics are identical regardless of which path produced the cached body; the phone can't tell.
+**Only successful responses are cached.** Errors must not be cached — a one-off Apify outage would otherwise poison the URL for the entire TTL and block user retries.
 
-No cache busting. A creator editing their caption after we cache is a non-issue at MVP scale.
+- Success that involved an Apify call: `Cache-Control: public, s-maxage=604800` (7 days).
+- Success from og: only: `Cache-Control: public, s-maxage=86400` (1 day, unchanged from v0.2.1).
+- Any error response (`502 fetch_failed`, `504 timeout`, `403 private`, `404 not_found`, `400 unsupported_url`): `Cache-Control: no-store`.
+
+Cache key is the normalized canonical URL — same key v0.2.1 defined. Hit semantics are identical regardless of which path produced the cached body; the phone can't tell.
+
+`404 not_found` deserves a special note: IG returns 404 for deleted posts, but also occasionally for transient origin hiccups. `no-store` is correct — if a user re-shares a 404'd URL and the post is now back, we should re-fetch, not serve the stale 404.
+
+No success-response cache busting. A creator editing their caption after we cache is a non-issue at MVP scale.
 
 ## Phone-side pipeline
 
@@ -146,7 +157,7 @@ The "Apify fails on a known carousel" case deliberately does not fall back to og
 
 Worker logs per `/fetch-post` call. No URL, no caption, no body content — shape only.
 
-- `route: og_only | og_then_apify_carousel | og_failed_apify_fallback`
+- `route: og_only | og_then_apify_carousel | og_then_apify_unknown_efg | og_failed_apify_fallback`
 - `og_outcome: ok | empty_desc | empty_image | http_429 | http_4xx | http_5xx | timeout`
 - `apify_outcome: not_called | ok | empty | carousel_no_children | error | timeout`
 - `cache: hit | miss`
@@ -173,7 +184,7 @@ No changes. The tile shows the cover (slide 1) as before. The source detail scre
 2. **Worker — dispatch.** Decode `efg`; wire the dispatch matrix. Add telemetry fields.
 3. **Worker — caching.** 7d s-maxage on Apify-backed responses; tests for cache key behavior across og:-only vs Apify paths.
 4. **Phone — multi-image pipeline.** Extend `modules/processing` to handle `imageUrls.length > 1`. Download to temps, OCR sequentially, concat, delete temps.
-5. **Phone — failure paths.** Map worker's new failure codes (`apify_failed_carousel`) to the existing failed-source UI.
+5. **Phone — failure paths.** No new worker error codes; the phone keeps treating any terminal `502 fetch_failed` as "tile placeholder, user can re-share to retry." The worker disambiguates carousel-fail vs og-and-Apify-both-failed only in telemetry.
 6. **Telemetry — Sentry tags.** Wire the worker tags; add Sentry alerts.
 
 Each step is independently testable. Steps 1–3 ship a working worker before any phone change. Step 4 can be developed against a fixed Apify response fixture.
