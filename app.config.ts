@@ -30,7 +30,12 @@ const config: ExpoConfig = {
     },
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      LSApplicationQueriesSchemes: ['comgooglemaps'],
+      LSApplicationQueriesSchemes: [
+        'comgooglemaps',
+        'instagram',
+        'tiktok',
+        'snssdk1233',
+      ],
     },
     appleTeamId: 'WL5ALL46C4',
   },

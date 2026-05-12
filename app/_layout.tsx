@@ -41,6 +41,7 @@ import { recognizeText } from '@/modules/vision-ocr';
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
 import { warmMapAppDetection } from '@/lib/openInMaps';
+import { warmSocialAppDetection } from '@/lib/openInSocial';
 
 try {
   initSentry();
@@ -150,6 +151,11 @@ export default function RootLayout() {
       // the result. Fire-and-forget — buildMapUrl falls back to Apple
       // Maps until detection completes, which is the safe default.
       void warmMapAppDetection();
+
+      // Same pattern for IG / TikTok — openSourceUrl uses the cache to
+      // decide between handing off to the native app and falling back to
+      // SFSafariViewController.
+      void warmSocialAppDetection();
 
       setCtx({ db, ownerId, storageDirUri: storage.uri, processor, extractor, enricher });
       setReady(true);

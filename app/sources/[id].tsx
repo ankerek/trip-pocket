@@ -3,7 +3,6 @@ import { Alert, ToastAndroid } from 'react-native';
 import { Image, Pressable, Text, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as WebBrowser from 'expo-web-browser';
 import {
   getSource,
   deleteSource,
@@ -14,6 +13,7 @@ import {
 import { useDatabase } from '@/components/useDatabase';
 import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
 import { Icon } from '@/components/Icon';
+import { openSourceUrl } from '@/lib/openInSocial';
 
 const HEADER_OPTIONS = {
   title: '',
@@ -83,15 +83,13 @@ export default function SourceDetail() {
   const openInApp = async () => {
     if (!source.url) return;
     try {
-      // SFSafariViewController on iOS — in-app browser plays IG/TikTok
-      // video natively and avoids a `react-native-webview` native dep.
-      await WebBrowser.openBrowserAsync(source.url, {
-        dismissButtonStyle: 'close',
-        controlsColor: '#ffffff',
-        toolbarColor: '#000000',
-      });
+      // openSourceUrl hands off to the Instagram / TikTok app when installed
+      // (Universal Link via Linking.openURL) and falls back to
+      // SFSafariViewController otherwise — keeps users inside Trip Pocket if
+      // they don't have the native app.
+      await openSourceUrl(source.url, source.platform);
     } catch (err) {
-      console.warn('[source-detail] openBrowserAsync failed', err);
+      console.warn('[source-detail] openSourceUrl failed', err);
     }
   };
 
@@ -171,18 +169,28 @@ export default function SourceDetail() {
               <Pressable
                 onPress={openInApp}
                 accessibilityRole="button"
-                accessibilityLabel={`Play on ${prettyPlatform(source.platform)}`}
+                accessibilityLabel={`Open in ${prettyPlatform(source.platform)}`}
                 className="absolute inset-0 items-center justify-center"
               >
                 <View
-                  className="items-center justify-center rounded-full"
+                  className="flex-row items-center rounded-full"
                   style={{
-                    width: 72,
-                    height: 72,
-                    backgroundColor: 'rgba(0,0,0,0.55)',
+                    paddingHorizontal: 18,
+                    paddingVertical: 11,
+                    backgroundColor: 'rgba(0,0,0,0.72)',
+                    gap: 8,
                   }}
                 >
-                  <Icon name="play.fill" size={32} tintColor="#ffffff" />
+                  <Icon
+                    name="arrow.up.right.square.fill"
+                    size={18}
+                    tintColor="#ffffff"
+                  />
+                  <Text
+                    style={{ color: '#ffffff', fontSize: 15, fontWeight: '600' }}
+                  >
+                    Open in {prettyPlatform(source.platform)}
+                  </Text>
                 </View>
               </Pressable>
             ) : null}
@@ -192,7 +200,7 @@ export default function SourceDetail() {
           <Pressable
             onPress={openInApp}
             accessibilityRole="button"
-            accessibilityLabel={`Open on ${prettyPlatform(source.platform)}`}
+            accessibilityLabel={`Open in ${prettyPlatform(source.platform)}`}
             className="flex-1 items-center justify-center px-8"
           >
             <View
@@ -218,7 +226,7 @@ export default function SourceDetail() {
               className="text-center mt-4 text-slate-400"
               style={{ fontSize: 13 }}
             >
-              Tap to open on {prettyPlatform(source.platform)}
+              Tap to open in {prettyPlatform(source.platform)}
             </Text>
             <PlatformBadge platform={source.platform} />
           </Pressable>
@@ -244,8 +252,11 @@ export default function SourceDetail() {
           />
           <Stack.Toolbar.Menu icon="ellipsis" tintColor="#fff">
             {isUrlSource ? (
-              <Stack.Toolbar.MenuAction icon="safari" onPress={openInApp}>
-                Open on {prettyPlatform(source.platform)}
+              <Stack.Toolbar.MenuAction
+                icon="arrow.up.right.square"
+                onPress={openInApp}
+              >
+                Open in {prettyPlatform(source.platform)}
               </Stack.Toolbar.MenuAction>
             ) : null}
             <Stack.Toolbar.MenuAction
