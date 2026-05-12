@@ -80,7 +80,7 @@ export async function fetchInstagramViaApify(
     username: [canonicalUrl],
     resultsLimit: 1,
     skipPinnedPosts: false,
-    dataDetailLevel: 'details',
+    dataDetailLevel: 'detailedData',
   };
 
   const controller = new AbortController();
