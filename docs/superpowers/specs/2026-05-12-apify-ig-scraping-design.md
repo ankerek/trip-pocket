@@ -10,7 +10,7 @@ The shipped URL-share pipeline extracts caption + slide-1 cover via `og:*` meta 
 1. **Carousel slides 2..N are unreachable.** IG loads them client-side. Travel content disproportionately uses carousels ("6 spots in Tokyo: 1/ …, 2/ …"), and place names that don't fit in the caption end up on later slides — which we never OCR. Observed in practice.
 2. **No hedge against IG breaking og:.** The v0.2.1 spec's longevity-risk section lists a pivot ladder (UA rotation → CF Browser Rendering → paid scraper). This spec lands the last rung as a normal fallback rather than waiting for a fire-drill.
 
-Apify's `sones/instagram-posts-scraper-lowcost` actor returns the full carousel (`childPosts[].displayUrl`) and the caption — same canonical URL input, structured JSON output. At **$0.30 per 1000 results**, it's economically viable to call on a fraction of shares (carousels + og: failures) without changing the cost shape of the product.
+Apify's `apify/instagram-post-scraper` actor returns the full carousel (`childPosts[].displayUrl`) and the caption — same canonical URL input, structured JSON output. At **$2.30 per 1000 results** on the Starter plan ($2.70 on Free), it's the maintained-by-Apify reference actor; the tiered dispatch keeps the call rate low enough (~30% of IG shares) that monthly spend stays well-bounded.
 
 ## Scope
 
@@ -76,16 +76,16 @@ og: is still fetched for `/p/` posts because that's how we cheaply distinguish s
 
 ## Actor choice and cost model
 
-**Selected:** `sones/instagram-posts-scraper-lowcost` at **$0.30 per 1000 results** (HTTP-only, no headless browser).
+**Selected:** `apify/instagram-post-scraper` at **$2.30 / 1000 results** (Starter plan; $2.70 on Free). Headless-browser-based, maintained by Apify.
 
-| | Official `apify/instagram-post-scraper` | Lowcost `sones/instagram-posts-scraper-lowcost` |
+| | **Selected: `apify/instagram-post-scraper`** | Alternative: `sones/instagram-posts-scraper-lowcost` |
 |---|---|---|
 | Price | $2.30–2.70 / 1000 | $0.30 / 1000 |
 | Engine | Headless browser | HTTP-only |
-| Free-tier capacity | ~2k / mo | ~16k / mo |
+| Free-tier capacity | ~2k results / mo | ~16k results / mo |
 | Maintainer | Apify | Third-party |
 
-The actor is pluggable. `APIFY_ACTOR_ID` is a Wrangler env var; swapping to the official actor is a config change. The worker normalizes the actor's output into the response shape above:
+The actor is pluggable. `APIFY_ACTOR_ID` is a Wrangler env var defaulting to the official actor. If cost ever bites at scale, swapping to the lowcost actor is a config change. The worker normalizes the actor's output into the response shape above:
 
 ```
 imageUrls = [item.displayUrl, ...(item.childPosts ?? []).map(c => c.displayUrl)]
@@ -93,9 +93,9 @@ caption   = item.caption
 author    = item.ownerUsername
 ```
 
-The official `apify/instagram-post-scraper` exposes these fields exactly; the lowcost actor advertises the same shape but its mapping needs validation during implementation (see open questions).
+The official actor's output schema is documented and stable; these fields map directly.
 
-**Cost ceiling (illustrative):** 1000 active users × 20 IG saves/week × 4.3 wk × 30% Apify-call rate (carousels + og: failures) ≈ 26k Apify calls/month → ~$8/month on lowcost, ~$60/month on official. Solo/personal scale is comfortably inside Apify's free tier.
+**Cost ceiling (illustrative):** 1000 active users × 20 IG saves/week × 4.3 wk × 30% Apify-call rate (carousels + og: failures) ≈ 26k Apify calls/month → ~$60/month on Starter. The Apify Free plan ($5/mo credit, ~2k results) covers up to ~6.5k IG shares/month total at the same 30% call rate — comfortably inside a personal/early-TestFlight footprint.
 
 **Auth:** worker holds `APIFY_TOKEN` as a Wrangler secret. Phone never touches Apify directly.
 
@@ -164,9 +164,9 @@ Worker logs per `/fetch-post` call. No URL, no caption, no body content — shap
 - `latency_ms`
 
 Sentry alerts:
-- Apify `error` rate > 5% over the trailing 100 calls → swap-actor signal.
+- Apify `error` rate > 5% over the trailing 100 calls → investigate (actor regression, Apify outage, or IG blocking the actor's egress).
 - og: `http_429` rate > 0 → IG rate-limiting; pivot ladder is engaging.
-- Weekly Apify call count → sanity check on billing (count × $0.30/1000).
+- Weekly Apify call count → sanity check on billing (count × $2.30/1000 on Starter; flip to $0.30/1000 if `APIFY_ACTOR_ID` is swapped to the lowcost alternative).
 
 Phone-side telemetry unchanged from v0.2.1 (`extraction_outcome: ok | caption_only | failed`).
 
@@ -191,8 +191,8 @@ Each step is independently testable. Steps 1–3 ship a working worker before an
 
 ## Open questions / deferred
 
-1. **Confirm `sones/instagram-posts-scraper-lowcost` output schema** during implementation against 2–3 real public carousel URLs. The actor advertises the same shape as the official one but should be validated, not assumed.
-2. **Apify actor-run latency under real load.** The selected lowcost actor is HTTP-only (no headless browser) so it should be materially faster than browser-based actors, but no published p50/p95 numbers exist. Measure during implementation; if p95 > 30s, consider parallelizing the og: + Apify fetches for `/p/` posts (call Apify in parallel with og: rather than after, accept the wasted Apify call on single posts as the cost of lower latency). Decide based on measurement.
+1. **Confirm `apify/instagram-post-scraper` actor invocation mode.** The actor accepts username-based scrape inputs by default; verify it also accepts direct post-URL input (or `directUrls`-style param) so we can target a single post per call rather than scraping a whole profile. Run a smoke call against 2–3 real public carousel URLs during implementation to lock in the input shape and confirm output mapping.
+2. **Apify actor-run latency under real load.** The selected actor runs a headless browser, so per-call latency is the slowest of the candidates considered (typically seconds, sometimes tens of seconds depending on Apify pool load). Measure during implementation; if p95 > 30s, consider parallelizing the og: + Apify fetches for `/p/` posts (call Apify in parallel with og: rather than after, accept the wasted Apify call on single posts as the cost of lower latency). Decide based on measurement.
 3. **Cost telemetry surfacing in-app.** Out of scope here. If Apify spend ever becomes load-bearing, add it to the diagnostics section in Settings.
-4. **Apify actor-swap UX.** If lowcost actor's quality degrades, swap is a Wrangler env change with no app-side ripple. No user-facing UI for this is planned.
+4. **Apify actor-swap UX.** If the selected actor's quality degrades, or if cost ever bites at scale, swap is a Wrangler env change (`APIFY_ACTOR_ID`) with no app-side ripple. No user-facing UI for this is planned.
 5. **Carousel slide ordering.** Apify returns `childPosts` in IG's native slide order; we trust that and concat OCR in array order. If a future actor scrambles ordering, the OCR concat is still complete (just not slide-numbered) — extraction quality is unaffected.
