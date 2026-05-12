@@ -1,6 +1,6 @@
 # URL share & extraction — design
 
-**Status:** approved (2026-05-12) · ready for implementation plan
+**Status:** design approved (2026-05-12) · **contingent on Phase 0 spike** (see end of doc). The Instagram path leans on an undocumented embed-HTML JSON blob; if the spike doesn't reproduce reliably on real carousels, this spec must be amended before implementation lands.
 **Targets:** v0.2 follow-up (likely v0.2.1). Adds a third capture path alongside share-sheet screenshots and camera-roll import.
 
 ## Why
@@ -37,6 +37,18 @@ The schema has anticipated this since v0.2: `sources.kind` already has `'url'` a
 
 YouTube is explicitly **deferred** to the v1.x parking lot in `docs/ROADMAP.md` — it would have needed a separate Data API path and adds maintenance surface.
 
+### Compliance posture (ToS / App Store)
+
+Both fetchers hit **public endpoints the platforms publish for embedding**, not auth-protected APIs or DOM-scraping behind a login wall:
+
+- **TikTok oEmbed** — `https://www.tiktok.com/oembed` is an official, documented oEmbed endpoint. Designed for third-party embedding. Zero ToS concern.
+- **Instagram `/embed/captioned`** — public page IG serves to make posts embeddable on blogs / news sites. Not an auth-bypass; not against Meta's Platform Terms (which target auth-protected Graph API misuse). Parsing the HTML of this public page is the same pattern many existing iOS apps use; **not the same risk class as scraping a logged-in profile feed**.
+- **No user credentials, no auth tokens, no auth-bypass.** All requests are anonymous, server-to-server, from a Cloudflare Worker.
+
+App Store review: this design does not introduce content rights claims (we don't display the post body inside our own UI — we render IG/TikTok's own embed iframe via WebView, and otherwise show only the cover image the user is also seeing in the original post). Apps that re-host scraped content face review risk; apps that embed via the platform's own widgets do not. This design is the latter.
+
+What's flagged for monitoring but **not** considered a launch-blocking risk: IG could change its ToS to forbid `/embed/` fetches outside browser contexts (no public signal of intent today; would force a pivot if it happened). The Open Questions section already lists parser stability as a thing to watch.
+
 ## Capture path — iOS share extension
 
 **`native/ShareExtension/Info.plist`** — broaden the activation rule:
@@ -67,7 +79,7 @@ provider.loadItem(forTypeIdentifier: UTType.url.identifier) { data, _ in
 }
 ```
 
-Sanity check on hostname before writing the pending import — reject anything that isn't `instagram.com`, `instagr.am`, `tiktok.com`, or `vm.tiktok.com`. Rejection inside the share extension shows the OS-level "extension cancelled" affordance; that's acceptable for MVP (a richer "Unsupported link" inline message is a v0.3 polish item).
+Sanity check on hostname before writing the pending import. **Normalization rule** (apply before matching): lowercase the host, strip a leading `www.` or `m.`. **Allowlist** (post-normalization): `instagram.com`, `instagr.am`, `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com`. Anything else: reject. Rejection inside the share extension shows the OS-level "extension cancelled" affordance; that's acceptable for MVP (a richer "Unsupported link" inline message is a v0.3 polish item).
 
 **`native/ShareExtension/PendingImportWriter.swift`** — gain a new method:
 
@@ -85,13 +97,16 @@ Writes a JSON file in the existing App Group container alongside today's image i
 
 **App-side ingest (existing pending-import consumer)** — on app foreground, when it sees a `kind: "url"` entry:
 
-1. Normalize the URL (strip query params, trailing slash, lowercase host).
-2. Compute `content_hash = SHA-256(normalizedUrl)`.
-3. Compute `platform` from hostname (`instagram` / `tiktok`).
-4. `INSERT INTO sources (kind='url', platform, url=normalizedUrl, content_hash, file_path=NULL, ocr_status='pending', extraction_status='pending', captured_at=now, trip_id=suggestedTripId, origin='share', ...)`.
-5. Enqueue the URL processing job (Section: Processing pipeline).
-
-If `content_hash` collides with an existing source, surface a one-time toast ("Already saved to <trip>") and open that source — same UX as duplicate-screenshot today.
+1. **Canonicalize the URL** — resolve short links so dedup operates on the same URL the user would have shared via the long form:
+   - TikTok short links (`vm.tiktok.com/...`, `vt.tiktok.com/...`): issue a `HEAD` request, follow redirects, capture the resolved `tiktok.com/@user/video/<id>` URL. Timeout 5s.
+   - Instagram and other forms: no resolution needed; use as-is.
+   - If the HEAD fails (offline, timeout): proceed with the share-time URL as-is; the worker call later will still resolve correctly, and we'll backfill `url` + `content_hash` at that point (see step 6).
+2. **Normalize** the canonical URL: lowercase host, strip query params, strip trailing slash.
+3. Compute `content_hash = SHA-256(normalizedCanonicalUrl)`.
+4. Compute `platform` from hostname (`instagram` / `tiktok`).
+5. `INSERT INTO sources (kind='url', platform, url=normalizedCanonicalUrl, content_hash, file_path=NULL, ocr_status='pending', extraction_status='pending', captured_at=now, trip_id=suggestedTripId, origin='share', ...)`.
+6. Enqueue the URL processing job (Section: Processing pipeline). If step 1's HEAD was skipped/failed, the worker returns the canonical URL in its response; before enqueuing OCR, `UPDATE sources SET url=canonical, content_hash=SHA-256(canonical)`. Handle a UNIQUE collision here the same way as step 7.
+7. If `content_hash` collides with an existing source (either at insert or at step-6 backfill), surface a one-time toast ("Already saved to <trip>"), open the existing source, and soft-delete the duplicate row — same UX as duplicate-screenshot today.
 
 ## Worker — `POST /fetch-post`
 
@@ -113,7 +128,7 @@ New endpoint on `workers/extract-proxy`.
 }
 ```
 
-`imageUrls` is always a non-empty array. Length 1 for single posts and for all TikTok responses. Length > 1 for IG carousels.
+`imageUrls` is normally a non-empty array — length 1 for single posts and for TikTok responses, length > 1 for IG carousels — **but may be empty** when the platform returned a usable caption but no image URL (e.g. a TikTok with a null `thumbnail_url`, or an IG post where the embed exposed the caption but no `og:image` or carousel slides). When `imageUrls` is empty and `caption` is non-empty, the phone proceeds with the caption-only path (see Processing pipeline failure handling).
 
 **Error response:** `{ "error": "<code>" }` with HTTP status:
 - `400 unsupported_url` — hostname not in the allowlist (should not occur given share-extension prefilter; defence in depth).
@@ -134,7 +149,21 @@ New endpoint on `workers/extract-proxy`.
 3. If no images can be extracted from the blob but `og:image` exists, return `imageUrls: [og:image]` and continue. This is the "carousel data missing but single image fallback" case.
 4. If `og:image` is also missing → return `502 fetch_failed`.
 
-**Carousel implementation risk:** the `__additionalDataLoaded` blob is undocumented and IG can change its shape. The implementation plan must include a **Phase 0 spike** on 5+ real carousel URLs to confirm slide URLs are reliably present. If the spike fails, the fallback is Cloudflare Browser Rendering (~$0.0009/req on JS-rendered carousels only). The spec assumes the spike succeeds; if it doesn't, that's a design amendment, not a hidden requirement.
+**Carousel implementation risk:** the `__additionalDataLoaded` blob is undocumented and IG can change its shape. The implementation plan must include a **Phase 0 spike** (see end of doc) to confirm slide URLs are reliably present. If the spike fails, the fallback is Cloudflare Browser Rendering (~$0.0009/req on JS-rendered carousels only). The spec assumes the spike succeeds; if it doesn't, that's a design amendment, not a hidden requirement.
+
+**Longevity risk — IG anti-bot escalation:** the larger risk is not "blob is missing today" but "IG progressively makes anonymous server-side `fetch()` harder over time." Plausible escalations: CDN-level rate limits on the CF egress IP pool, login walls on `/embed/`, captchas, shape changes that quietly empty the JSON blob. Mitigation strategy (graduated, only escalate when telemetry forces it):
+
+1. **Telemetry from day one.** Worker logs `parser_outcome: ok | empty_blob | empty_og | http_429 | http_4xx | http_5xx` per request (no URL, no body). The phone logs `extraction_outcome: ok | caption_only | failed` per URL source. Both feed a Sentry/PostHog dashboard.
+2. **Early warning bar.** If the IG `parser_outcome=ok` rate drops below 80% week-over-week, or HTTP 429 appears at all, treat that as a signal to pivot — not wait for users to complain.
+3. **Pivot ladder, in order:**
+   - a. Add randomized desktop User-Agent rotation and modest jitter on retries (cheap, in worker).
+   - b. Add Cloudflare Browser Rendering as the carousel-and-anything-empty fallback (small per-request cost, no new vendor).
+   - c. Switch IG entirely to a paid scraping vendor (Apify or RapidAPI). Adds vendor secret + spend. Already analysed earlier in design discussion as a "real users complain" trigger.
+   - d. Worst case: deprecate the IG URL path and route IG users back to share-screenshot. The screenshot path remains the product's primary capture and is unaffected.
+
+Each rung up the ladder is a documented call-out, not a silent re-implementation — the spec is amended before any pivot lands. The point of this section is to establish that **the design has a fallback path at every degradation level** rather than depending on `/embed/` being stable forever.
+
+TikTok longevity risk is materially lower: oEmbed is officially documented and used by every social-embed system on the web. No mitigation ladder needed beyond the same telemetry pulse.
 
 ### TikTok handler
 
@@ -232,13 +261,18 @@ End-to-end:
 |---|---|
 | `/fetch-post` returns `not_found` / `private` / `unsupported_url` | `ocr_status='failed'`, `extraction_status='failed'`. No `file_path`. UI shows platform placeholder tile. |
 | `/fetch-post` returns `502` / `504` / network error | One automatic retry with 30s backoff. If retry also fails → `failed`. User can re-share to retry. |
-| Any cover image download fails (slide 1) | Continue with caption-only: skip OCR, `ocr_text = caption`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder; places may still extract from caption. |
+| Worker succeeds but `imageUrls` is empty (caption present) | Skip image-download + OCR. `ocr_text = caption`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder; extraction runs on caption alone. |
+| Slide 1 image download fails | Continue with caption-only: skip OCR, `ocr_text = caption + concat(any-other-slide-OCR)`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder. |
+| Slides 2..N (one or more) image downloads fail | Per-slide best-effort: skip the failed slides, continue with whichever downloaded successfully. Log a Sentry breadcrumb (`carousel_slide_download_failed`, no PII). Failed slide temp files must still be cleaned up (try/finally around the per-slide download). `ocr_status` still reaches `'done'`. |
+| All slides (including slide 1) downloads fail but caption is present | Same as "Slide 1 download fails" — caption-only path, no `file_path`. |
 | OCR fails on a single slide (carousel) | Skip that slide's OCR contribution; continue with others + caption. |
 | OCR fails on slide 1 (single post) | Same as cover-download failure: caption-only fallback. |
 | `/extract` returns empty | `extraction_status='done'`, 0 places. Same as screenshot path today. |
 | `/extract` returns error | `extraction_status='failed'`. Same as screenshot path today. |
 | WebView playback fails on detail screen | n/a — data is fine. Toast + collapse to cover image; deep-link button stays available. |
 | Network unavailable at share time | Source inserted as `pending`. Existing screenshot offline-resume logic resumes the URL pipeline on next online window. |
+
+**Temp-file cleanup invariant:** every slide download that creates a temp file must guarantee deletion (try/finally), regardless of whether download, OCR, or downstream stages succeed. The only persisted image is `imageUrls[0]` after a successful download, which moves from temp to its final `file_path` location.
 
 The **caption-only fallback** matters: list-style IG posts ("6 must-visit Mt Fuji spots: Chureito Pagoda, ...") extract great from caption alone. Failing the source just because the image step had a hiccup would be needless.
 
@@ -265,10 +299,16 @@ URL sources reuse existing surfaces. The design intent is "a source that happens
   - Tap ▶ → cover is replaced in-place by a `react-native-webview` loaded with the platform's embed URL:
     - IG: `https://www.instagram.com/p/<shortcode>/embed/captioned`
     - TikTok: `https://www.tiktok.com/embed/v2/<id>`
-  - 9:16 aspect ratio. Cover image stays visible as a poster until WebView `onLoadEnd`.
+  - **Aspect ratio:** container defaults to the cover image's intrinsic aspect (which the phone already has from the downloaded `file_path`), clamped to a sensible range: `min 1:1` (don't go wider than square), `max 9:16` (don't go taller than reel). Out-of-range content is letterboxed with a blurred extension of the cover image as background. Rationale: IG feed posts are 1:1 / 4:5 / 1.91:1; Reels and TikToks are 9:16. Hard-coding 9:16 made square feed posts look bad.
+  - Cover image stays visible as a poster until WebView `onLoadEnd`.
   - Small `✕` button top-right of the WebView → collapse back to cover.
   - WebView `onError` or 10s load timeout → collapse to cover, toast "Couldn't load player — tap to open in Instagram", deep-link button remains.
   - The IG embed iframe natively renders carousel slides with swipe controls. No extra code needed for carousel playback.
+  - **Required iOS `react-native-webview` props for inline playback:**
+    - `allowsInlineMediaPlayback={true}` — without this, iOS defaults to fullscreen-on-play, breaking the inline-hero intent.
+    - `mediaPlaybackRequiresUserAction={false}` — IG/TikTok embeds attempt autoplay on load; this allows it. (Both platforms require user gesture for *audio*, so this won't blast sound out — just enables silent autoplay of muted preview, which matches the platform's own behavior.)
+    - `scalesPageToFit={false}` — embed iframes handle their own sizing; letting RN scale them causes layout drift.
+    - `injectedJavaScriptBeforeContentLoaded` — inject a tiny snippet that hides IG/TikTok's "follow" / "like" overlays if they prove distracting (deferred to polish unless they're clearly intrusive in QA).
 - **Below hero:**
   - A small action chip: `↗ Open in Instagram` / `↗ Open in TikTok` (`Linking.openURL(source.url)`). Distinct intent from the inline player — the chip goes to the platform app for comments/sound/likes.
   - A subtle metadata strip line: "From instagram.com" (host derived from the URL, no new column required).
@@ -332,14 +372,37 @@ Update the inbox empty-state copy from "Share a screenshot to get started" → "
 
 ## Implementation phase 0 — required spike
 
-Before any production work, validate the IG `/embed/` carousel-slide parser:
+Before any production work, validate the IG `/embed/` parser across a sample large enough to surface account-type, region, and content-type variance — not just a happy-path check.
 
-1. Pick 5 real IG carousel URLs (varied: travel, food, lifestyle, with 2/4/6/8/10 slides).
-2. From a CF Worker (or a Node script using a desktop User-Agent), `fetch()` `https://www.instagram.com/p/<id>/embed/captioned` for each.
-3. Inspect the response HTML for `window.__additionalDataLoaded`, JSON-LD blob, or other structured data containing slide image URLs.
-4. Outcome decides:
-   - **All 5 carousels expose full slide URLs reliably** → proceed with this spec as written.
-   - **Some carousels expose them, some don't** → either accept the gap (single-image fallback) or amend the spec to add Cloudflare Browser Rendering for the missing cases.
-   - **None expose them** → amend the spec to use CF Browser Rendering for all IG carousel posts. Estimate cost impact before proceeding.
+**Sample (target ~15 URLs):**
 
-The spike outcome must be recorded in the implementation plan before code lands.
+| Bucket | Count | Notes |
+|---|---|---|
+| Single-image feed posts | 3 | One each: personal account, business/creator account, food-blog niche |
+| Reels | 3 | Same account-type mix |
+| Carousels — short (2-3 slides) | 3 | |
+| Carousels — long (8-10 slides) | 3 | List-style posts ("10 best …") |
+| Older posts (>1y old) | 1-2 | Catches IG's progressive content-aging behavior |
+| Region-flagged content (if available) | 1-2 | Posts that may be geo-restricted; tests how the embed degrades |
+
+**Per-URL checklist:**
+
+1. From a CF Worker **and** a Node script with a desktop User-Agent (run both — they hit IG from different IP pools and may behave differently), `fetch()` `https://www.instagram.com/p/<id>/embed/captioned`.
+2. Inspect the response HTML for:
+   - `window.__additionalDataLoaded(` script tag and its JSON payload structure.
+   - `<script type="application/ld+json">` blocks.
+   - `og:image`, `og:description`, `og:url` tags.
+   - HTTP status / redirect chain — any 4xx/5xx, login-wall HTML, or "Page Not Found" body content.
+3. Record per URL: which parser path produced (a) caption text, (b) slide URLs (full list for carousels). Note the JSON path that worked.
+
+**Outcome decision matrix:**
+
+| Result | Action |
+|---|---|
+| ≥90% of URLs expose caption + full slide URLs via the JSON blob, and ≥1 worker-vs-Node difference is benign | Proceed with this spec as written. Document the exact JSON path in the implementation plan. |
+| Caption reliably available but carousel slides patchy | Proceed with single-image fallback for carousels (slide 1 + caption); amend "imageUrls > 1 supported" to "best-effort," and add a Sentry log when slide count is less than the embed indicates. Cost-impact: none. |
+| Worker results consistently differ from Node results (e.g. IG already rate-limits CF egress) | Pause; the entire design assumes worker-side fetch. Consider routing fetches through Cloudflare Browser Rendering or a paid scraper before any production code. |
+| Caption itself unreliable across the sample | Spec is amended to CF Browser Rendering as the default IG path. Add a cost estimate. |
+| Anti-bot signals (captcha HTML, login redirects) appear in any sample | Same as above — escalate to Browser Rendering or paid scraper before launch. |
+
+**Spike output deliverable:** a single short Markdown note in `docs/superpowers/specs/` named `2026-05-12-url-share-spike-results.md`, containing the URLs tested (or at least their shape — no PII), the per-URL outcomes, the chosen path forward, and any spec amendments. The implementation plan references this file and is gated on it.
