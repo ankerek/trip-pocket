@@ -15,6 +15,10 @@ simple = { limit = 100, period = 60 }
 [vars]
 CF_ACCOUNT_ID = "cbe6c750b30fa9390489224a1e0aa3e0"
 AI_GATEWAY_NAME = "default"
+# Apify actor for the IG carousel / og-failure path. `apify~` form is Apify's
+# URL-safe stand-in for the `apify/` namespace separator. Pluggable so we can
+# swap actors via env if the default ever misbehaves or cost shifts.
+APIFY_ACTOR_ID = "apify~instagram-post-scraper"
 
 # Secrets (set via `wrangler secret put`, never committed):
 #   GEMINI_API_KEY         — Google AI Studio API key (Gemini), forwarded as ?key=
@@ -22,6 +26,10 @@ AI_GATEWAY_NAME = "default"
 #                            restricted to Cloudflare Worker egress IPs (used by
 #                            /enrich and /photo)
 #   CF_AIG_TOKEN           — Cloudflare AI Gateway Authenticated Gateways bearer token
+#   APIFY_TOKEN            — Apify API token, used by /fetch-post when the IG
+#                            dispatch escalates to the Apify actor (carousels +
+#                            og: failures). See docs/superpowers/specs/
+#                            2026-05-12-apify-ig-scraping-design.md.
 
 # Logs include status, latency, and error class only — never OCR text.
 [observability]

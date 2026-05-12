@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Env } from './index';
+import { ApifyError, fetchInstagramViaApify } from './apify';
 
 // Designed around the Phase 0 spike findings (docs/superpowers/specs/
 // 2026-05-12-url-share-spike-results.md): IG's /embed/ surface moved to
@@ -41,9 +42,13 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 function errorResponse(error: string, status: number, extra: Record<string, string> = {}): Response {
+  // Spec: error responses must never be cached. A transient Apify outage
+  // (or rate-limited og: response) should not poison a URL for the full
+  // success TTL. Callers that genuinely want caching set a different header
+  // in `extra`.
   return new Response(JSON.stringify({ error }), {
     status,
-    headers: { ...JSON_HEADERS, ...extra },
+    headers: { 'cache-control': 'no-store', ...JSON_HEADERS, ...extra },
   });
 }
 
@@ -81,13 +86,19 @@ export async function handleFetchPost(request: Request, env: Env): Promise<Respo
 
   try {
     let result: FetchPostResponse;
+    let cacheKind: 'og' | 'apify' = 'og';
     if (platform === 'instagram') {
-      result = await fetchInstagram(target);
+      const out = await fetchInstagram(target, env);
+      result = out.result;
+      cacheKind = out.cacheKind;
     } else {
       result = await fetchTikTok(target);
     }
+    // Spec: 7d cache when Apify fired, 1d for og-only. Both only on success;
+    // errors get Cache-Control: no-store (handled in fetchErrorToResponse).
+    const sMaxAge = cacheKind === 'apify' ? 604800 : 86400;
     return jsonResponse(result, {
-      headers: { 'cache-control': 'public, s-maxage=86400' },
+      headers: { 'cache-control': `public, s-maxage=${sMaxAge}` },
     });
   } catch (err) {
     return fetchErrorToResponse(err);
@@ -169,11 +180,71 @@ class UpstreamError extends Error {
   }
 }
 
-async function fetchInstagram(target: URL): Promise<FetchPostResponse> {
+async function fetchInstagram(
+  target: URL,
+  env: Env,
+): Promise<{ result: FetchPostResponse; cacheKind: 'og' | 'apify' }> {
   const shortcode = parseInstagramShortcode(target);
   if (!shortcode) throw new UpstreamError(400, 'unsupported-url');
-
   const canonical = `https://www.instagram.com/p/${shortcode}/`;
+  const urlShape = parseInstagramUrlShape(target); // 'p' | 'reel' | 'tv'
+
+  // Stage 1: og: parse on canonical URL. Always runs (free, fast). For /reel/
+  // and /tv/ URLs the og: result is final; for /p/ URLs the efg hint decides
+  // whether Stage 2 fires.
+  let ogResult: FetchPostResponse | null = null;
+  let ogError: UpstreamError | null = null;
+  try {
+    ogResult = await fetchInstagramOg(canonical);
+  } catch (err) {
+    if (err instanceof UpstreamError) ogError = err;
+    else throw err;
+  }
+
+  // /reel/ and /tv/ never go to Apify on success.
+  if (urlShape !== 'p' && ogResult) {
+    return { result: ogResult, cacheKind: 'og' };
+  }
+
+  // /p/ posts: use the efg hint to decide. Treat unknown/missing as carousel
+  // (extraction quality wins over marginal cost — see spec).
+  const efgType = ogResult ? decodeEfgFromImageUrl(ogResult.imageUrls[0] ?? '') : null;
+  const shouldFireApify = !ogResult || efgType !== 'single';
+  if (!shouldFireApify && ogResult) {
+    return { result: ogResult, cacheKind: 'og' };
+  }
+
+  // Stage 2: Apify. Authoritative when it fires.
+  try {
+    const apify = await fetchInstagramViaApify(canonical, {
+      token: env.APIFY_TOKEN ?? '',
+      actorId: env.APIFY_ACTOR_ID ?? '',
+    });
+    return {
+      result: {
+        platform: 'instagram',
+        permalink: apify.permalink || canonical,
+        caption: apify.caption,
+        imageUrls: apify.imageUrls,
+        author: apify.author,
+      },
+      cacheKind: 'apify',
+    };
+  } catch (err) {
+    if (err instanceof ApifyError) {
+      // og:-was-fine-but-Apify-failed (carousel/unknown): no graceful fallback
+      // to og:-only, per spec — half a carousel is worse than a clean failure.
+      if (ogResult) throw new UpstreamError(502, 'fetch-failed');
+      // og:-also-failed: og: error is more informative (404 = deleted post).
+      if (ogError) throw ogError;
+      throw new UpstreamError(502, 'fetch-failed');
+    }
+    if (ogError) throw ogError;
+    throw err;
+  }
+}
+
+async function fetchInstagramOg(canonical: string): Promise<FetchPostResponse> {
   const html = await fetchHtml(canonical, IG_UA);
 
   const captionRaw = findOgMeta(html, 'og:description');
@@ -196,6 +267,49 @@ async function fetchInstagram(target: URL): Promise<FetchPostResponse> {
     imageUrls: cover ? [cover] : [],
     author,
   };
+}
+
+export function parseInstagramUrlShape(url: URL): 'p' | 'reel' | 'tv' | null {
+  const m = url.pathname.match(/^\/(p|reel|tv)\//);
+  return (m?.[1] as 'p' | 'reel' | 'tv' | undefined) ?? null;
+}
+
+/**
+ * IG embeds a base64-encoded JSON object in the `efg` query param on
+ * `og:image` URLs. The decoded object carries a `media_type` token we use
+ * to cheaply classify a post as single vs carousel vs reel without paying
+ * Apify. Returns null on any decode failure (treated as 'unknown' upstream).
+ */
+export function decodeEfgFromImageUrl(
+  imageUrl: string,
+): 'single' | 'carousel' | 'clips' | null {
+  if (!imageUrl) return null;
+  let efg: string | null = null;
+  try {
+    const u = new URL(imageUrl);
+    efg = u.searchParams.get('efg');
+  } catch {
+    return null;
+  }
+  if (!efg) return null;
+  let decoded: string;
+  try {
+    // efg is URL-safe base64, no padding. atob is available in Workers.
+    const padded = efg + '='.repeat((4 - (efg.length % 4)) % 4);
+    decoded = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+  } catch {
+    return null;
+  }
+  // Decoded payload is JSON-ish, e.g.
+  // {"media_type":"CAROUSEL_ITEM","..."}. We pattern-match rather than full
+  // JSON.parse — the field is reliably present and stringly-typed.
+  const m = decoded.match(/"media_type"\s*:\s*"([A-Za-z_]+)"/);
+  const token = m?.[1];
+  if (token === 'CAROUSEL_ITEM') return 'carousel';
+  if (token === 'CLIPS') return 'clips';
+  if (token === 'GraphImage' || token === 'Image' || token === 'PHOTO') return 'single';
+  // Some posts use a different token; the spec routes any non-single to Apify.
+  return null;
 }
 
 export function parseInstagramShortcode(url: URL): string | null {

@@ -3,6 +3,8 @@ import {
   decodeHtmlEntities,
   findOgMeta,
   parseInstagramShortcode,
+  parseInstagramUrlShape,
+  decodeEfgFromImageUrl,
   extractAuthorFromIgTitle,
   extractAuthorFromTikTokUrl,
   extractAuthorFromTikTokTitle,
@@ -96,6 +98,49 @@ describe('extractAuthorFromIgTitle', () => {
   });
 });
 
+describe('parseInstagramUrlShape', () => {
+  it.each([
+    ['https://www.instagram.com/p/ABC/', 'p'],
+    ['https://www.instagram.com/reel/XYZ/', 'reel'],
+    ['https://www.instagram.com/tv/QQQ/', 'tv'],
+    ['https://www.instagram.com/explore/', null],
+  ])('classifies %s → %s', (url, expected) => {
+    expect(parseInstagramUrlShape(new URL(url))).toBe(expected);
+  });
+});
+
+describe('decodeEfgFromImageUrl', () => {
+  const carouselB64 = 'eyJtZWRpYV90eXBlIjoiQ0FST1VTRUxfSVRFTSJ9';
+  const singleB64 = 'eyJtZWRpYV90eXBlIjoiR3JhcGhJbWFnZSJ9';
+  const clipsB64 = 'eyJtZWRpYV90eXBlIjoiQ0xJUFMifQ==';
+
+  it('decodes CAROUSEL_ITEM → carousel', () => {
+    expect(decodeEfgFromImageUrl(`https://cdn/x.jpg?efg=${carouselB64}`)).toBe('carousel');
+  });
+  it('decodes GraphImage → single', () => {
+    expect(decodeEfgFromImageUrl(`https://cdn/x.jpg?efg=${singleB64}`)).toBe('single');
+  });
+  it('decodes CLIPS → clips', () => {
+    expect(decodeEfgFromImageUrl(`https://cdn/x.jpg?efg=${clipsB64}`)).toBe('clips');
+  });
+  it('returns null when efg is missing', () => {
+    expect(decodeEfgFromImageUrl('https://cdn/x.jpg')).toBeNull();
+  });
+  it('returns null when efg is unparseable garbage', () => {
+    expect(decodeEfgFromImageUrl('https://cdn/x.jpg?efg=!!!')).toBeNull();
+  });
+  it('returns null when decoded media_type is unrecognised', () => {
+    const odd = Buffer.from('{"media_type":"FUTURE_TOKEN"}').toString('base64');
+    expect(decodeEfgFromImageUrl(`https://cdn/x.jpg?efg=${odd}`)).toBeNull();
+  });
+  it('returns null on an unparseable image URL', () => {
+    expect(decodeEfgFromImageUrl('not a url')).toBeNull();
+  });
+  it('returns null on empty input', () => {
+    expect(decodeEfgFromImageUrl('')).toBeNull();
+  });
+});
+
 describe('TikTok author helpers', () => {
   it('extractAuthorFromTikTokUrl reads /@handle/', () => {
     expect(
@@ -164,11 +209,20 @@ const TT_OG_HTML = (caption: string, image: string, title: string) =>
     <meta property="og:image" content="${image}" />
   </head></html>`;
 
+// IG embeds a base64 `efg` query param on og:image that encodes the post
+// type. Tests that exercise the og:-only path need to use an image URL with
+// efg=<base64 of {"media_type":"GraphImage"}> so the dispatch resolves to
+// 'single' and Apify is correctly NOT called.
+const EFG_SINGLE = 'eyJtZWRpYV90eXBlIjoiR3JhcGhJbWFnZSJ9';
+const EFG_CAROUSEL = 'eyJtZWRpYV90eXBlIjoiQ0FST1VTRUxfSVRFTSJ9';
+const IG_COVER_SINGLE = `https://scontent.cdninstagram.com/cover.jpg?efg=${EFG_SINGLE}`;
+const IG_COVER_CAROUSEL = `https://scontent.cdninstagram.com/cover.jpg?efg=${EFG_CAROUSEL}`;
+
 describe('handleFetchPost — Instagram', () => {
-  it('parses og tags from the canonical post URL and returns success', async () => {
+  it('parses og tags from the canonical post URL and returns success (single, no Apify)', async () => {
     const html = IG_OG_HTML(
       'Mt Fuji spots: Chureito Pagoda, Fujisan Yumeno Ohashi Bridge',
-      'https://scontent.cdninstagram.com/cover.jpg',
+      IG_COVER_SINGLE,
       'Natalia &amp; Karolina on Instagram: &quot;...&quot;',
     );
     global.fetch = scriptedFetch([
@@ -193,9 +247,7 @@ describe('handleFetchPost — Instagram', () => {
     expect(body.platform).toBe('instagram');
     expect(body.permalink).toBe('https://www.instagram.com/p/ABC123/');
     expect(body.caption).toContain('Chureito Pagoda');
-    expect(body.imageUrls).toEqual([
-      'https://scontent.cdninstagram.com/cover.jpg',
-    ]);
+    expect(body.imageUrls).toEqual([IG_COVER_SINGLE]);
     expect(body.author).toBe('Natalia & Karolina');
   });
 
@@ -246,10 +298,241 @@ describe('handleFetchPost — Instagram', () => {
     ]);
     const resp = await handleFetchPost(
       postJson({ url: 'https://www.instagram.com/p/MISSING/' }),
+      // Even without Apify env, the og: 404 must propagate (not get masked
+      // by the Apify-fallback path). Tests the "og error is authoritative
+      // when both fail" branch.
       makeEnv(),
     );
     expect(resp.status).toBe(404);
     expect(((await resp.json()) as { error: string }).error).toBe('not-found');
+  });
+
+  it('error responses include Cache-Control: no-store', async () => {
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url.includes('instagram.com'),
+        response: () => new Response('', { status: 404 }),
+      },
+    ]);
+    const resp = await handleFetchPost(
+      postJson({ url: 'https://www.instagram.com/p/MISSING/' }),
+      makeEnv(),
+    );
+    expect(resp.headers.get('cache-control')).toBe('no-store');
+  });
+
+  describe('dispatch (efg decode + Apify integration)', () => {
+    function apifySuccess(items: Array<Record<string, unknown>>) {
+      return new Response(JSON.stringify(items), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    function envWithApify() {
+      return makeEnv({
+        APIFY_TOKEN: 'tok',
+        APIFY_ACTOR_ID: 'apify~instagram-post-scraper',
+      });
+    }
+
+    it('routes /p/ + efg=CAROUSEL_ITEM to Apify, discards og:', async () => {
+      const html = IG_OG_HTML(
+        'og caption — should be replaced',
+        IG_COVER_CAROUSEL,
+        'X on Instagram: "x"',
+      );
+      let apifyCalled = false;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/CAR1/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => {
+            apifyCalled = true;
+            return apifySuccess([
+              {
+                url: 'https://www.instagram.com/p/CAR1/',
+                caption: 'apify caption',
+                displayUrl: 'https://cdn/cover.jpg',
+                childPosts: [
+                  { displayUrl: 'https://cdn/s2.jpg' },
+                  { displayUrl: 'https://cdn/s3.jpg' },
+                ],
+                ownerUsername: 'creator',
+              },
+            ]);
+          },
+        },
+      ]);
+
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/p/CAR1/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      expect(apifyCalled).toBe(true);
+      const body = (await resp.json()) as FetchPostResponse;
+      // Apify is authoritative: caption + imageUrls come from Apify, not og:.
+      expect(body.caption).toBe('apify caption');
+      expect(body.imageUrls).toEqual([
+        'https://cdn/cover.jpg',
+        'https://cdn/s2.jpg',
+        'https://cdn/s3.jpg',
+      ]);
+      expect(body.author).toBe('@creator');
+      // 7d cache for Apify-backed responses.
+      expect(resp.headers.get('cache-control')).toContain('s-maxage=604800');
+    });
+
+    it('routes /p/ + efg=single to og: only, never calls Apify', async () => {
+      const html = IG_OG_HTML('og caption', IG_COVER_SINGLE, 'X on Instagram: "x"');
+      let apifyCalled = false;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/S1/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => {
+            apifyCalled = true;
+            return new Response('[]', { status: 200 });
+          },
+        },
+      ]);
+
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/p/S1/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      expect(apifyCalled).toBe(false);
+      expect(resp.headers.get('cache-control')).toContain('s-maxage=86400');
+    });
+
+    it('routes /p/ with unknown / missing efg to Apify (spec default)', async () => {
+      // og:image has no efg query param at all → unknown → fire Apify.
+      const html = IG_OG_HTML('og caption', 'https://cdn/no-efg.jpg', 'X on Instagram: "x"');
+      let apifyCalled = false;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/UNK/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => {
+            apifyCalled = true;
+            return apifySuccess([
+              {
+                url: 'https://www.instagram.com/p/UNK/',
+                caption: 'apify',
+                displayUrl: 'https://cdn/x.jpg',
+                ownerUsername: 'u',
+              },
+            ]);
+          },
+        },
+      ]);
+
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/p/UNK/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      expect(apifyCalled).toBe(true);
+    });
+
+    it('og: failed + Apify success → returns Apify response', async () => {
+      let apifyCalled = false;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/FAIL/',
+          response: () =>
+            new Response('<html><head></head></html>', {
+              status: 200,
+              headers: { 'content-type': 'text/html' },
+            }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => {
+            apifyCalled = true;
+            return apifySuccess([
+              {
+                url: 'https://www.instagram.com/p/FAIL/',
+                caption: 'rescued',
+                displayUrl: 'https://cdn/x.jpg',
+                ownerUsername: 'u',
+              },
+            ]);
+          },
+        },
+      ]);
+
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/p/FAIL/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      expect(apifyCalled).toBe(true);
+      const body = (await resp.json()) as FetchPostResponse;
+      expect(body.caption).toBe('rescued');
+    });
+
+    it('og:-ok carousel + Apify-fails → 502 fetch-failed (no graceful degrade)', async () => {
+      const html = IG_OG_HTML('og caption', IG_COVER_CAROUSEL, 'X on Instagram: "x"');
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/CAR2/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => new Response('', { status: 503 }),
+        },
+      ]);
+
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/p/CAR2/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(502);
+      expect(((await resp.json()) as { error: string }).error).toBe('fetch-failed');
+      expect(resp.headers.get('cache-control')).toBe('no-store');
+    });
+
+    it('/reel/ URLs never go to Apify, even on success', async () => {
+      const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
+      let apifyCalled = false;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/REEL/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => {
+            apifyCalled = true;
+            return new Response('[]', { status: 200 });
+          },
+        },
+      ]);
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/reel/REEL/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      expect(apifyCalled).toBe(false);
+    });
   });
 });
 
