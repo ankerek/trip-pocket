@@ -101,6 +101,17 @@ export default function RootLayout() {
           const downloaded = await File.downloadFileAsync(imageUrl, screenshotsDir);
           return downloaded.uri;
         },
+        // Carousel slides 2..N: we OCR them then drop the bytes. The cover
+        // (slide 1) is still persisted via downloadImage above and used by the
+        // tile / hero. Slides 2..N are visually accessible later through the
+        // IG embed iframe in the source detail screen.
+        disposeFile: async (path) => {
+          try {
+            new File(path).delete();
+          } catch {
+            // Best-effort. A stranded temp file isn't a data integrity issue.
+          }
+        },
       });
       provideProcessor(processor);
       await processor.runStartupRecovery();

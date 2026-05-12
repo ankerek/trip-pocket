@@ -588,6 +588,212 @@ describe('createProcessor', () => {
         );
         expect(row?.ocr_status).toBe('pending');
       });
+
+      describe('carousel (multi-image) URL sources', () => {
+        // Each unique URL gets a unique downloaded path so we can verify
+        // which downloads ran. Treat the fake downloader as a permanent-path
+        // factory; `disposeFile` is what discriminates "cover persisted" vs
+        // "slide cleaned up".
+        function pathFor(imageUrl: string) {
+          return `/storage/${imageUrl.replace(/[^a-z0-9]/gi, '_')}.jpg`;
+        }
+
+        it('downloads all slides, OCRs each, concats with caption, deletes slide files', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/CAR/');
+
+          const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+            platform: 'instagram',
+            permalink: 'https://instagram.com/p/CAR/',
+            caption: 'Mt Fuji spots',
+            imageUrls: [
+              'https://cdn/cover.jpg',
+              'https://cdn/slide2.jpg',
+              'https://cdn/slide3.jpg',
+            ],
+            author: 'creator',
+          });
+          const downloadImage: ImageDownloader = jest
+            .fn()
+            .mockImplementation(async (u: string) => pathFor(u));
+          const ocr: OcrRunner = jest
+            .fn()
+            .mockImplementation(async (p: string) => {
+              if (p.includes('cover')) return 'COVER TEXT';
+              if (p.includes('slide2')) return 'SLIDE 2';
+              if (p.includes('slide3')) return 'SLIDE 3';
+              return '';
+            });
+          const disposeFile = jest.fn().mockResolvedValue(undefined);
+
+          const p = createProcessor({
+            db,
+            ocr,
+            fetchPost,
+            downloadImage,
+            disposeFile,
+          });
+          p.enqueueUrlFetch('u1');
+          await drain(p);
+
+          const row = await db.getFirstAsync<{
+            file_path: string | null;
+            caption: string | null;
+            ocr_status: string;
+            ocr_text: string | null;
+          }>(`SELECT file_path, caption, ocr_status, ocr_text FROM sources WHERE id = 'u1'`);
+
+          expect(row?.file_path).toBe(pathFor('https://cdn/cover.jpg'));
+          expect(row?.caption).toBe('Mt Fuji spots');
+          expect(row?.ocr_status).toBe('done');
+          expect(row?.ocr_text).toBe(
+            'COVER TEXT\n---\nSLIDE 2\n---\nSLIDE 3\n---\nMt Fuji spots',
+          );
+
+          // Cover stays; slides 2 and 3 are deleted.
+          expect(disposeFile).toHaveBeenCalledTimes(2);
+          const disposed = (disposeFile.mock.calls as string[][]).map((c) => c[0]);
+          expect(disposed).toEqual(
+            expect.arrayContaining([
+              pathFor('https://cdn/slide2.jpg'),
+              pathFor('https://cdn/slide3.jpg'),
+            ]),
+          );
+          expect(disposed).not.toContain(pathFor('https://cdn/cover.jpg'));
+        });
+
+        it('tolerates a slide download failure and continues with the rest', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/CAR/');
+
+          const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+            platform: 'instagram',
+            permalink: 'https://instagram.com/p/CAR/',
+            caption: 'cap',
+            imageUrls: [
+              'https://cdn/cover.jpg',
+              'https://cdn/slide2.jpg',
+              'https://cdn/slide3.jpg',
+            ],
+            author: null,
+          });
+          const downloadImage: ImageDownloader = jest
+            .fn()
+            .mockImplementation(async (u: string) => {
+              if (u.includes('slide2')) throw new Error('CDN 404');
+              return pathFor(u);
+            });
+          const ocr: OcrRunner = jest
+            .fn()
+            .mockImplementation(async (p: string) => {
+              if (p.includes('cover')) return 'COVER';
+              if (p.includes('slide3')) return 'S3';
+              return '';
+            });
+          const disposeFile = jest.fn().mockResolvedValue(undefined);
+
+          const p = createProcessor({
+            db,
+            ocr,
+            fetchPost,
+            downloadImage,
+            disposeFile,
+          });
+          p.enqueueUrlFetch('u1');
+          await drain(p);
+
+          const row = await db.getFirstAsync<{
+            ocr_status: string;
+            ocr_text: string | null;
+          }>(`SELECT ocr_status, ocr_text FROM sources WHERE id = 'u1'`);
+          expect(row?.ocr_status).toBe('done');
+          // Slide 2 dropped silently; slide 3 contributes.
+          expect(row?.ocr_text).toBe('COVER\n---\nS3\n---\ncap');
+          // Only slide 3 was downloaded → only 1 dispose call.
+          expect(disposeFile).toHaveBeenCalledTimes(1);
+          expect(disposeFile).toHaveBeenCalledWith(pathFor('https://cdn/slide3.jpg'));
+        });
+
+        it('tolerates per-slide OCR failures', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/CAR/');
+
+          const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+            platform: 'instagram',
+            permalink: 'https://instagram.com/p/CAR/',
+            caption: 'cap',
+            imageUrls: ['https://cdn/cover.jpg', 'https://cdn/slide2.jpg'],
+            author: null,
+          });
+          const downloadImage: ImageDownloader = jest
+            .fn()
+            .mockImplementation(async (u: string) => pathFor(u));
+          const ocr: OcrRunner = jest.fn().mockImplementation(async (p: string) => {
+            if (p.includes('slide2')) throw new Error('Vision boom');
+            return 'COVER';
+          });
+          const disposeFile = jest.fn().mockResolvedValue(undefined);
+
+          const p = createProcessor({
+            db,
+            ocr,
+            fetchPost,
+            downloadImage,
+            disposeFile,
+          });
+          p.enqueueUrlFetch('u1');
+          await drain(p);
+
+          const row = await db.getFirstAsync<{
+            ocr_status: string;
+            ocr_text: string | null;
+          }>(`SELECT ocr_status, ocr_text FROM sources WHERE id = 'u1'`);
+          expect(row?.ocr_status).toBe('done');
+          expect(row?.ocr_text).toBe('COVER\n---\ncap');
+        });
+
+        it('falls back to caption-only when the cover download fails', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/CAR/');
+
+          const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+            platform: 'instagram',
+            permalink: 'https://instagram.com/p/CAR/',
+            caption: 'list of places',
+            imageUrls: [
+              'https://cdn/cover.jpg',
+              'https://cdn/slide2.jpg',
+            ],
+            author: null,
+          });
+          const downloadImage: ImageDownloader = jest
+            .fn()
+            .mockRejectedValue(new Error('CDN dead'));
+          const ocr: OcrRunner = jest.fn();
+          const disposeFile = jest.fn();
+
+          const p = createProcessor({
+            db,
+            ocr,
+            fetchPost,
+            downloadImage,
+            disposeFile,
+          });
+          p.enqueueUrlFetch('u1');
+          await drain(p);
+
+          const row = await db.getFirstAsync<{
+            file_path: string | null;
+            ocr_status: string;
+            ocr_text: string | null;
+          }>(`SELECT file_path, ocr_status, ocr_text FROM sources WHERE id = 'u1'`);
+          expect(row?.file_path).toBeNull();
+          expect(row?.ocr_status).toBe('done');
+          expect(row?.ocr_text).toBe('list of places');
+          expect(ocr).not.toHaveBeenCalled();
+          expect(disposeFile).not.toHaveBeenCalled();
+        });
+      });
     });
 
     it('is a no-op when no extractor has been provided', async () => {
