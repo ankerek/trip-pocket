@@ -30,14 +30,43 @@ struct PendingImportWriter {
         // can tap Retry from the share-sheet UI; without cleanup, every retry
         // on a persistent DB-failure would orphan another inbox image.
         do {
-            try insertPendingRow(groupURL: groupURL, destURL: destURL, suggestedTripId: suggestedTripId)
+            try insertPendingRow(
+                groupURL: groupURL,
+                kind: "image",
+                appGroupPath: destURL.absoluteString,
+                url: nil,
+                suggestedTripId: suggestedTripId
+            )
         } catch {
             try? FileManager.default.removeItem(at: destURL)
             throw error
         }
     }
 
-    private func insertPendingRow(groupURL: URL, destURL: URL, suggestedTripId: String?) throws {
+    /// Writes a pending row for a shared URL (Instagram or TikTok post). No
+    /// file is materialised — the URL itself is the payload.
+    func write(url shareUrl: String, suggestedTripId: String?) throws {
+        guard let groupURL = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+            throw PendingImportError.noAppGroup
+        }
+
+        try insertPendingRow(
+            groupURL: groupURL,
+            kind: "url",
+            appGroupPath: nil,
+            url: shareUrl,
+            suggestedTripId: suggestedTripId
+        )
+    }
+
+    private func insertPendingRow(
+        groupURL: URL,
+        kind: String,
+        appGroupPath: String?,
+        url: String?,
+        suggestedTripId: String?
+    ) throws {
         let dbURL = groupURL.appendingPathComponent("trip-pocket.db")
         var db: OpaquePointer?
         guard sqlite3_open(dbURL.path, &db) == SQLITE_OK else {
@@ -56,7 +85,10 @@ struct PendingImportWriter {
         let create = """
             CREATE TABLE IF NOT EXISTS pending_imports (
                 id TEXT PRIMARY KEY NOT NULL,
-                app_group_path TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'image'
+                    CHECK (kind IN ('image','url')),
+                app_group_path TEXT,
+                url TEXT,
                 suggested_trip_id TEXT,
                 created_at TEXT NOT NULL
             );
@@ -65,9 +97,20 @@ struct PendingImportWriter {
             throw PendingImportError.dbFailed
         }
 
+        // Backfill columns on an existing table that was created by an older
+        // build of the extension (or the main app). ALTER TABLE … ADD COLUMN
+        // returns an error on duplicate-column; we swallow it silently — the
+        // only way it should fail is if the column already exists.
+        sqlite3_exec(
+            db,
+            "ALTER TABLE pending_imports ADD COLUMN kind TEXT NOT NULL DEFAULT 'image';",
+            nil, nil, nil
+        )
+        sqlite3_exec(db, "ALTER TABLE pending_imports ADD COLUMN url TEXT;", nil, nil, nil)
+
         let insert = """
-            INSERT INTO pending_imports (id, app_group_path, suggested_trip_id, created_at)
-            VALUES (?, ?, ?, ?);
+            INSERT INTO pending_imports (id, kind, app_group_path, url, suggested_trip_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?);
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insert, -1, &stmt, nil) == SQLITE_OK else {
@@ -80,16 +123,27 @@ struct PendingImportWriter {
         // SQLITE_TRANSIENT — force SQLite to copy the C string immediately, since the
         // bridged buffer from Swift String only lives for the duration of this call.
         let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        // Store the full file:// URI so the JS side (expo-file-system class API)
-        // can construct a File directly from app_group_path without inferring scheme.
+
         sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, destURL.absoluteString, -1, SQLITE_TRANSIENT)
-        if let tripId = suggestedTripId {
-            sqlite3_bind_text(stmt, 3, tripId, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, kind, -1, SQLITE_TRANSIENT)
+        if let path = appGroupPath {
+            // Store the full file:// URI so the JS side (expo-file-system class API)
+            // can construct a File directly from app_group_path without inferring scheme.
+            sqlite3_bind_text(stmt, 3, path, -1, SQLITE_TRANSIENT)
         } else {
             sqlite3_bind_null(stmt, 3)
         }
-        sqlite3_bind_text(stmt, 4, createdAt, -1, SQLITE_TRANSIENT)
+        if let urlString = url {
+            sqlite3_bind_text(stmt, 4, urlString, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 4)
+        }
+        if let tripId = suggestedTripId {
+            sqlite3_bind_text(stmt, 5, tripId, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 5)
+        }
+        sqlite3_bind_text(stmt, 6, createdAt, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw PendingImportError.dbFailed

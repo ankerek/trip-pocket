@@ -26,6 +26,11 @@
       <dict>
         <key>NSExtensionActivationSupportsImageWithMaxCount</key>
         <integer>1</integer>
+        <!-- Accept URL shares (Instagram / TikTok post links) alongside
+             image shares. The Swift handler filters by hostname before
+             writing a pending import. -->
+        <key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+        <integer>1</integer>
       </dict>
     </dict>
     <key>NSExtensionPointIdentifier</key>

@@ -37,11 +37,50 @@ class ShareViewController: UIViewController {
 
     private func handleSave(tripId: String?) {
         guard let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
-              let provider = item.attachments?.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) })
+              let attachments = item.attachments, !attachments.isEmpty
         else {
-            errorState.set(.noImage)
+            errorState.set(.noContent)
             return
         }
+
+        // Disambiguation: when Instagram's share sheet attaches both a URL and
+        // a preview image, prefer the URL — it carries more semantic value
+        // than the cover thumbnail alone (the worker fetches caption + cover).
+        if let urlProvider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) }) {
+            handleUrlAttachment(urlProvider, tripId: tripId)
+            return
+        }
+        if let imageProvider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }) {
+            handleImageAttachment(imageProvider, tripId: tripId)
+            return
+        }
+
+        errorState.set(.noContent)
+    }
+
+    private func handleUrlAttachment(_ provider: NSItemProvider, tripId: String?) {
+        provider.loadItem(forTypeIdentifier: UTType.url.identifier) { [weak self] data, _ in
+            guard let self else { return }
+            guard let url = self.materializeUrl(data) else {
+                self.errorState.set(.noContent)
+                return
+            }
+            guard self.isSupportedHost(url) else {
+                self.errorState.set(.unsupportedLink)
+                return
+            }
+            do {
+                try PendingImportWriter().write(url: url.absoluteString, suggestedTripId: tripId)
+                DispatchQueue.main.async {
+                    self.extensionContext?.completeRequest(returningItems: nil)
+                }
+            } catch {
+                self.errorState.set(.writeFailed)
+            }
+        }
+    }
+
+    private func handleImageAttachment(_ provider: NSItemProvider, tripId: String?) {
         provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
             guard let self else { return }
             guard let url = self.materializeImage(data) else {
@@ -57,6 +96,30 @@ class ShareViewController: UIViewController {
                 self.errorState.set(.writeFailed)
             }
         }
+    }
+
+    private func materializeUrl(_ data: NSSecureCoding?) -> URL? {
+        if let url = data as? URL { return url }
+        if let s = data as? String { return URL(string: s) }
+        return nil
+    }
+
+    private func isSupportedHost(_ url: URL) -> Bool {
+        guard let rawHost = url.host?.lowercased() else { return false }
+        // Strip leading "www." and "m." for matching, mirroring the worker's
+        // detectPlatform behaviour so we stay consistent across layers.
+        var host = rawHost
+        for prefix in ["www.", "m."] {
+            if host.hasPrefix(prefix) {
+                host = String(host.dropFirst(prefix.count))
+                break
+            }
+        }
+        return host == "instagram.com"
+            || host == "instagr.am"
+            || host == "tiktok.com"
+            || host == "vm.tiktok.com"
+            || host == "vt.tiktok.com"
     }
 
     private func materializeImage(_ data: NSSecureCoding?) -> URL? {
