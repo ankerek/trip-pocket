@@ -10,7 +10,7 @@ The shipped URL-share pipeline extracts caption + slide-1 cover via `og:*` meta 
 1. **Carousel slides 2..N are unreachable.** IG loads them client-side. Travel content disproportionately uses carousels ("6 spots in Tokyo: 1/ …, 2/ …"), and place names that don't fit in the caption end up on later slides — which we never OCR. Observed in practice.
 2. **No hedge against IG breaking og:.** The v0.2.1 spec's longevity-risk section lists a pivot ladder (UA rotation → CF Browser Rendering → paid scraper). This spec lands the last rung as a normal fallback rather than waiting for a fire-drill.
 
-Apify's `apify/instagram-post-scraper` actor returns the full carousel (`childPosts[].displayUrl`) and the caption — same canonical URL input, structured JSON output. At **$2.30 per 1000 results** on the Starter plan ($2.70 on Free), it's the maintained-by-Apify reference actor; the tiered dispatch keeps the call rate low enough (~30% of IG shares) that monthly spend stays well-bounded.
+Apify's `apify/instagram-post-scraper` actor returns the full carousel (`childPosts[].displayUrl`) and the caption — same canonical URL input, structured JSON output. At **$1.70 per 1000 results** on our Apify plan, it's the maintained-by-Apify reference actor; the tiered dispatch keeps the call rate low enough (~30% of IG shares) that monthly spend stays well-bounded.
 
 ## Scope
 
@@ -76,13 +76,12 @@ og: is still fetched for `/p/` posts because that's how we cheaply distinguish s
 
 ## Actor choice and cost model
 
-**Selected:** `apify/instagram-post-scraper` at **$2.30 / 1000 results** (Starter plan; $2.70 on Free). Headless-browser-based, maintained by Apify.
+**Selected:** `apify/instagram-post-scraper` at **$1.70 / 1000 results** on our Apify plan. Headless-browser-based, maintained by Apify.
 
 | | **Selected: `apify/instagram-post-scraper`** | Alternative: `sones/instagram-posts-scraper-lowcost` |
 |---|---|---|
-| Price | $2.30–2.70 / 1000 | $0.30 / 1000 |
+| Price (our tier) | $1.70 / 1000 | $0.30 / 1000 |
 | Engine | Headless browser | HTTP-only |
-| Free-tier capacity | ~2k results / mo | ~16k results / mo |
 | Maintainer | Apify | Third-party |
 
 The actor is pluggable. `APIFY_ACTOR_ID` is a Wrangler env var defaulting to the official actor. If cost ever bites at scale, swapping to the lowcost actor is a config change. The worker normalizes the actor's output into the response shape above:
@@ -95,7 +94,7 @@ author    = item.ownerUsername
 
 The official actor's output schema is documented and stable; these fields map directly.
 
-**Cost ceiling (illustrative):** 1000 active users × 20 IG saves/week × 4.3 wk × 30% Apify-call rate (carousels + og: failures) ≈ 26k Apify calls/month → ~$60/month on Starter. The Apify Free plan ($5/mo credit, ~2k results) covers up to ~6.5k IG shares/month total at the same 30% call rate — comfortably inside a personal/early-TestFlight footprint.
+**Cost ceiling (illustrative):** 1000 active users × 20 IG saves/week × 4.3 wk × 30% Apify-call rate (carousels + og: failures) ≈ 26k Apify calls/month → **~$44/month** at $1.70/1000. Personal/early-TestFlight footprint sits well below this.
 
 **Auth:** worker holds `APIFY_TOKEN` as a Wrangler secret. Phone never touches Apify directly.
 
@@ -166,7 +165,7 @@ Worker logs per `/fetch-post` call. No URL, no caption, no body content — shap
 Sentry alerts:
 - Apify `error` rate > 5% over the trailing 100 calls → investigate (actor regression, Apify outage, or IG blocking the actor's egress).
 - og: `http_429` rate > 0 → IG rate-limiting; pivot ladder is engaging.
-- Weekly Apify call count → sanity check on billing (count × $2.30/1000 on Starter; flip to $0.30/1000 if `APIFY_ACTOR_ID` is swapped to the lowcost alternative).
+- Weekly Apify call count → sanity check on billing (count × $1.70/1000 at our current Apify tier; flip to $0.30/1000 if `APIFY_ACTOR_ID` is swapped to the lowcost alternative).
 
 Phone-side telemetry unchanged from v0.2.1 (`extraction_outcome: ok | caption_only | failed`).
 
