@@ -69,12 +69,14 @@ export async function fetchInstagramViaApify(
     `/run-sync-get-dataset-items?token=${encodeURIComponent(opts.token)}` +
     `&clean=true&format=json&timeout=25`;
 
+  // The actor's `username` field accepts either an IG handle or a direct
+  // post URL — we pass the canonical post URL and it scrapes that one post.
+  // No separate `directUrls` field on this actor (confirmed against the
+  // actor's input schema in Apify console).
   const body = {
-    directUrls: [canonicalUrl],
-    resultsType: 'posts',
+    username: [canonicalUrl],
     resultsLimit: 1,
-    // Skip the heavier extras — we don't store comments/likes.
-    addParentData: false,
+    skipPinnedPosts: false,
   };
 
   const controller = new AbortController();

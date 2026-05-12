@@ -84,7 +84,7 @@ describe('mapApifyItem', () => {
 describe('fetchInstagramViaApify', () => {
   const opts = { token: 'tok', actorId: 'apify~instagram-post-scraper' };
 
-  it('POSTs run-sync-get-dataset-items with directUrls and parses the result', async () => {
+  it('POSTs run-sync-get-dataset-items with username (URL) and parses the result', async () => {
     let captured: { url: string; init?: RequestInit } | null = null;
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       captured = {
@@ -122,11 +122,11 @@ describe('fetchInstagramViaApify', () => {
     expect(c.url).toContain('/v2/acts/apify~instagram-post-scraper/run-sync-get-dataset-items');
     expect(c.url).toContain('token=tok');
     const body = JSON.parse(c.init.body as string) as {
-      directUrls: string[];
-      resultsType: string;
+      username: string[];
+      resultsLimit: number;
     };
-    expect(body.directUrls).toEqual(['https://www.instagram.com/p/ABC/']);
-    expect(body.resultsType).toBe('posts');
+    expect(body.username).toEqual(['https://www.instagram.com/p/ABC/']);
+    expect(body.resultsLimit).toBe(1);
   });
 
   it('throws apify-empty when the actor returns an empty array', async () => {
