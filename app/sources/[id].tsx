@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Alert, ToastAndroid } from 'react-native';
-import { Image, Text, View } from '@/tw';
+import { Image, Pressable, Text, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as WebBrowser from 'expo-web-browser';
 import {
   getSource,
   deleteSource,
@@ -12,6 +13,7 @@ import {
 } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
+import { Icon } from '@/components/Icon';
 
 const HEADER_OPTIONS = {
   title: '',
@@ -76,6 +78,22 @@ export default function SourceDetail() {
 
   const source = state.source;
   const inTrip = source.tripId !== null;
+  const isUrlSource = source.kind === 'url' && source.url !== null;
+
+  const openInApp = async () => {
+    if (!source.url) return;
+    try {
+      // SFSafariViewController on iOS — in-app browser plays IG/TikTok
+      // video natively and avoids a `react-native-webview` native dep.
+      await WebBrowser.openBrowserAsync(source.url, {
+        dismissButtonStyle: 'close',
+        controlsColor: '#ffffff',
+        toolbarColor: '#000000',
+      });
+    } catch (err) {
+      console.warn('[source-detail] openBrowserAsync failed', err);
+    }
+  };
 
   const onAssignTrip = (mode: TripPickerMode) => {
     setPickerMode(mode);
@@ -140,16 +158,74 @@ export default function SourceDetail() {
   return (
     <>
       <Stack.Screen options={HEADER_OPTIONS} />
-      <View className="flex-1 items-center justify-center bg-black">
+      <View className="flex-1 bg-black">
         {source.filePath ? (
-          <Image
-            source={source.filePath}
-            className="h-full w-full"
-            contentFit="contain"
-            accessibilityLabel="Source image"
-          />
+          <View className="flex-1">
+            <Image
+              source={source.filePath}
+              className="h-full w-full"
+              contentFit="contain"
+              accessibilityLabel="Source image"
+            />
+            {isUrlSource ? (
+              <Pressable
+                onPress={openInApp}
+                accessibilityRole="button"
+                accessibilityLabel={`Play on ${prettyPlatform(source.platform)}`}
+                className="absolute inset-0 items-center justify-center"
+              >
+                <View
+                  className="items-center justify-center rounded-full"
+                  style={{
+                    width: 72,
+                    height: 72,
+                    backgroundColor: 'rgba(0,0,0,0.55)',
+                  }}
+                >
+                  <Icon name="play.fill" size={32} tintColor="#ffffff" />
+                </View>
+              </Pressable>
+            ) : null}
+            {isUrlSource ? <PlatformBadge platform={source.platform} /> : null}
+          </View>
+        ) : isUrlSource ? (
+          <Pressable
+            onPress={openInApp}
+            accessibilityRole="button"
+            accessibilityLabel={`Open on ${prettyPlatform(source.platform)}`}
+            className="flex-1 items-center justify-center px-8"
+          >
+            <View
+              className="items-center justify-center rounded-full mb-4"
+              style={{
+                width: 72,
+                height: 72,
+                backgroundColor: 'rgba(255,255,255,0.1)',
+              }}
+            >
+              <Icon name="link" size={28} tintColor="#ffffff" />
+            </View>
+            {source.caption ? (
+              <Text
+                className="text-center text-slate-200"
+                style={{ fontSize: 15, lineHeight: 22 }}
+                numberOfLines={8}
+              >
+                {source.caption}
+              </Text>
+            ) : null}
+            <Text
+              className="text-center mt-4 text-slate-400"
+              style={{ fontSize: 13 }}
+            >
+              Tap to open on {prettyPlatform(source.platform)}
+            </Text>
+            <PlatformBadge platform={source.platform} />
+          </Pressable>
         ) : (
-          <Text className="text-base text-slate-300">No preview for this source.</Text>
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-base text-slate-300">No preview for this source.</Text>
+          </View>
         )}
       </View>
       {process.env.EXPO_OS === 'ios' ? (
@@ -167,6 +243,11 @@ export default function SourceDetail() {
             onPress={() => router.push(`/sources/${source.id}/ocr-debug`)}
           />
           <Stack.Toolbar.Menu icon="ellipsis" tintColor="#fff">
+            {isUrlSource ? (
+              <Stack.Toolbar.MenuAction icon="safari" onPress={openInApp}>
+                Open on {prettyPlatform(source.platform)}
+              </Stack.Toolbar.MenuAction>
+            ) : null}
             <Stack.Toolbar.MenuAction
               icon="folder"
               onPress={() => onAssignTrip(inTrip ? 'move' : 'assign')}
@@ -216,4 +297,41 @@ function toast(message: string) {
   } else {
     Alert.alert(message);
   }
+}
+
+function prettyPlatform(platform: Source['platform']): string {
+  if (platform === 'instagram') return 'Instagram';
+  if (platform === 'tiktok') return 'TikTok';
+  return 'the post';
+}
+
+function PlatformBadge({ platform }: { platform: Source['platform'] }) {
+  if (!platform) return null;
+  return (
+    <View
+      className="absolute"
+      style={{ top: 12, right: 12 }}
+      pointerEvents="none"
+    >
+      <View
+        className="flex-row items-center rounded-full"
+        style={{
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          backgroundColor: 'rgba(0,0,0,0.6)',
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 11,
+            fontWeight: '700',
+            color: '#ffffff',
+            letterSpacing: 0.2,
+          }}
+        >
+          {prettyPlatform(platform)}
+        </Text>
+      </View>
+    </View>
+  );
 }

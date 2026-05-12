@@ -13,6 +13,7 @@ export type Source = {
   tripId: string | null;
   filePath: string | null;
   url: string | null;
+  caption: string | null;
   contentHash: string;
   origin: SourceOrigin;
   ocrStatus: ProcessingStatus;
@@ -67,6 +68,7 @@ type Row = {
   trip_id: string | null;
   file_path: string | null;
   url: string | null;
+  caption: string | null;
   content_hash: string;
   origin: SourceOrigin;
   ocr_status: ProcessingStatus;
@@ -79,7 +81,7 @@ type Row = {
 };
 
 const ALL_COLUMNS =
-  'id, kind, platform, trip_id, file_path, url, content_hash, origin, ocr_status, ocr_text, extraction_status, captured_at, owner_id, created_at, updated_at';
+  'id, kind, platform, trip_id, file_path, url, caption, content_hash, origin, ocr_status, ocr_text, extraction_status, captured_at, owner_id, created_at, updated_at';
 
 function rowToSource(r: Row): Source {
   return {
@@ -89,6 +91,7 @@ function rowToSource(r: Row): Source {
     tripId: r.trip_id,
     filePath: r.file_path,
     url: r.url,
+    caption: r.caption,
     contentHash: r.content_hash,
     origin: r.origin,
     ocrStatus: r.ocr_status,
@@ -239,6 +242,31 @@ export async function assignSourceTrip(
   notifyChange('sources');
   if (movedPlaces || deletedPlaces) notifyChange('places');
   notifyChange('trips');
+}
+
+/**
+ * Apply the result of a successful worker `/fetch-post` call to a URL source.
+ * `filePath` is the persistent local path of the downloaded cover image (null
+ * when download was skipped or failed and we're falling back to caption-only).
+ * `caption` is the og:description text, already entity-decoded.
+ */
+export async function applyUrlFetchResult(
+  db: Database,
+  sourceId: string,
+  filePath: string | null,
+  caption: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE sources
+        SET file_path = ?, caption = ?, updated_at = ?
+      WHERE id = ?`,
+    filePath,
+    caption,
+    now,
+    sourceId,
+  );
+  notifyChange('sources');
 }
 
 export type DeleteSourceOptions = {

@@ -22,6 +22,8 @@ import {
   runForegroundIngest,
 } from '@/modules/capture';
 import { createProcessor, provideProcessor, type Processor } from '@/modules/processing';
+import { fetchPostFromProxy } from '@/modules/capture/fetchPostFromProxy';
+import { Directory, File, Paths } from 'expo-file-system';
 import {
   createExtractor,
   extractFromProxy,
@@ -76,11 +78,29 @@ export default function RootLayout() {
       provideDatabase(db);
       void attachInstallId();
 
-      // OCR pipeline. createProcessor + provideProcessor wires up the
-      // singleton importImage talks to. runStartupRecovery is the
+      // OCR + URL-fetch pipeline. createProcessor + provideProcessor wires up
+      // the singleton importImage talks to. runStartupRecovery is the
       // once-per-process retry promotion: 'failed' rows roll back to
       // 'pending' so they get one more 3-try budget this session.
-      const processor = createProcessor({ db, ocr: recognizeText });
+      const fetchPostProxyUrl = Constants.expoConfig?.extra?.fetchPostProxyUrl as
+        | string
+        | undefined;
+      const processor = createProcessor({
+        db,
+        ocr: recognizeText,
+        fetchPost: (postUrl) => fetchPostFromProxy(postUrl, fetchPostProxyUrl ?? ''),
+        downloadImage: async (imageUrl) => {
+          // Persist cover images alongside screenshots inside the App Group
+          // so they survive dev reinstalls and the file_path stays valid.
+          const screenshotsDir =
+            getAppGroupContainerUri()
+              ? new Directory(getAppGroupContainerUri()!, 'screenshots')
+              : new Directory(Paths.document, 'screenshots');
+          if (!screenshotsDir.exists) screenshotsDir.create({ intermediates: true });
+          const downloaded = await File.downloadFileAsync(imageUrl, screenshotsDir);
+          return downloaded.uri;
+        },
+      });
       provideProcessor(processor);
       await processor.runStartupRecovery();
 

@@ -11,9 +11,10 @@ let inFlight: Promise<void> | null = null;
 /**
  * Run the established foreground ingest sequence as one atomic operation:
  * 1. Drain anything the share extension left in the App Group inbox.
- * 2. Sweep `pending` OCR rows (catches anything the previous session
+ * 2. Sweep `pending` URL-fetch rows (kind='url' awaiting the worker call).
+ * 3. Sweep `pending` OCR rows (catches anything the previous session
  *    left mid-process).
- * 3. Sweep `pending` extraction rows.
+ * 4. Sweep `pending` extraction rows.
  *
  * Idempotent. If a run is in flight, callers receive the same promise so
  * pull-to-refresh can never race the foreground-effect or share-extension
@@ -32,6 +33,7 @@ export function runForegroundIngest(db: Database): Promise<void> {
         storageDir: getStorageDirectory().uri,
         fs: createImportFs(),
       });
+      await getProcessor()?.runUrlFetchSweep();
       await getProcessor()?.runOcrSweep();
       await getExtractor()?.runExtractionSweep();
     } finally {

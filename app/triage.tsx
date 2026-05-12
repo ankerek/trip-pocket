@@ -502,11 +502,49 @@ function TriageCard({
               contentFit="cover"
               cachePolicy="memory-disk"
             />
+          ) : source.kind === 'url' && source.caption ? (
+            <View className="flex-1 items-center justify-center px-6 bg-surface">
+              <Icon name="link" size={28} tintColor={colors.textMuted} />
+              <Text
+                className="text-text mt-3 text-center"
+                style={{ fontSize: 14, lineHeight: 20 }}
+                numberOfLines={6}
+              >
+                {source.caption}
+              </Text>
+            </View>
           ) : (
             <View className="flex-1 items-center justify-center">
-              <Icon name="photo" size={36} tintColor={colors.textMuted} />
+              <Icon name={source.kind === 'url' ? 'link' : 'photo'} size={36} tintColor={colors.textMuted} />
             </View>
           )}
+          {source.kind === 'url' && source.platform ? (
+            <View
+              className="absolute"
+              style={{ top: 10, right: 10 }}
+              pointerEvents="none"
+            >
+              <View
+                className="rounded-full"
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  backgroundColor: 'rgba(0,0,0,0.6)',
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: '#ffffff',
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  {source.platform === 'instagram' ? 'Instagram' : 'TikTok'}
+                </Text>
+              </View>
+            </View>
+          ) : null}
         </View>
       </GestureDetector>
 
