@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList as RNFlatList,
+  Modal,
   ScrollView as RNScrollView,
   useWindowDimensions,
 } from 'react-native';
@@ -9,18 +10,6 @@ import { Image as ExpoImage } from 'expo-image';
 import Constants from 'expo-constants';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import {
-  Gesture,
-  GestureDetector,
-  GestureHandlerRootView,
-} from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  runOnJS,
-  type SharedValue,
-} from 'react-native-reanimated';
 import { Pressable, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -37,6 +26,7 @@ import { SkeletonRow } from '@/components/Skeleton';
 import { TripPicker } from '@/components/TripPicker';
 import { useDatabase } from '@/components/useDatabase';
 import { formatCapturedAt } from '@/lib/relativeTime';
+import { openSourceUrl } from '@/lib/openInSocial';
 import { useThemeColors } from '@/tw/theme';
 
 type ExtractedPlace = {
@@ -78,8 +68,11 @@ const CATEGORY_ICON: Record<NonNullable<ExtractedPlace['category']> | 'null', st
   null: 'mappin.circle',
 };
 
-const TRAY_HEIGHT = 138;
-const HERO_MIN = 260;
+// Approximate vertical extent of the CTA tray above the bottom safe-area
+// inset. Used to pad the sheet's scrollable content and position the
+// floating "Select all" pill above the tray. Update this if you change
+// the tray layout.
+const TRAY_HEIGHT = 110;
 
 type SelectionMap = Map<string, Map<string, boolean>>;
 
@@ -94,11 +87,13 @@ export default function Triage() {
   const [index, setIndex] = useState(0);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [selections, setSelections] = useState<SelectionMap>(new Map());
+  const [preview, setPreview] = useState<Source | null>(null);
 
-  // Expandable-hero shared state. The grabber pan drives heroHeight; both
-  // hero and sheet read it.
-  const HERO_MAX = Math.min(height * 0.7, height - insets.top - TRAY_HEIGHT - insets.bottom - 60);
-  const heroHeight = useSharedValue(HERO_MIN);
+  // The hero is a fixed preview area, not a draggable surface. Sized to
+  // give portrait social-media content (Reels/TikTok) enough room without
+  // crowding the place list. Tap-to-fullscreen handles the rare case
+  // where the user wants to inspect the image in detail.
+  const HERO_HEIGHT = Math.min(Math.round(height * 0.55), 540);
 
   // Live query so AI extraction surfacing mid-triage updates the bottom card.
   const extractedRows = useLiveQuery<ExtractedPlace>(EXTRACTED_SQL, [], [
@@ -251,14 +246,6 @@ export default function Triage() {
     );
   }, [db, index, items, placesBySource, router]);
 
-  const tapHaptic = useCallback(() => {
-    if (process.env.EXPO_OS === 'ios') Haptics.selectionAsync().catch(() => {});
-  }, []);
-
-  // Per-card pan gestures live inside `TriageCard`; they share the
-  // `heroHeight` value at the parent so swiping between sources keeps
-  // the expanded state.
-
   const current = items?.[index];
 
   if (!items || !current) {
@@ -281,7 +268,7 @@ export default function Triage() {
     .map((p) => p.place_id);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <>
       <Stack.Screen options={{ headerShown: false }} />
       <View
         className="flex-1 bg-bg"
@@ -310,10 +297,9 @@ export default function Triage() {
               isSelected={(placeId) => isSelected(item.id, placeId)}
               onToggleOne={(placeId) => toggleOne(item.id, placeId)}
               bottomInset={insets.bottom + TRAY_HEIGHT + 16}
-              heroHeight={heroHeight}
-              heroMin={HERO_MIN}
-              heroMax={HERO_MAX}
-              onSnapHaptic={tapHaptic}
+              topInset={insets.top}
+              heroHeight={HERO_HEIGHT}
+              onPreview={() => setPreview(item)}
             />
           )}
         />
@@ -337,6 +323,18 @@ export default function Triage() {
           <CountChip index={index} total={items.length} />
         </View>
 
+        <CtaTray
+          totalCount={totalCount}
+          selectedCount={selectedCount}
+          bottomInset={insets.bottom}
+          onPickTrip={() => setPickerVisible(true)}
+          onSkip={onSkip}
+          onDelete={onDelete}
+        />
+
+        {/* Rendered AFTER CtaTray so its gradient (which has 40pt of top
+            padding sitting above the visible buttons) doesn't capture the
+            tap. */}
         {totalCount > 0 ? (
           <Pressable
             onPress={() =>
@@ -356,15 +354,6 @@ export default function Triage() {
             </Text>
           </Pressable>
         ) : null}
-
-        <CtaTray
-          totalCount={totalCount}
-          selectedCount={selectedCount}
-          bottomInset={insets.bottom}
-          onPickTrip={() => setPickerVisible(true)}
-          onSkip={onSkip}
-          onDelete={onDelete}
-        />
 
         <TripPicker
           visible={pickerVisible}
@@ -398,7 +387,66 @@ export default function Triage() {
           }}
         />
       </View>
-    </GestureHandlerRootView>
+
+      <FullscreenPreview
+        source={preview}
+        topInset={insets.top}
+        onClose={() => setPreview(null)}
+      />
+    </>
+  );
+}
+
+function FullscreenPreview({
+  source,
+  topInset,
+  onClose,
+}: {
+  source: Source | null;
+  topInset: number;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={source !== null}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close preview"
+          onPress={onClose}
+          style={{ flex: 1 }}
+        >
+          {source?.filePath ? (
+            <ExpoImage
+              source={source.filePath}
+              style={{ flex: 1 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+          ) : null}
+        </Pressable>
+        <View
+          className="absolute"
+          style={{ top: topInset + 8, left: 16 }}
+        >
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close preview"
+            hitSlop={12}
+            className="h-9 w-9 items-center justify-center rounded-full"
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          >
+            <Icon name="xmark" size={16} tintColor="#ffffff" />
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -438,10 +486,9 @@ function TriageCard({
   isSelected,
   onToggleOne,
   bottomInset,
+  topInset,
   heroHeight,
-  heroMin,
-  heroMax,
-  onSnapHaptic,
+  onPreview,
 }: {
   width: number;
   source: Source;
@@ -450,56 +497,31 @@ function TriageCard({
   isSelected: (placeId: string) => boolean;
   onToggleOne: (placeId: string) => void;
   bottomInset: number;
-  heroHeight: SharedValue<number>;
-  heroMin: number;
-  heroMax: number;
-  onSnapHaptic: () => void;
+  topInset: number;
+  heroHeight: number;
+  onPreview: () => void;
 }) {
   const colors = useThemeColors();
   const total = places.length;
-  // The hero stays at heroMax behind the sheet; expanding/collapsing
-  // animates the sheet's translateY only. Animating layout (`height`) here
-  // was very laggy because every shared-value tick re-ran Yoga across the
-  // entire subtree (and across every TriageCard mounted in the paging
-  // window). transform/opacity stays on the fast path.
-  const sheetAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: heroHeight.value - heroMin }],
-  }));
-  // Both the hero and the grabber drive the same heroHeight via identical
-  // pan logic. Two Gesture.Pan() instances are needed because each
-  // GestureDetector takes its own. Internal state (`startHeight`) is shared
-  // — only one gesture is active at a time.
-  const startHeight = useSharedValue(heroMin);
-  const heroPan = useMemo(
-    () => buildHeroPan({ heroHeight, heroMin, heroMax, startHeight, onSnapHaptic }),
-    [heroHeight, heroMin, heroMax, startHeight, onSnapHaptic],
-  );
-  const grabberPan = useMemo(
-    () => buildHeroPan({ heroHeight, heroMin, heroMax, startHeight, onSnapHaptic }),
-    [heroHeight, heroMin, heroMax, startHeight, onSnapHaptic],
-  );
+  const inFlight = status === 'loading' || status === 'processing';
+  const hasImage = source.filePath !== null;
   return (
     <View style={{ width, flex: 1 }}>
-      {/* Hero — fixed at heroMax, sits behind the sheet. The visible
-          portion is whatever isn't covered by the sheet, so dragging the
-          sheet down "reveals" more hero without any layout work. */}
-      <GestureDetector gesture={heroPan}>
+      <Pressable
+        onPress={hasImage ? onPreview : undefined}
+        accessibilityRole={hasImage ? 'button' : undefined}
+        accessibilityLabel={hasImage ? 'View full image' : undefined}
+        accessibilityHint={hasImage ? 'Opens the source image fullscreen' : undefined}
+      >
         <View
           className="bg-surface"
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: heroMax,
-            overflow: 'hidden',
-          }}
+          style={{ height: heroHeight, overflow: 'hidden' }}
         >
           {source.filePath ? (
             <ExpoImage
               source={source.filePath}
               style={{ width: '100%', height: '100%' }}
-              contentFit="cover"
+              contentFit="contain"
               cachePolicy="memory-disk"
             />
           ) : source.kind === 'url' && source.caption ? (
@@ -518,20 +540,61 @@ function TriageCard({
               <Icon name={source.kind === 'url' ? 'link' : 'photo'} size={36} tintColor={colors.textMuted} />
             </View>
           )}
-          {source.kind === 'url' && source.platform ? (
+          {hasImage ? (
             <View
               className="absolute"
-              style={{ top: 10, right: 10 }}
+              style={{ bottom: 10, right: 10 }}
               pointerEvents="none"
             >
               <View
-                className="rounded-full"
+                className="items-center justify-center rounded-full"
                 style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 4,
-                  backgroundColor: 'rgba(0,0,0,0.6)',
+                  width: 32,
+                  height: 32,
+                  backgroundColor: 'rgba(0,0,0,0.55)',
                 }}
               >
+                <Icon
+                  name="arrow.up.left.and.arrow.down.right"
+                  size={13}
+                  tintColor="#ffffff"
+                />
+              </View>
+            </View>
+          ) : null}
+          {source.kind === 'url' && source.platform && source.url ? (
+            <View
+              className="absolute"
+              style={{ top: topInset + 46, right: 10 }}
+            >
+              <Pressable
+                onPress={() => {
+                  if (process.env.EXPO_OS === 'ios') {
+                    Haptics.selectionAsync().catch(() => {});
+                  }
+                  openSourceUrl(source.url!, source.platform).catch((err) => {
+                    console.warn('[triage] openSourceUrl failed', err);
+                  });
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Open in ${
+                  source.platform === 'instagram' ? 'Instagram' : 'TikTok'
+                }`}
+                hitSlop={8}
+                className="flex-row items-center rounded-full"
+                style={{
+                  paddingLeft: 10,
+                  paddingRight: 11,
+                  paddingVertical: 6,
+                  backgroundColor: 'rgba(0,0,0,0.72)',
+                  gap: 5,
+                }}
+              >
+                <Icon
+                  name="arrow.up.right.square.fill"
+                  size={12}
+                  tintColor="#ffffff"
+                />
                 <Text
                   style={{
                     fontSize: 11,
@@ -542,167 +605,90 @@ function TriageCard({
                 >
                   {source.platform === 'instagram' ? 'Instagram' : 'TikTok'}
                 </Text>
-              </View>
+              </Pressable>
             </View>
           ) : null}
         </View>
-      </GestureDetector>
+      </Pressable>
 
-      {/* Sheet — fixed-size, slides via translateY. */}
-      <Animated.View
-        style={[
-          {
-            position: 'absolute',
-            top: heroMin,
-            left: 0,
-            right: 0,
-            bottom: 0,
-          },
-          sheetAnimStyle,
-        ]}
-      >
-        <View className="flex-1 bg-bg">
-        <GestureDetector gesture={grabberPan}>
-          <View
-            className="items-center"
-            style={{ paddingTop: 8, paddingBottom: 4 }}
-            accessibilityRole="adjustable"
-            accessibilityLabel="Drag to resize the source"
-          >
-            <View
-              className="bg-text-muted"
-              style={{
-                width: 40,
-                height: 4,
-                borderRadius: 2,
-                opacity: 0.4,
-              }}
-            />
-          </View>
-        </GestureDetector>
-
+      <View className="flex-1 bg-bg">
         <RNScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: bottomInset }}
-          // Keyboard isn't likely here, but keep this safe.
           keyboardShouldPersistTaps="handled"
         >
-          {(() => {
-            // 'loading' and 'processing' render identically — the distinction
-            // exists only so we know null-result is a safer default than
-            // 'settled' (avoids COULDN'T READ flash on cold mount).
-            const inFlight = status === 'loading' || status === 'processing';
-            return (
-              <>
-                <View className="px-4 pt-1 pb-2">
-                  {inFlight ? (
-                    <Text
-                      className="text-info-text"
-                      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
-                    >
-                      PROCESSING…
-                    </Text>
-                  ) : total > 0 ? (
-                    <Text
-                      className="text-info-text"
-                      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
-                    >
-                      ✦ {total} {total === 1 ? 'PLACE FOUND' : 'PLACES FOUND'}
-                    </Text>
-                  ) : (
-                    <Text
-                      className="text-text-muted"
-                      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
-                    >
-                      COULDN'T READ
-                    </Text>
-                  )}
-                  <Text
-                    className="text-text mt-1"
-                    style={{ fontSize: 16, fontWeight: '700', letterSpacing: -0.2 }}
-                    numberOfLines={1}
-                  >
-                    {formatCapturedAt(source.capturedAt)}
-                  </Text>
-                  {!inFlight && total === 0 ? (
-                    <Text className="text-text-muted mt-1" style={{ fontSize: 13 }}>
-                      Save it anyway and label it later.
-                    </Text>
-                  ) : null}
-                </View>
+          <View className="px-4 pt-3 pb-2">
+            {inFlight ? (
+              <Text
+                className="text-info-text"
+                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
+              >
+                PROCESSING…
+              </Text>
+            ) : total > 0 ? (
+              <Text
+                className="text-info-text"
+                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
+              >
+                ✦ {total} {total === 1 ? 'PLACE FOUND' : 'PLACES FOUND'}
+              </Text>
+            ) : (
+              <Text
+                className="text-text-muted"
+                style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
+              >
+                COULDN'T READ
+              </Text>
+            )}
+            <Text
+              className="text-text mt-1"
+              style={{ fontSize: 16, fontWeight: '700', letterSpacing: -0.2 }}
+              numberOfLines={1}
+            >
+              {formatCapturedAt(source.capturedAt)}
+            </Text>
+            {!inFlight && total === 0 ? (
+              <Text className="text-text-muted mt-1" style={{ fontSize: 13 }}>
+                Save it anyway and label it later.
+              </Text>
+            ) : null}
+          </View>
 
-                {!inFlight && total > 0 ? (
-                  <View className="px-4 pt-3 pb-1">
-                    <Text
-                      className="text-text-muted"
-                      style={{
-                        fontSize: 11,
-                        fontWeight: '600',
-                        letterSpacing: 0.5,
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Add to trip
-                    </Text>
-                  </View>
-                ) : null}
+          {!inFlight && total > 0 ? (
+            <View className="px-4 pt-3 pb-1">
+              <Text
+                className="text-text-muted"
+                style={{
+                  fontSize: 11,
+                  fontWeight: '600',
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                }}
+              >
+                Add to trip
+              </Text>
+            </View>
+          ) : null}
 
-                {inFlight ? (
-                  <>
-                    <SkeletonRow />
-                    <SkeletonRow />
-                  </>
-                ) : (
-                  places.map((p) => (
-                    <PlaceSelectRow
-                      key={p.place_id}
-                      place={p}
-                      checked={isSelected(p.place_id)}
-                      onToggle={() => onToggleOne(p.place_id)}
-                    />
-                  ))
-                )}
-              </>
-            );
-          })()}
+          {inFlight ? (
+            <>
+              <SkeletonRow />
+              <SkeletonRow />
+            </>
+          ) : (
+            places.map((p) => (
+              <PlaceSelectRow
+                key={p.place_id}
+                place={p}
+                checked={isSelected(p.place_id)}
+                onToggle={() => onToggleOne(p.place_id)}
+              />
+            ))
+          )}
         </RNScrollView>
-        </View>
-      </Animated.View>
+      </View>
     </View>
   );
-}
-
-function buildHeroPan({
-  heroHeight,
-  heroMin,
-  heroMax,
-  startHeight,
-  onSnapHaptic,
-}: {
-  heroHeight: SharedValue<number>;
-  heroMin: number;
-  heroMax: number;
-  startHeight: SharedValue<number>;
-  onSnapHaptic: () => void;
-}) {
-  return Gesture.Pan()
-    .activeOffsetY([-8, 8])
-    .failOffsetX([-12, 12])
-    .onStart(() => {
-      startHeight.value = heroHeight.value;
-    })
-    .onUpdate((e) => {
-      const next = startHeight.value + e.translationY;
-      heroHeight.value = Math.max(heroMin, Math.min(heroMax, next));
-    })
-    .onEnd((e) => {
-      const mid = (heroMin + heroMax) / 2;
-      const goingDown =
-        e.velocityY > 300 || (e.velocityY > -300 && heroHeight.value > mid);
-      const target = goingDown ? heroMax : heroMin;
-      heroHeight.value = withSpring(target, { damping: 20, stiffness: 180 });
-      runOnJS(onSnapHaptic)();
-    });
 }
 
 function PlaceSelectRow({
@@ -812,9 +798,9 @@ function CtaTray({
         colors={[bgRgba(0), bgRgba(0.96)]}
         locations={[0, 0.55]}
         style={{
-          paddingTop: 40,
+          paddingTop: 24,
           paddingHorizontal: 16,
-          paddingBottom: bottomInset + 16,
+          paddingBottom: bottomInset + 6,
         }}
       >
         <Pressable
@@ -822,7 +808,8 @@ function CtaTray({
           accessibilityRole="button"
           accessibilityLabel="Choose a trip"
           accessibilityHint="Picks a trip and saves the selected places"
-          className="flex-row items-center justify-between rounded-2xl bg-accent px-4 py-4"
+          className="flex-row items-center justify-between rounded-2xl bg-accent px-4"
+          style={{ paddingVertical: 14 }}
         >
           <View className="flex-row items-center gap-2">
             <Icon name="folder.fill" size={16} tintColor="#ffffff" />
@@ -846,32 +833,43 @@ function CtaTray({
           </View>
         </Pressable>
 
-        <Pressable
-          onPress={onSkip}
-          accessibilityRole="button"
-          accessibilityLabel="Skip for now"
-          accessibilityHint="Leaves this source in the inbox and goes to the next"
-          className="mt-2 rounded-2xl items-center justify-center bg-surface border-hairline"
-          style={{ paddingVertical: 12, borderWidth: 1 }}
-        >
-          <Text className="text-text" style={{ fontSize: 14, fontWeight: '600' }}>
-            Skip for now
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={onDelete}
-          accessibilityRole="button"
-          accessibilityLabel="Delete source"
-          accessibilityHint="Permanently delete this source and any extracted places."
-          className="mt-2 items-center justify-center"
-          style={{ paddingVertical: 10 }}
-          hitSlop={8}
-        >
-          <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>
-            Delete
-          </Text>
-        </Pressable>
+        {/* Secondary actions share a row, separated by a hairline — iOS
+            alert-style. Saves vertical space vs. stacked pill buttons. */}
+        <View className="flex-row items-center mt-1">
+          <Pressable
+            onPress={onSkip}
+            accessibilityRole="button"
+            accessibilityLabel="Skip for now"
+            accessibilityHint="Leaves this source in the inbox and goes to the next"
+            className="flex-1 items-center justify-center"
+            style={{ paddingVertical: 10 }}
+            hitSlop={8}
+          >
+            <Text className="text-text" style={{ fontSize: 14, fontWeight: '600' }}>
+              Skip for now
+            </Text>
+          </Pressable>
+          <View
+            style={{
+              width: 1,
+              height: 18,
+              backgroundColor: colors.hairline,
+            }}
+          />
+          <Pressable
+            onPress={onDelete}
+            accessibilityRole="button"
+            accessibilityLabel="Delete source"
+            accessibilityHint="Permanently delete this source and any extracted places."
+            className="flex-1 items-center justify-center"
+            style={{ paddingVertical: 10 }}
+            hitSlop={8}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>
+              Delete
+            </Text>
+          </Pressable>
+        </View>
       </LinearGradient>
     </View>
   );
