@@ -65,3 +65,5 @@ DerivedData/
 *.tsbuildinfo
 app-example
 expo-env.d.ts
+
+.firecrawl

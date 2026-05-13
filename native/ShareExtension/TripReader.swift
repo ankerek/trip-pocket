@@ -31,7 +31,6 @@ struct TripReader {
 
         let sql = """
             SELECT id, name FROM trips
-            WHERE deleted_at IS NULL
             ORDER BY name COLLATE NOCASE ASC
         """
         var stmt: OpaquePointer?

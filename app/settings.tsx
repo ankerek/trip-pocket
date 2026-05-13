@@ -8,6 +8,7 @@ import {
   isFirehoseEnabled,
   setFirehose,
 } from '@/modules/pipeline-log';
+import { resetOnboarding } from '@/lib/onboarding/storage';
 
 // Settings is now a modal sheet (presentation: 'formSheet') registered
 // in app/_layout.tsx. The (tabs)/(settings) group is removed in this
@@ -126,6 +127,39 @@ export default function Settings() {
           </Text>
           <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
             Per-source stage history for capture, OCR, extraction, enrichment.
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            Alert.alert(
+              'Replay onboarding?',
+              'Resets your onboarding answers and shows the welcome flow again. Trips and places stay intact.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Replay',
+                  onPress: () => {
+                    resetOnboarding();
+                    // Replace the settings sheet with the onboarding
+                    // modal — the root Stack's onboarding entry handles
+                    // the fullScreenModal presentation.
+                    router.replace('/onboarding');
+                  },
+                },
+              ],
+            );
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Replay onboarding flow"
+          className="mt-2 rounded-2xl px-4 py-3"
+          style={{ backgroundColor: 'rgba(20, 184, 166, 0.1)' }}
+        >
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>
+            Replay onboarding
+          </Text>
+          <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+            Re-runs the welcome flow from the top. Useful for QA.
           </Text>
         </Pressable>
 

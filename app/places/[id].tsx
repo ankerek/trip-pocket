@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Alert, Platform, ToastAndroid } from 'react-native';
 import { MenuView } from '@react-native-menu/menu';
 import { Image, Pressable, ScrollView, Text, View } from '@/tw';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -38,7 +37,6 @@ export default function PlaceDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useDatabase();
-  const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerMode, setPickerMode] = useState<TripPickerMode>('assign');
@@ -242,25 +240,6 @@ export default function PlaceDetail() {
             }}
           />
 
-          {/* Trip chip — top-right, aligned with the back button. Tap to
-              open that trip's detail. */}
-          {tripName && place.tripId ? (
-            <Pressable
-              onPress={() => router.push(`/trips/${place.tripId}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open trip ${tripName}`}
-              hitSlop={8}
-              style={({ pressed }) => ({
-                position: 'absolute',
-                top: insets.top + 8,
-                right: 14,
-                opacity: pressed ? 0.85 : 1,
-              })}
-            >
-              <TripChip name={tripName} variant="overlay" />
-            </Pressable>
-          ) : null}
-
           {/* Title stack — sits at the bottom of the photo over the dark
               overlay. Category chip → name → meta row. */}
           <View
@@ -451,35 +430,51 @@ export default function PlaceDetail() {
       </ScrollView>
       <DetailHeaderOverlay
         right={
-          <MenuView
-            title=""
-            shouldOpenOnLongPress={false}
-            onPressAction={({ nativeEvent }) => {
-              if (nativeEvent.event === 'remove') onUnassign();
-              else if (nativeEvent.event === 'delete') confirmDelete();
-            }}
-            actions={[
-              ...(inTrip
-                ? [{
-                    id: 'remove',
-                    title: 'Remove from trip',
-                    image: Platform.OS === 'ios' ? 'tray.and.arrow.up' : undefined,
-                  }]
-                : []),
-              {
-                id: 'delete',
-                title: 'Delete place',
-                attributes: { destructive: true },
-                image: Platform.OS === 'ios' ? 'trash' : undefined,
-              },
-            ]}
-          >
-            <DetailHeaderIconButton
-              icon="ellipsis"
-              accessibilityLabel="More options"
-              onPress={() => {}}
-            />
-          </MenuView>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {tripName && place.tripId ? (
+              <Pressable
+                onPress={() => router.push(`/trips/${place.tripId}`)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open trip ${tripName}`}
+                hitSlop={8}
+                style={({ pressed }) => ({
+                  opacity: pressed ? 0.85 : 1,
+                  maxWidth: 180,
+                })}
+              >
+                <TripChip name={tripName} variant="overlay" />
+              </Pressable>
+            ) : null}
+            <MenuView
+              title=""
+              shouldOpenOnLongPress={false}
+              onPressAction={({ nativeEvent }) => {
+                if (nativeEvent.event === 'remove') onUnassign();
+                else if (nativeEvent.event === 'delete') confirmDelete();
+              }}
+              actions={[
+                ...(inTrip
+                  ? [{
+                      id: 'remove',
+                      title: 'Remove from trip',
+                      image: Platform.OS === 'ios' ? 'tray.and.arrow.up' : undefined,
+                    }]
+                  : []),
+                {
+                  id: 'delete',
+                  title: 'Delete place',
+                  attributes: { destructive: true },
+                  image: Platform.OS === 'ios' ? 'trash' : undefined,
+                },
+              ]}
+            >
+              <DetailHeaderIconButton
+                icon="ellipsis"
+                accessibilityLabel="More options"
+                onPress={() => {}}
+              />
+            </MenuView>
+          </View>
         }
       />
 

@@ -7,23 +7,27 @@ private let log = Logger(subsystem: "com.trippocket.share", category: "ShareView
 
 class ShareViewController: UIViewController {
     private let errorState = SaveErrorState()
+    private let successState = SaveSuccessState()
     private var lastTripId: String?
+    private var lastDestinationName: String = "Inbox"
 
     override func viewDidLoad() {
         super.viewDidLoad()
         let host = UIHostingController(rootView: TripPickerView(
-            onSave: { [weak self] tripId in
+            onSave: { [weak self] tripId, destinationName in
                 self?.lastTripId = tripId
-                self?.handleSave(tripId: tripId)
+                self?.lastDestinationName = destinationName
+                self?.handleSave(tripId: tripId, destinationName: destinationName)
             },
             onCancel: { [weak self] in
                 self?.cancel()
             },
             errorState: errorState,
+            successState: successState,
             onRetry: { [weak self] in
                 guard let self else { return }
                 self.errorState.set(nil)
-                self.handleSave(tripId: self.lastTripId)
+                self.handleSave(tripId: self.lastTripId, destinationName: self.lastDestinationName)
             }
         ))
         addChild(host)
@@ -38,7 +42,7 @@ class ShareViewController: UIViewController {
         host.didMove(toParent: self)
     }
 
-    private func handleSave(tripId: String?) {
+    private func handleSave(tripId: String?, destinationName: String) {
         guard let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
               let attachments = item.attachments, !attachments.isEmpty
         else {
@@ -50,18 +54,18 @@ class ShareViewController: UIViewController {
         // a preview image, prefer the URL — it carries more semantic value
         // than the cover thumbnail alone (the worker fetches caption + cover).
         if let urlProvider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) }) {
-            handleUrlAttachment(urlProvider, tripId: tripId)
+            handleUrlAttachment(urlProvider, tripId: tripId, destinationName: destinationName)
             return
         }
         if let imageProvider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }) {
-            handleImageAttachment(imageProvider, tripId: tripId)
+            handleImageAttachment(imageProvider, tripId: tripId, destinationName: destinationName)
             return
         }
 
         errorState.set(.noContent)
     }
 
-    private func handleUrlAttachment(_ provider: NSItemProvider, tripId: String?) {
+    private func handleUrlAttachment(_ provider: NSItemProvider, tripId: String?, destinationName: String) {
         provider.loadItem(forTypeIdentifier: UTType.url.identifier) { [weak self] data, _ in
             guard let self else { return }
             guard let url = self.materializeUrl(data) else {
@@ -74,9 +78,7 @@ class ShareViewController: UIViewController {
             }
             do {
                 try PendingImportWriter().write(url: url.absoluteString, suggestedTripId: tripId)
-                DispatchQueue.main.async {
-                    self.extensionContext?.completeRequest(returningItems: nil)
-                }
+                self.acknowledgeAndComplete(destinationName: destinationName)
             } catch {
                 log.error("handleUrlAttachment: write failed: \(String(describing: error), privacy: .public)")
                 self.errorState.set(.writeFailed)
@@ -84,7 +86,7 @@ class ShareViewController: UIViewController {
         }
     }
 
-    private func handleImageAttachment(_ provider: NSItemProvider, tripId: String?) {
+    private func handleImageAttachment(_ provider: NSItemProvider, tripId: String?, destinationName: String) {
         provider.loadItem(forTypeIdentifier: UTType.image.identifier) { [weak self] data, _ in
             guard let self else { return }
             guard let url = self.materializeImage(data) else {
@@ -94,12 +96,25 @@ class ShareViewController: UIViewController {
             }
             do {
                 try PendingImportWriter().write(imageAt: url, suggestedTripId: tripId)
-                DispatchQueue.main.async {
-                    self.extensionContext?.completeRequest(returningItems: nil)
-                }
+                self.acknowledgeAndComplete(destinationName: destinationName)
             } catch {
                 log.error("handleImageAttachment: write failed: \(String(describing: error), privacy: .public)")
                 self.errorState.set(.writeFailed)
+            }
+        }
+    }
+
+    // Fires a success haptic, swaps the picker to a "Saved to {dest}" overlay,
+    // then dismisses the sheet after a short visible beat (~600ms). This is the
+    // only signal the user gets that Trip Pocket received the share before
+    // returning to the source app — processing of the pending row happens
+    // later, in the main app, on next foreground.
+    private func acknowledgeAndComplete(destinationName: String) {
+        DispatchQueue.main.async {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            self.successState.set(destinationName)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.extensionContext?.completeRequest(returningItems: nil)
             }
         }
     }

@@ -22,7 +22,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: BUNDLE_ID,
-    buildNumber: '4',
+    buildNumber: '5',
     icon: './assets/AppIcon.icon',
     supportsTablet: false,
     entitlements: {

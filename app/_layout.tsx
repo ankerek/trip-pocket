@@ -1,12 +1,13 @@
 import '../global.css';
 import * as Sentry from '@sentry/react-native';
-import { Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Stack, useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { initSentry, attachInstallId } from '@/lib/observability';
 import { ErrorFallback } from '@/components/ErrorFallback';
 import { ErrorToast } from '@/components/ErrorToast';
+import { isOnboardingComplete } from '@/lib/onboarding/storage';
 import {
   openDatabase,
   runMigrations,
@@ -70,6 +71,11 @@ export default function RootLayout() {
     enricher: Enricher;
   } | null>(null);
   const colorScheme = useColorScheme();
+  const router = useRouter();
+  // Sync filesystem check at first render — cheap, stable across remounts.
+  // Reading it once means navigating into onboarding mid-session doesn't
+  // pop the user back out when markOnboardingComplete fires inside the flow.
+  const needsOnboarding = useMemo(() => !isOnboardingComplete(), []);
 
   useEffect(() => {
     (async () => {
@@ -199,12 +205,37 @@ export default function RootLayout() {
     return () => sub.remove();
   }, [ctx]);
 
+  // First-launch redirect. Fires once after the boot pipeline is ready so
+  // we don't race the router. The /onboarding flow flips the flag when
+  // the user completes the paywall (or taps "x" on it during dev), so we
+  // intentionally key on the initial-render value of `needsOnboarding`
+  // rather than re-reading the file on every change.
+  useEffect(() => {
+    if (!ready) return;
+    if (!needsOnboarding) return;
+    router.replace('/onboarding');
+  }, [ready, needsOnboarding, router]);
+
   if (!ready) return null;
   return (
     <Sentry.ErrorBoundary fallback={ErrorFallback}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="onboarding"
+            options={{
+              headerShown: false,
+              // Onboarding is a full-screen modal stack — block the swipe-
+              // down dismissal so a fat-fingered gesture can't escape the
+              // flow without completing it. The flow exits via either the
+              // paywall "Start trial" CTA or its decline "x" affordance,
+              // both of which call markOnboardingComplete().
+              presentation: 'fullScreenModal',
+              gestureEnabled: false,
+              animation: 'fade',
+            }}
+          />
           <Stack.Screen
             name="settings"
             options={{

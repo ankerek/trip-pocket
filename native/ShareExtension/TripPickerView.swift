@@ -17,10 +17,24 @@ final class SaveErrorState: ObservableObject {
     }
 }
 
+// Drives the post-save acknowledgment overlay. Set to the destination name
+// ("Inbox" or trip name) when the pending row is written; the view shows a
+// checkmark for ~600ms before the controller dismisses the sheet, so the user
+// gets a visible+haptic signal that the share landed before returning to
+// Instagram/TikTok.
+final class SaveSuccessState: ObservableObject {
+    @Published var destinationName: String?
+
+    func set(_ name: String?) {
+        DispatchQueue.main.async { self.destinationName = name }
+    }
+}
+
 struct TripPickerView: View {
-    let onSave: (String?) -> Void
+    let onSave: (String?, String) -> Void
     let onCancel: () -> Void
     @ObservedObject var errorState: SaveErrorState
+    @ObservedObject var successState: SaveSuccessState
     let onRetry: () -> Void
 
     @State private var trips: [TripReader.Trip] = []
@@ -31,15 +45,23 @@ struct TripPickerView: View {
             Group {
                 if let error = errorState.value {
                     errorView(for: error)
+                } else if let dest = successState.destinationName {
+                    successView(destinationName: dest)
                 } else {
                     pickerList
                 }
             }
-            .navigationTitle(errorState.value == nil ? "Save to" : "Couldn't save")
+            .navigationTitle(navTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Always render the ToolbarItem — `if` inside .toolbar is
+                // iOS 16+ only, and the deployment target is 15.1. Hide and
+                // disable the button during the success-overlay window so it
+                // can't race with the auto-dismiss timer.
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onCancel)
+                        .opacity(successState.destinationName == nil ? 1 : 0)
+                        .disabled(successState.destinationName != nil)
                 }
             }
         }
@@ -51,10 +73,16 @@ struct TripPickerView: View {
         }
     }
 
+    private var navTitle: String {
+        if errorState.value != nil { return "Couldn't save" }
+        if successState.destinationName != nil { return "Saved" }
+        return "Save to"
+    }
+
     private var pickerList: some View {
         List {
             Section {
-                Button(action: { onSave(nil) }) {
+                Button(action: { onSave(nil, "Inbox") }) {
                     Text("Inbox")
                         .foregroundColor(.primary)
                 }
@@ -62,7 +90,7 @@ struct TripPickerView: View {
             if !trips.isEmpty {
                 Section("Trips") {
                     ForEach(trips, id: \.id) { trip in
-                        Button(action: { onSave(trip.id) }) {
+                        Button(action: { onSave(trip.id, trip.name) }) {
                             Text(trip.name)
                                 .foregroundColor(.primary)
                         }
@@ -71,6 +99,17 @@ struct TripPickerView: View {
             }
         }
         .listStyle(.insetGrouped)
+    }
+
+    private func successView(destinationName: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 48, weight: .regular))
+                .foregroundColor(.green)
+            Text("Saved to \(destinationName)")
+                .font(.headline)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func errorView(for error: ShareSaveError) -> some View {
