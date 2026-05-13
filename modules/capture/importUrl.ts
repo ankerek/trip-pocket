@@ -21,7 +21,7 @@ import type { Database } from '@/modules/storage/db';
 import { insertSource, type SourcePlatform } from '@/modules/storage/sources';
 import { notifyChange } from '@/modules/storage/live-query';
 import { getProcessor } from '@/modules/processing';
-import { pipelineStep, pipelineError } from '@/lib/observability';
+import { startStage } from '@/modules/pipeline-log';
 import { sha256OfBytes } from './importFsRuntime';
 
 export type ImportUrlInput = {
@@ -41,10 +41,14 @@ export async function importUrl(
   db: Database,
   input: ImportUrlInput,
 ): Promise<ImportUrlResult> {
-  pipelineStep('url_share_import');
+  // Pre-allocate so the share-import row and every downstream stage share one
+  // source_id — see spec §Storage/schema.
+  const sourceId = Crypto.randomUUID();
+  const shareImportStage = startStage('url_share_import', sourceId);
 
   const platform = detectPlatformFromUrl(input.url);
   if (!platform) {
+    shareImportStage.done({ kind: 'url', unsupported: true, urlHost: safeHost(input.url) });
     return { status: 'unsupported' };
   }
 
@@ -56,12 +60,19 @@ export async function importUrl(
     contentHash,
   );
   if (existing) {
+    shareImportStage.done({
+      kind: 'url',
+      platform,
+      dup: true,
+      existingSourceId: existing.id,
+    });
     return { status: 'duplicate', existingSourceId: existing.id };
   }
 
-  const sourceId = Crypto.randomUUID();
+  shareImportStage.done({ kind: 'url', platform });
+
+  const storageStage = startStage('storage', sourceId);
   try {
-    pipelineStep('storage');
     await insertSource(db, {
       id: sourceId,
       kind: 'url',
@@ -74,8 +85,9 @@ export async function importUrl(
       capturedAt: input.capturedAt,
       ownerId: input.ownerId,
     });
+    storageStage.done({ tripId: input.suggestedTripId ?? null });
   } catch (err) {
-    pipelineError('storage', err);
+    storageStage.failed(err);
     throw err;
   }
 
@@ -91,6 +103,14 @@ export async function importUrl(
 }
 
 // --- URL utilities ------------------------------------------------------
+
+function safeHost(rawUrl: string): string | undefined {
+  try {
+    return new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
 
 export function detectPlatformFromUrl(rawUrl: string): SourcePlatform | null {
   try {

@@ -18,6 +18,37 @@ export const enrichRequestSchema = z.object({
 
 export type EnrichRequest = z.infer<typeof enrichRequestSchema>;
 
+// Closed-vocab debug echo describing the worker's per-step outcomes for
+// /enrich (Google Places searchText + details + Gemini blurb). The phone
+// forwards these into the `enrichment` stage's firehose extras so the
+// pipeline log shows which sub-step degraded without a `wrangler tail`
+// round-trip. See docs/superpowers/specs/2026-05-13-pipeline-observability-design.md
+// §Worker debug echo (mirrors the /fetch-post pattern).
+export const enrichDebugSchema = z.object({
+  searchOutcome: z.enum([
+    'ok',
+    'empty',
+    'rate_limited',
+    'upstream_4xx',
+    'upstream_5xx',
+    'network',
+    'non_json',
+  ]),
+  detailsOutcome: z.enum([
+    'not_called',
+    'ok',
+    'missing_id',
+    'rate_limited',
+    'upstream_4xx',
+    'upstream_5xx',
+    'network',
+    'non_json',
+  ]),
+  blurbOutcome: z.enum(['not_called', 'ok', 'empty', 'failed']),
+});
+
+export type EnrichDebug = z.infer<typeof enrichDebugSchema>;
+
 // Successful response schema (defense-in-depth — the client also validates).
 export const enrichResponseSchema = z.union([
   z.object({
@@ -37,8 +68,12 @@ export const enrichResponseSchema = z.union([
     city: z.string().nullable(),
     country_code: z.string().nullable(),
     model: z.string(),
+    _debug: enrichDebugSchema.optional(),
   }),
-  z.object({ status: z.literal('not-found') }),
+  z.object({
+    status: z.literal('not-found'),
+    _debug: enrichDebugSchema.optional(),
+  }),
 ]);
 
 export type EnrichResponse = z.infer<typeof enrichResponseSchema>;
@@ -98,7 +133,14 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
   try {
     const result = await searchText(parsed.data, env);
     if (result === null) {
-      return jsonResponse({ status: 'not-found' satisfies EnrichResponse['status'] });
+      return jsonResponse({
+        status: 'not-found' satisfies EnrichResponse['status'],
+        _debug: {
+          searchOutcome: 'empty',
+          detailsOutcome: 'not_called',
+          blurbOutcome: 'not_called',
+        },
+      });
     }
     foundPlaceId = result;
   } catch (err) {
@@ -116,7 +158,7 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
   // 3. Gemini blurb — best-effort. If it fails, return the Places data
   // with description=null. The user gets the photo + rating without a
   // narrative; the next /enrich on the same row will retry the blurb.
-  const description = await safeBuildBlurb(parsed.data, details, env);
+  const blurb = await safeBuildBlurb(parsed.data, details, env);
 
   const response: EnrichResponse = {
     status: 'enriched',
@@ -125,13 +167,18 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
     longitude: details.longitude,
     formatted_address: details.formattedAddress,
     photo_name: details.photoName,
-    description,
+    description: blurb.text,
     rating: details.rating,
     price_level: details.priceLevel,
     external_url: details.googleMapsUri,
     city: details.city,
     country_code: details.countryCode,
     model: GEMINI_MODEL,
+    _debug: {
+      searchOutcome: 'ok',
+      detailsOutcome: 'ok',
+      blurbOutcome: blurb.outcome,
+    },
   };
   return jsonResponse(response);
 }
@@ -320,17 +367,57 @@ Use the structured Google Places facts AND the user's OCR caption from the scree
 
 Output only the blurb text. No leading label, no quotes, no formatting.`;
 
+type BlurbOutcome = Extract<
+  EnrichDebug['blurbOutcome'],
+  'ok' | 'empty' | 'failed'
+>;
+
+// Class of blurb failure. Used by the in-call retry to decide whether to
+// take a second attempt: transient = yes (network blip, Gemini 5xx);
+// permanent = no (4xx is a bad request, retrying won't change it);
+// rate-limited = no (a 500ms in-call backoff would just hit the limit
+// again — the upstream is asking for a longer wait).
+type BlurbFailureClass = 'transient' | 'permanent' | 'rate_limited';
+
+class BlurbError extends Error {
+  constructor(public readonly failureClass: BlurbFailureClass, message: string) {
+    super(message);
+    this.name = 'BlurbError';
+  }
+}
+
+const BLURB_RETRY_DELAY_MS = 500;
+const BLURB_MAX_ATTEMPTS = 2;
+
 async function safeBuildBlurb(
   req: EnrichRequest,
   details: PlaceDetails,
   env: Env,
-): Promise<string | null> {
-  try {
-    return await buildBlurb(req, details, env);
-  } catch (err) {
-    console.error('extract-proxy/enrich: blurb-failed', String(err));
-    return null;
+): Promise<{ text: string | null; outcome: BlurbOutcome }> {
+  // One transient retry. Capped at 2 attempts so a hard Gemini outage
+  // doesn't add a full second of latency to every /enrich. Permanent and
+  // rate-limited failures skip the retry — see BlurbFailureClass above.
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= BLURB_MAX_ATTEMPTS; attempt++) {
+    try {
+      const text = await buildBlurb(req, details, env);
+      if (text === null || text.length === 0) {
+        // Gemini returned 200 but no usable text (whitespace-only candidate,
+        // missing parts, etc). Same effect as a failure from the caller's
+        // perspective — description is null — but a distinct firehose signal
+        // so we can tell "model declined" from "model errored" when triaging.
+        return { text: null, outcome: 'empty' };
+      }
+      return { text, outcome: 'ok' };
+    } catch (err) {
+      lastErr = err;
+      const cls = err instanceof BlurbError ? err.failureClass : 'transient';
+      if (cls !== 'transient' || attempt === BLURB_MAX_ATTEMPTS) break;
+      await new Promise((r) => setTimeout(r, BLURB_RETRY_DELAY_MS));
+    }
   }
+  console.error('extract-proxy/enrich: blurb-failed', String(lastErr));
+  return { text: null, outcome: 'failed' };
 }
 
 async function buildBlurb(
@@ -360,25 +447,41 @@ async function buildBlurb(
     `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.AI_GATEWAY_NAME}` +
     `/google-ai-studio/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
 
-  const resp = await fetch(gatewayUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
-    },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: userText }] }],
-      systemInstruction: { parts: [{ text: BLURB_SYSTEM_PROMPT }] },
-      generationConfig: {
-        responseMimeType: 'text/plain',
-        maxOutputTokens: 200,
-        temperature: 0.4,
+  let resp: Response;
+  try {
+    resp = await fetch(gatewayUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        systemInstruction: { parts: [{ text: BLURB_SYSTEM_PROMPT }] },
+        generationConfig: {
+          responseMimeType: 'text/plain',
+          maxOutputTokens: 200,
+          temperature: 0.4,
+        },
+      }),
+    });
+  } catch (err) {
+    // Network failure (DNS, TLS, connection reset, etc) — try again.
+    throw new BlurbError('transient', `gemini-network: ${String(err)}`);
+  }
 
   if (!resp.ok) {
-    throw new Error(`gemini-${resp.status}`);
+    // 4xx is permanent (bad request, auth, model not found) — retrying won't
+    // change the outcome. 429 means the upstream is explicitly throttling;
+    // a 500ms in-call backoff would just hit the same limit. 5xx is the
+    // upstream having a transient problem — the case retry is for.
+    const cls: BlurbFailureClass =
+      resp.status === 429
+        ? 'rate_limited'
+        : resp.status >= 500
+          ? 'transient'
+          : 'permanent';
+    throw new BlurbError(cls, `gemini-${resp.status}`);
   }
 
   const body = (await resp.json()) as {

@@ -4,12 +4,55 @@
 
 import { z } from 'zod';
 
+// Closed-vocab dispatch info echoed by the worker so the phone can surface
+// which path it took (og-only / Apify carousel / Apify fallback / TikTok
+// oEmbed / soft-degrade) into the pipeline-log firehose. Optional because a
+// worker that hasn't been redeployed with the v0.4 echo will omit it. See
+// docs/superpowers/specs/2026-05-13-pipeline-observability-design.md
+// §Worker debug echo.
+export type FetchPostDebug = {
+  route:
+    | 'og_only'
+    | 'og_only_apify_disabled'
+    | 'og_then_apify_carousel'
+    | 'og_then_apify_unknown_efg'
+    | 'og_failed_apify_fallback'
+    | 'tiktok_og'
+    | 'tiktok_oembed';
+  ogOutcome:
+    | 'ok'
+    | 'empty'
+    | 'not_found'
+    | 'private'
+    | 'unsupported_url'
+    | 'rate_limited'
+    | 'timeout'
+    | 'network'
+    | 'upstream_5xx'
+    | 'not_called';
+  apifyOutcome:
+    | 'not_called'
+    | 'not_configured'
+    | 'ok'
+    | 'empty'
+    | 'carousel_no_children'
+    | 'auth'
+    | 'actor_not_found'
+    | 'rate_limited'
+    | 'timeout'
+    | 'network'
+    | 'upstream'
+    | 'non_json';
+  cacheHit: boolean;
+};
+
 export type FetchPostResult = {
   platform: 'instagram' | 'tiktok';
   permalink: string;
   caption: string;
   imageUrls: string[];
   author: string | null;
+  _debug?: FetchPostDebug;
 };
 
 export type FetchPostErrorKind =
@@ -32,12 +75,52 @@ export class FetchPostError extends Error {
   }
 }
 
+const debugSchema = z.object({
+  route: z.enum([
+    'og_only',
+    'og_only_apify_disabled',
+    'og_then_apify_carousel',
+    'og_then_apify_unknown_efg',
+    'og_failed_apify_fallback',
+    'tiktok_og',
+    'tiktok_oembed',
+  ]),
+  ogOutcome: z.enum([
+    'ok',
+    'empty',
+    'not_found',
+    'private',
+    'unsupported_url',
+    'rate_limited',
+    'timeout',
+    'network',
+    'upstream_5xx',
+    'not_called',
+  ]),
+  apifyOutcome: z.enum([
+    'not_called',
+    'not_configured',
+    'ok',
+    'empty',
+    'carousel_no_children',
+    'auth',
+    'actor_not_found',
+    'rate_limited',
+    'timeout',
+    'network',
+    'upstream',
+    'non_json',
+  ]),
+  cacheHit: z.boolean(),
+});
+
 const responseSchema = z.object({
   platform: z.enum(['instagram', 'tiktok']),
   permalink: z.string().url(),
   caption: z.string(),
   imageUrls: z.array(z.string().url()),
   author: z.string().nullable(),
+  _debug: debugSchema.optional(),
 });
 
 const DEFAULT_TIMEOUT_MS = 15000;

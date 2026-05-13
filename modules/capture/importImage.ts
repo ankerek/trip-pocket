@@ -3,7 +3,7 @@ import type { Database } from '@/modules/storage/db';
 import { insertSource } from '@/modules/storage/sources';
 import { notifyChange } from '@/modules/storage/live-query';
 import { getProcessor } from '@/modules/processing';
-import { pipelineStep, pipelineError } from '@/lib/observability';
+import { startStage } from '@/modules/pipeline-log';
 
 export type ImportFs = {
   sha256: (uri: string) => Promise<string>;
@@ -31,7 +31,11 @@ export async function importImage(
   db: Database,
   input: ImportImageInput,
 ): Promise<ImportImageResult> {
-  pipelineStep('share_import');
+  // Pre-allocate the source UUID so every downstream stage (storage, ocr, …)
+  // groups under one id in the pipeline log — see spec §Storage/schema.
+  const sourceId = Crypto.randomUUID();
+  const shareImportStage = startStage('share_import', sourceId);
+
   const contentHash = await input.fs.sha256(input.sourceUri);
 
   const existing = await db.getFirstAsync<{ id: string }>(
@@ -39,10 +43,12 @@ export async function importImage(
     contentHash,
   );
   if (existing) {
+    shareImportStage.done({ kind: 'image', dup: true, existingSourceId: existing.id });
     return { status: 'duplicate', existingSourceId: existing.id };
   }
 
-  const sourceId = Crypto.randomUUID();
+  shareImportStage.done({ kind: 'image' });
+
   // expo-file-system's Directory.uri can come back with a trailing slash; strip
   // it so we never produce `file://.../sources//<id>.jpg`. Some iOS code paths
   // choke on the double slash even though the filesystem itself doesn't.
@@ -56,8 +62,8 @@ export async function importImage(
   }
   console.log('[importImage]', input.transfer, input.sourceUri, '->', targetUri);
 
+  const storageStage = startStage('storage', sourceId);
   try {
-    pipelineStep('storage');
     await insertSource(db, {
       id: sourceId,
       kind: 'image',
@@ -68,6 +74,7 @@ export async function importImage(
       capturedAt: input.capturedAt,
       ownerId: input.ownerId,
     });
+    storageStage.done({ tripId: input.suggestedTripId ?? null });
   } catch (err) {
     // Insert failed (e.g. unique-index race with a concurrent writer that landed
     // a row with the same hash between our pre-check and our insert). Unlink the
@@ -77,7 +84,7 @@ export async function importImage(
     } catch {
       // Swallow unlink failures — the original error is what the caller cares about.
     }
-    pipelineError('storage', err);
+    storageStage.failed(err);
     throw err;
   }
 

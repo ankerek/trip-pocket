@@ -24,7 +24,16 @@ import {
 async function freshDb(): Promise<Database> {
   const db = await openDatabase(':memory:');
   await runMigrations(db, migrations);
+  // Pipeline-log inserts are fire-and-forget through the module-level handle;
+  // wire it up so per-stage rows land in `pipeline_events` for integration
+  // assertions and so no-op tests (the majority) keep working unchanged.
+  liveQuery.provideDatabase(db);
   return db;
+}
+
+async function flushPipelineInserts(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
 }
 
 async function seedSource(
@@ -660,6 +669,22 @@ describe('createProcessor', () => {
             ]),
           );
           expect(disposed).not.toContain(pathFor('https://cdn/cover.jpg'));
+
+          // Per spec §Tests: carousel flow emits url_fetch done →
+          // image_download done → 3 × ocr done (cover + 2 slides). Newest
+          // first from the table; reverse for chronological order.
+          await flushPipelineInserts();
+          const events = await db.getAllAsync<{ stage: string; status: string; source_id: string | null }>(
+            `SELECT stage, status, source_id FROM pipeline_events
+              WHERE source_id = 'u1' ORDER BY id ASC`,
+          );
+          expect(events.map((e) => `${e.stage}:${e.status}`)).toEqual([
+            'url_fetch:done',
+            'image_download:done',
+            'ocr:done',
+            'ocr:done',
+            'ocr:done',
+          ]);
         });
 
         it('tolerates a slide download failure and continues with the rest', async () => {
@@ -712,6 +737,17 @@ describe('createProcessor', () => {
           // Only slide 3 was downloaded → only 1 dispose call.
           expect(disposeFile).toHaveBeenCalledTimes(1);
           expect(disposeFile).toHaveBeenCalledWith(pathFor('https://cdn/slide3.jpg'));
+
+          // Per spec §Tests: slide-N download failure surfaces as
+          // image_download done with downloadedCount < requestedCount, NOT a
+          // failed event. (The `extra` props are firehose-only and not in
+          // the row, so we just assert the status.)
+          await flushPipelineInserts();
+          const downloadEvents = await db.getAllAsync<{ stage: string; status: string }>(
+            `SELECT stage, status FROM pipeline_events
+              WHERE source_id = 'u1' AND stage = 'image_download'`,
+          );
+          expect(downloadEvents).toEqual([{ stage: 'image_download', status: 'done' }]);
         });
 
         it('tolerates per-slide OCR failures', async () => {

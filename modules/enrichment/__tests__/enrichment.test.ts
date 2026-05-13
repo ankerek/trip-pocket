@@ -55,6 +55,7 @@ type SeedPlace = {
   category?: 'place' | 'food' | 'activity';
   status?: 'pending' | 'enriched' | 'not-found' | 'failed';
   externalPlaceId?: string | null;
+  description?: string | null;
 };
 
 async function seedPlace(db: Database, p: SeedPlace): Promise<void> {
@@ -62,9 +63,9 @@ async function seedPlace(db: Database, p: SeedPlace): Promise<void> {
   await db.runAsync(
     `INSERT INTO places (
        id, trip_id, name, city, country_code, category, normalized_key,
-       external_place_id, enrichment_status,
+       external_place_id, description, enrichment_status,
        owner_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'owner-1', ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'owner-1', ?, ?)`,
     p.id,
     p.tripId ?? null,
     p.name,
@@ -73,6 +74,7 @@ async function seedPlace(db: Database, p: SeedPlace): Promise<void> {
     p.category ?? 'food',
     normalizedKey,
     p.externalPlaceId ?? null,
+    p.description ?? null,
     p.status ?? 'pending',
     NOW,
     NOW,
@@ -303,6 +305,10 @@ describe('createEnricher', () => {
         city: 'Y',
         status: 'enriched',
         externalPlaceId: 'ChIJ-already',
+        // A fully-enriched place (with a description) short-circuits the
+        // re-run. The description=null case is the blurb-retry path, tested
+        // separately below.
+        description: 'A previously generated blurb.',
       });
       await attachSourceToPlace(db, 'p1', 's1', null);
 
@@ -312,6 +318,127 @@ describe('createEnricher', () => {
       await enricher._awaitIdle();
 
       expect(enrich).not.toHaveBeenCalled();
+    });
+
+    describe('blurb-retry path (enriched + description=null)', () => {
+      // First /enrich got Google Places data back but Gemini's blurb call
+      // failed → description stays null, enrichment_status='enriched'. The
+      // detail-screen open is the user-visible retry signal; the runner
+      // re-fires /enrich and the throttle map gates rapid re-renders.
+
+      const enrichedWithBlurb: EnrichOutcome = {
+        kind: 'enriched',
+        external_place_id: 'ChIJ-x',
+        latitude: 1,
+        longitude: 2,
+        formatted_address: 'addr',
+        photo_name: 'photos/x',
+        description: 'a blurb appeared this time',
+        rating: 4.2,
+        price_level: 2,
+        external_url: 'https://maps/x',
+        city: null,
+        country_code: null,
+        model: 'gemini-2.5-flash-lite',
+      };
+
+      it('re-runs /enrich when description is null and back-fills the description', async () => {
+        const db = await freshDb();
+        await seedSource(db, 's1');
+        await seedPlace(db, {
+          id: 'p1',
+          name: 'X',
+          city: 'Y',
+          status: 'enriched',
+          externalPlaceId: 'ChIJ-already',
+          description: null,
+        });
+        await attachSourceToPlace(db, 'p1', 's1', null);
+
+        const enrich = jest.fn(async () => enrichedWithBlurb);
+        const enricher = makeEnricher(db, enrich);
+        enricher.enqueueEnrichment('p1');
+        await enricher._awaitIdle();
+
+        expect(enrich).toHaveBeenCalledTimes(1);
+        const after = await getPlace(db, 'p1');
+        expect(after.description).toBe('a blurb appeared this time');
+        expect(after.enrichment_status).toBe('enriched');
+      });
+
+      it('throttles rapid back-to-back re-enrich attempts to one /enrich call', async () => {
+        const db = await freshDb();
+        await seedSource(db, 's1');
+        await seedPlace(db, {
+          id: 'p1',
+          name: 'X',
+          city: 'Y',
+          status: 'enriched',
+          externalPlaceId: 'ChIJ-already',
+          description: null,
+        });
+        await attachSourceToPlace(db, 'p1', 's1', null);
+
+        // The blurb still doesn't fill — simulating Gemini being out for a
+        // while. We expect exactly one /enrich call across multiple enqueues.
+        const enrich = jest.fn(async () => ({ ...enrichedWithBlurb, description: null }));
+        const enricher = makeEnricher(db, enrich);
+
+        enricher.enqueueEnrichment('p1');
+        await enricher._awaitIdle();
+        enricher.enqueueEnrichment('p1');
+        await enricher._awaitIdle();
+        enricher.enqueueEnrichment('p1');
+        await enricher._awaitIdle();
+
+        expect(enrich).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not downgrade an enriched row to "not-found" when re-run search comes back empty', async () => {
+        const db = await freshDb();
+        await seedSource(db, 's1');
+        await seedPlace(db, {
+          id: 'p1',
+          name: 'X',
+          city: 'Y',
+          status: 'enriched',
+          externalPlaceId: 'ChIJ-already',
+          description: null,
+        });
+        await attachSourceToPlace(db, 'p1', 's1', null);
+
+        const enrich = jest.fn(async () => ({ kind: 'not-found' as const }));
+        const enricher = makeEnricher(db, enrich);
+        enricher.enqueueEnrichment('p1');
+        await enricher._awaitIdle();
+
+        const after = await getPlace(db, 'p1');
+        expect(after.enrichment_status).toBe('enriched');
+      });
+
+      it('does not downgrade an enriched row to "failed" when re-run throws', async () => {
+        const db = await freshDb();
+        await seedSource(db, 's1');
+        await seedPlace(db, {
+          id: 'p1',
+          name: 'X',
+          city: 'Y',
+          status: 'enriched',
+          externalPlaceId: 'ChIJ-already',
+          description: null,
+        });
+        await attachSourceToPlace(db, 'p1', 's1', null);
+
+        const enrich = jest.fn(async () => {
+          throw new EnrichmentError('boom', 'retryable');
+        });
+        const enricher = makeEnricher(db, enrich);
+        enricher.enqueueEnrichment('p1');
+        await enricher._awaitIdle();
+
+        const after = await getPlace(db, 'p1');
+        expect(after.enrichment_status).toBe('enriched');
+      });
     });
 
     it("marks 'not-found' (no /enrich call) when no source has OCR text", async () => {

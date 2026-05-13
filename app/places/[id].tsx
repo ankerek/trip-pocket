@@ -83,7 +83,13 @@ export default function PlaceDetail() {
   useEffect(() => {
     if (state.kind !== 'loaded' || !state.place) return;
     const status = state.place.enrichmentStatus;
-    if (status === 'pending' || status === 'failed') {
+    // Standard cases: rows in 'pending' or 'failed' need a full enrichment
+    // run. Blurb-retry case: an 'enriched' row whose description is null
+    // means Gemini failed on the first pass — retry on detail-screen open.
+    // The enricher module throttles this to once per 5 minutes per place so
+    // a transient Gemini outage can't burn /enrich calls on every render.
+    const needsBlurbRetry = status === 'enriched' && state.place.description === null;
+    if (status === 'pending' || status === 'failed' || needsBlurbRetry) {
       getEnricher()?.enqueueEnrichment(state.place.id);
     }
   }, [state]);

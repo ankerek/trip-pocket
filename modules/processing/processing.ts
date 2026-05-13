@@ -2,7 +2,7 @@ import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
 import { applyUrlFetchResult } from '@/modules/storage/sources';
 import { getExtractor } from '@/modules/extraction';
-import { pipelineStep, pipelineError } from '@/lib/observability';
+import { startStage } from '@/modules/pipeline-log';
 import {
   FetchPostError,
   type FetchPostResult,
@@ -135,7 +135,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       return { retry: false };
     }
 
-    pipelineStep('ocr');
+    const ocrStage = startStage('ocr', id);
     try {
       const ocrText = await opts.ocr(row.file_path);
       const finalText =
@@ -151,6 +151,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
         id,
       );
       notifyChange('sources');
+      ocrStage.done({ ocrLength: ocrText.length, ocrText });
       // Chain into AI extraction. Non-blocking; the extraction queue runs
       // in its own Promise chain. No-op when no extractor is provisioned
       // (Jest, share extension, web).
@@ -160,8 +161,10 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       const key = `ocr:${id}`;
       const next = (retryCount.get(key) ?? 0) + 1;
       retryCount.set(key, next);
+      // Retries are per-attempt — emit failed for *this* attempt so the
+      // diagnostics stream shows each try distinctly. See spec §Module shape.
+      ocrStage.failed(err);
       if (next < maxRetries) return { retry: true };
-      pipelineError('ocr', err);
       await opts.db.runAsync(
         `UPDATE sources
             SET ocr_status = 'failed', updated_at = ?
@@ -188,13 +191,26 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       return { retry: false };
     }
 
-    pipelineStep('url_fetch');
+    const urlFetchStage = startStage('url_fetch', id);
     let result: FetchPostResult;
     try {
       result = await opts.fetchPost(row.url);
+      // Spread the worker's _debug echo (route, ogOutcome, apifyOutcome,
+      // cacheHit) into the firehose line so the dispatch decision is visible
+      // alongside the phone-side outcome. See spec §Worker debug echo.
+      urlFetchStage.done({
+        imageUrlsCount: result.imageUrls.length,
+        captionLength: result.caption.length,
+        author: result.author,
+        caption: result.caption,
+        ...(result._debug ?? {}),
+      });
     } catch (err) {
       const classification =
         err instanceof FetchPostError ? err.classification : { kind: 'retryable' as const };
+      // Emit failed for this attempt before retry-budget logic so each try
+      // shows up distinctly in the diagnostics stream (spec §Module shape).
+      urlFetchStage.failed(err);
       if (classification.kind === 'retryable') {
         const key = `urlfetch:${id}`;
         const next = (retryCount.get(key) ?? 0) + 1;
@@ -207,7 +223,6 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       // skip the row on the next cold launch. Retryable-exhausted rows keep
       // extraction_status='pending' so the next cold launch promotes them
       // back to pending and tries one more 3-retry budget.
-      pipelineError('url_fetch', err);
       const isPermanent = classification.kind === 'permanent';
       await opts.db.runAsync(
         isPermanent
@@ -235,12 +250,19 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     if (result.imageUrls.length <= 1) {
       let downloadedPath: string | null = null;
       if (result.imageUrls.length === 1 && opts.downloadImage) {
+        const downloadStage = startStage('image_download', id);
         try {
           downloadedPath = await opts.downloadImage(result.imageUrls[0]!);
+          downloadStage.done({
+            requestedCount: 1,
+            downloadedCount: 1,
+            coverPath: downloadedPath,
+          });
         } catch (err) {
           // Don't fail the whole source on a CDN hiccup. Caption alone is
           // often enough (list-style IG posts).
           console.warn('[processor] image download failed', id, err);
+          downloadStage.failed(err);
         }
       }
       await applyUrlFetchResult(opts.db, id, downloadedPath, result.caption);
@@ -258,6 +280,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       return { retry: false };
     }
 
+    const downloadStage = startStage('image_download', id);
     let coverPath: string | null = null;
     try {
       coverPath = await opts.downloadImage(result.imageUrls[0]!);
@@ -267,7 +290,13 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
 
     if (!coverPath) {
       // Without a cover image, even the carousel collapses to caption-only —
-      // matches the single-image-failure UX.
+      // matches the single-image-failure UX. Counts the cover request even
+      // though it failed so the firehose line is legible.
+      downloadStage.done({
+        requestedCount: result.imageUrls.length,
+        downloadedCount: 0,
+        coverPath: null,
+      });
       await applyUrlFetchResult(opts.db, id, null, result.caption);
       enqueueOcr(id);
       return { retry: false };
@@ -283,21 +312,38 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       }
     }
 
+    // 1 (cover) + N successful slides. Partial slide loss is tolerated and
+    // surfaces as downloadedCount < requestedCount — not a `failed` event.
+    downloadStage.done({
+      requestedCount: result.imageUrls.length,
+      downloadedCount: 1 + slidePaths.length,
+      coverPath,
+    });
+
     // OCR cover first, then each successfully downloaded slide. Failures are
     // logged and skipped; we never let one slide's error sink the source.
+    // Each image gets its own `ocr` stage row so the carousel sequence is
+    // visible in the diagnostics stream (spec §Tests).
     const ocrSegments: string[] = [];
+    const coverOcrStage = startStage('ocr', id);
     try {
       const coverText = await opts.ocr(coverPath);
       if (coverText.length > 0) ocrSegments.push(coverText);
+      coverOcrStage.done({ ocrLength: coverText.length, ocrText: coverText, slide: 0 });
     } catch (err) {
       console.warn('[processor] cover OCR failed', id, err);
+      coverOcrStage.failed(err);
     }
-    for (const slidePath of slidePaths) {
+    for (let i = 0; i < slidePaths.length; i++) {
+      const slidePath = slidePaths[i]!;
+      const slideOcrStage = startStage('ocr', id);
       try {
         const t = await opts.ocr(slidePath);
         if (t.length > 0) ocrSegments.push(t);
+        slideOcrStage.done({ ocrLength: t.length, ocrText: t, slide: i + 1 });
       } catch (err) {
         console.warn('[processor] slide OCR failed', id, err);
+        slideOcrStage.failed(err);
       }
     }
     if (result.caption.length > 0) ocrSegments.push(result.caption);

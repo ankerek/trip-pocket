@@ -20,12 +20,60 @@ export const fetchPostRequestSchema = z.object({
 
 export type FetchPostRequest = z.infer<typeof fetchPostRequestSchema>;
 
+// Closed-vocab debug echo describing the worker's dispatch decision. The
+// phone forwards these into the `url_fetch` stage's firehose extras so the
+// pipeline-observability stream shows which path the worker took without
+// having to context-switch to `wrangler tail`. See
+// docs/superpowers/specs/2026-05-13-pipeline-observability-design.md
+// §Worker debug echo.
+export const fetchPostDebugSchema = z.object({
+  route: z.enum([
+    'og_only',
+    'og_only_apify_disabled',
+    'og_then_apify_carousel',
+    'og_then_apify_unknown_efg',
+    'og_failed_apify_fallback',
+    'tiktok_og',
+    'tiktok_oembed',
+  ]),
+  ogOutcome: z.enum([
+    'ok',
+    'empty',
+    'not_found',
+    'private',
+    'unsupported_url',
+    'rate_limited',
+    'timeout',
+    'network',
+    'upstream_5xx',
+    'not_called',
+  ]),
+  apifyOutcome: z.enum([
+    'not_called',
+    'not_configured',
+    'ok',
+    'empty',
+    'carousel_no_children',
+    'auth',
+    'actor_not_found',
+    'rate_limited',
+    'timeout',
+    'network',
+    'upstream',
+    'non_json',
+  ]),
+  cacheHit: z.boolean(),
+});
+
+export type FetchPostDebug = z.infer<typeof fetchPostDebugSchema>;
+
 export const fetchPostResponseSchema = z.object({
   platform: z.enum(['instagram', 'tiktok']),
   permalink: z.string().url(),
   caption: z.string(), // may be empty when the post had no caption
   imageUrls: z.array(z.string().url()), // may be empty when no cover is recoverable
   author: z.string().nullable(),
+  _debug: fetchPostDebugSchema.optional(),
 });
 
 export type FetchPostResponse = z.infer<typeof fetchPostResponseSchema>;
@@ -87,13 +135,23 @@ export async function handleFetchPost(request: Request, env: Env): Promise<Respo
   try {
     let result: FetchPostResponse;
     let cacheKind: 'og' | 'apify' = 'og';
+    let dispatch: Omit<FetchPostDebug, 'cacheHit'>;
     if (platform === 'instagram') {
       const out = await fetchInstagram(target, env);
       result = out.result;
       cacheKind = out.cacheKind;
+      dispatch = out.dispatch;
     } else {
-      result = await fetchTikTok(target);
+      const out = await fetchTikTok(target);
+      result = out.result;
+      dispatch = out.dispatch;
     }
+    // cacheHit stays `false` while the worker uses Cache-Control headers only
+    // (CF edge caches the response but the worker doesn't re-run on hits, so
+    // there is no per-request signal here). Promoting cacheHit to `true` would
+    // require an explicit `caches.default.match()` integration — out of scope
+    // for v1 of the debug echo.
+    result._debug = { ...dispatch, cacheHit: false };
     // Spec: 7d cache when Apify fired, 1d for og-only. Both only on success;
     // errors get Cache-Control: no-store (handled in fetchErrorToResponse).
     const sMaxAge = cacheKind === 'apify' ? 604800 : 86400;
@@ -104,6 +162,28 @@ export async function handleFetchPost(request: Request, env: Env): Promise<Respo
     return fetchErrorToResponse(err);
   }
 }
+
+function ogOutcomeFromError(err: UpstreamError): FetchPostDebug['ogOutcome'] {
+  switch (err.code) {
+    case 'unsupported-url':
+      return 'unsupported_url';
+    case 'not-found':
+      return 'not_found';
+    case 'private':
+      return 'private';
+    case 'fetch-failed-timeout':
+      return 'timeout';
+    case 'fetch-failed-network':
+      return 'network';
+    case 'fetch-failed-rate-limit':
+      return 'rate_limited';
+    case 'fetch-failed-upstream':
+    case 'fetch-failed':
+    default:
+      return 'upstream_5xx';
+  }
+}
+
 
 // --- Platform detection / URL canonicalisation ---------------------------
 
@@ -180,10 +260,16 @@ class UpstreamError extends Error {
   }
 }
 
+type InstagramDispatch = Omit<FetchPostDebug, 'cacheHit'>;
+
 async function fetchInstagram(
   target: URL,
   env: Env,
-): Promise<{ result: FetchPostResponse; cacheKind: 'og' | 'apify' }> {
+): Promise<{
+  result: FetchPostResponse;
+  cacheKind: 'og' | 'apify';
+  dispatch: InstagramDispatch;
+}> {
   const shortcode = parseInstagramShortcode(target);
   if (!shortcode) throw new UpstreamError(400, 'unsupported-url');
   const canonical = `https://www.instagram.com/p/${shortcode}/`;
@@ -200,10 +286,19 @@ async function fetchInstagram(
     if (err instanceof UpstreamError) ogError = err;
     else throw err;
   }
+  const ogOutcome: FetchPostDebug['ogOutcome'] = ogResult
+    ? 'ok'
+    : ogError
+      ? ogOutcomeFromError(ogError)
+      : 'upstream_5xx';
 
   // /reel/ and /tv/ never go to Apify on success.
   if (urlShape !== 'p' && ogResult) {
-    return { result: ogResult, cacheKind: 'og' };
+    return {
+      result: ogResult,
+      cacheKind: 'og',
+      dispatch: { route: 'og_only', ogOutcome, apifyOutcome: 'not_called' },
+    };
   }
 
   // /p/ posts: use the efg hint to decide. Treat unknown/missing as carousel
@@ -211,7 +306,11 @@ async function fetchInstagram(
   const efgType = ogResult ? decodeEfgFromImageUrl(ogResult.imageUrls[0] ?? '') : null;
   const shouldFireApify = !ogResult || efgType !== 'single';
   if (!shouldFireApify && ogResult) {
-    return { result: ogResult, cacheKind: 'og' };
+    return {
+      result: ogResult,
+      cacheKind: 'og',
+      dispatch: { route: 'og_only', ogOutcome, apifyOutcome: 'not_called' },
+    };
   }
 
   // Soft-degrade: if Apify isn't configured, ship the og: result when we have
@@ -220,10 +319,29 @@ async function fetchInstagram(
   // code change. og:-failed + no-Apify surfaces the original og: error.
   const apifyConfigured = Boolean(env.APIFY_TOKEN && env.APIFY_ACTOR_ID);
   if (!apifyConfigured) {
-    if (ogResult) return { result: ogResult, cacheKind: 'og' };
+    if (ogResult) {
+      return {
+        result: ogResult,
+        cacheKind: 'og',
+        dispatch: {
+          route: 'og_only_apify_disabled',
+          ogOutcome,
+          apifyOutcome: 'not_configured',
+        },
+      };
+    }
     if (ogError) throw ogError;
     throw new UpstreamError(502, 'fetch-failed');
   }
+
+  // Decide the route label up front so the failure path can report the same
+  // intent the success path would have. Carousel vs unknown_efg vs fallback —
+  // not mutually exclusive with og-success/og-failure, just labels.
+  const route: FetchPostDebug['route'] = !ogResult
+    ? 'og_failed_apify_fallback'
+    : efgType === 'carousel'
+      ? 'og_then_apify_carousel'
+      : 'og_then_apify_unknown_efg';
 
   // Stage 2: Apify. Authoritative when it fires.
   try {
@@ -240,6 +358,7 @@ async function fetchInstagram(
         author: apify.author,
       },
       cacheKind: 'apify',
+      dispatch: { route, ogOutcome, apifyOutcome: 'ok' },
     };
   } catch (err) {
     if (err instanceof ApifyError) {
@@ -345,7 +464,9 @@ export function extractAuthorFromIgTitle(title: string | null): string | null {
 
 // --- TikTok fetcher ------------------------------------------------------
 
-async function fetchTikTok(target: URL): Promise<FetchPostResponse> {
+async function fetchTikTok(
+  target: URL,
+): Promise<{ result: FetchPostResponse; dispatch: Omit<FetchPostDebug, 'cacheHit'> }> {
   // Resolve short links so we end up on the canonical /@user/video/<id>.
   const canonical = await resolveTikTokCanonical(target);
 
@@ -357,12 +478,15 @@ async function fetchTikTok(target: URL): Promise<FetchPostResponse> {
     const titleRaw = findOgMeta(html, 'og:title');
     if (captionRaw || imageRaw) {
       return {
-        platform: 'tiktok',
-        permalink: canonical.toString(),
-        caption: captionRaw ? decodeHtmlEntities(captionRaw) : '',
-        imageUrls: imageRaw ? [decodeHtmlEntities(imageRaw)] : [],
-        author: extractAuthorFromTikTokUrl(canonical) ??
-          extractAuthorFromTikTokTitle(titleRaw),
+        result: {
+          platform: 'tiktok',
+          permalink: canonical.toString(),
+          caption: captionRaw ? decodeHtmlEntities(captionRaw) : '',
+          imageUrls: imageRaw ? [decodeHtmlEntities(imageRaw)] : [],
+          author: extractAuthorFromTikTokUrl(canonical) ??
+            extractAuthorFromTikTokTitle(titleRaw),
+        },
+        dispatch: { route: 'tiktok_og', ogOutcome: 'ok', apifyOutcome: 'not_called' },
       };
     }
   } catch {
@@ -370,8 +494,15 @@ async function fetchTikTok(target: URL): Promise<FetchPostResponse> {
   }
 
   // Fallback: oEmbed. Officially documented; should always return *something*
-  // for a public live post.
-  return fetchTikTokOEmbed(canonical);
+  // for a public live post. ogOutcome=empty when og: returned but had no
+  // useful fields; the catch block above masks the distinction between
+  // "empty" and "errored" so we report 'empty' as the closest closed-vocab
+  // match for both.
+  const result = await fetchTikTokOEmbed(canonical);
+  return {
+    result,
+    dispatch: { route: 'tiktok_oembed', ogOutcome: 'empty', apifyOutcome: 'not_called' },
+  };
 }
 
 async function resolveTikTokCanonical(target: URL): Promise<URL> {

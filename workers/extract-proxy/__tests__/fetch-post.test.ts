@@ -702,6 +702,228 @@ describe('handleFetchPost — TikTok', () => {
   });
 });
 
+describe('handleFetchPost — _debug echo', () => {
+  // Mirrors the dispatch matrix in the spec §Worker debug echo. Each branch
+  // returns a specific `route` so the phone can render the chosen path in
+  // the pipeline firehose without a `wrangler tail` round-trip.
+
+  function apifySuccess(items: Array<Record<string, unknown>>) {
+    return new Response(JSON.stringify(items), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  function envWithApify() {
+    return makeEnv({
+      APIFY_TOKEN: 'tok',
+      APIFY_ACTOR_ID: 'apify~instagram-post-scraper',
+    });
+  }
+
+  async function debugOf(req: Request, env: Env) {
+    const resp = await handleFetchPost(req, env);
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as FetchPostResponse;
+    expect(body._debug).toBeDefined();
+    return body._debug!;
+  }
+
+  it('og_only — /p/ + efg=single', async () => {
+    const html = IG_OG_HTML('cap', IG_COVER_SINGLE, 'X on Instagram');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/S/',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/p/S/' }),
+      envWithApify(),
+    );
+    expect(dbg.route).toBe('og_only');
+    expect(dbg.ogOutcome).toBe('ok');
+    expect(dbg.apifyOutcome).toBe('not_called');
+    expect(dbg.cacheHit).toBe(false);
+  });
+
+  it('og_only — /reel/ short-circuits before Apify', async () => {
+    const html = IG_OG_HTML('cap', IG_COVER_CAROUSEL, 'X on Instagram');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/R/',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/reel/R/' }),
+      envWithApify(),
+    );
+    expect(dbg.route).toBe('og_only');
+    expect(dbg.apifyOutcome).toBe('not_called');
+  });
+
+  it('og_then_apify_carousel — efg=carousel, Apify success', async () => {
+    const html = IG_OG_HTML('og', IG_COVER_CAROUSEL, 'X on Instagram');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/C/',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+      {
+        match: (url) => url.includes('api.apify.com'),
+        response: () =>
+          apifySuccess([
+            {
+              url: 'https://www.instagram.com/p/C/',
+              caption: 'apify',
+              displayUrl: 'https://cdn/c.jpg',
+              ownerUsername: 'u',
+            },
+          ]),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/p/C/' }),
+      envWithApify(),
+    );
+    expect(dbg.route).toBe('og_then_apify_carousel');
+    expect(dbg.ogOutcome).toBe('ok');
+    expect(dbg.apifyOutcome).toBe('ok');
+  });
+
+  it('og_then_apify_unknown_efg — no efg query param', async () => {
+    const html = IG_OG_HTML('og', 'https://cdn/no-efg.jpg', 'X on Instagram');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/U/',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+      {
+        match: (url) => url.includes('api.apify.com'),
+        response: () =>
+          apifySuccess([
+            {
+              url: 'https://www.instagram.com/p/U/',
+              caption: 'apify',
+              displayUrl: 'https://cdn/u.jpg',
+              ownerUsername: 'u',
+            },
+          ]),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/p/U/' }),
+      envWithApify(),
+    );
+    expect(dbg.route).toBe('og_then_apify_unknown_efg');
+  });
+
+  it('og_failed_apify_fallback — og empty, Apify success', async () => {
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/F/',
+        response: () =>
+          new Response('<html><head></head></html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+      },
+      {
+        match: (url) => url.includes('api.apify.com'),
+        response: () =>
+          apifySuccess([
+            {
+              url: 'https://www.instagram.com/p/F/',
+              caption: 'rescued',
+              displayUrl: 'https://cdn/f.jpg',
+              ownerUsername: 'u',
+            },
+          ]),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/p/F/' }),
+      envWithApify(),
+    );
+    expect(dbg.route).toBe('og_failed_apify_fallback');
+    // og:-failed surfaces in ogOutcome with the closed-vocab class for the
+    // upstream error (502 fetch-failed → upstream_5xx).
+    expect(dbg.ogOutcome).toBe('upstream_5xx');
+    expect(dbg.apifyOutcome).toBe('ok');
+  });
+
+  it('og_only_apify_disabled — soft-degrade when Apify env unset', async () => {
+    const html = IG_OG_HTML('og', IG_COVER_CAROUSEL, 'X on Instagram');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/D/',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/p/D/' }),
+      makeEnv(), // no APIFY_TOKEN / APIFY_ACTOR_ID
+    );
+    expect(dbg.route).toBe('og_only_apify_disabled');
+    expect(dbg.ogOutcome).toBe('ok');
+    expect(dbg.apifyOutcome).toBe('not_configured');
+  });
+
+  it('tiktok_og — primary path on TikTok', async () => {
+    const html = TT_OG_HTML('cap', 'https://p16/c.jpg', 'foo on TikTok');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.tiktok.com/@foo/video/1',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.tiktok.com/@foo/video/1' }),
+      makeEnv(),
+    );
+    expect(dbg.route).toBe('tiktok_og');
+    expect(dbg.ogOutcome).toBe('ok');
+    expect(dbg.apifyOutcome).toBe('not_called');
+  });
+
+  it('tiktok_oembed — fallback path on TikTok', async () => {
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.tiktok.com/@foo/video/2',
+        response: () =>
+          new Response('<html><head></head></html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+      },
+      {
+        match: (url) => url.startsWith('https://www.tiktok.com/oembed?'),
+        response: () =>
+          new Response(
+            JSON.stringify({
+              title: 't',
+              thumbnail_url: 'https://p16/t.jpg',
+              author_name: 'foo',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.tiktok.com/@foo/video/2' }),
+      makeEnv(),
+    );
+    expect(dbg.route).toBe('tiktok_oembed');
+  });
+});
+
 describe('handleFetchPost — guards', () => {
   it('rejects non-IG/TikTok URLs with 400 unsupported-url', async () => {
     global.fetch = jest.fn(); // should never be called
