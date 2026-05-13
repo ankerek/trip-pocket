@@ -6,7 +6,9 @@ import { startStage } from '@/modules/pipeline-log';
 import {
   FetchPostError,
   type FetchPostResult,
+  workerErrorCodeFor,
 } from '@/modules/capture/fetchPostFromProxy';
+import { detectPlatformFromUrl } from '@/modules/capture/importUrl';
 
 export type OcrRunner = (imagePath: string) => Promise<string>;
 
@@ -210,7 +212,14 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
         err instanceof FetchPostError ? err.classification : { kind: 'retryable' as const };
       // Emit failed for this attempt before retry-budget logic so each try
       // shows up distinctly in the diagnostics stream (spec §Module shape).
-      urlFetchStage.failed(err);
+      // Tags let Sentry filter "TikTok extraction failing" from generic
+      // noise — see 2026-05-13-tiktok-slideshow-parsing-design.md §Monitoring.
+      const platform = detectPlatformFromUrl(row.url);
+      const tags: Record<string, string> = {
+        worker_error_code: workerErrorCodeFor(err),
+      };
+      if (platform) tags.platform = platform;
+      urlFetchStage.failed(err, { tags });
       if (classification.kind === 'retryable') {
         const key = `urlfetch:${id}`;
         const next = (retryCount.get(key) ?? 0) + 1;

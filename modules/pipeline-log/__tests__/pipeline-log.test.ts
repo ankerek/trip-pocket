@@ -2,6 +2,8 @@ import { openDatabase, runMigrations, type Database } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
 import { provideDatabase } from '@/modules/storage/live-query';
 
+import * as Sentry from '@sentry/react-native';
+
 import { startStage, formatErrorSummary } from '../pipeline-log';
 import {
   isFirehoseEnabled,
@@ -42,6 +44,59 @@ class FetchPostError extends Error {
 
 beforeEach(() => {
   _resetFirehoseForTests();
+  (Sentry.captureException as jest.Mock).mockClear();
+});
+
+// Sentry hooks only fire in production (the `__DEV__` gate exits early in
+// dev/test). Tests asserting on Sentry call sites flip the gate.
+function withDevGateOff<T>(fn: () => T | Promise<T>): Promise<T> {
+  const g = globalThis as { __DEV__?: boolean };
+  const prev = g.__DEV__;
+  g.__DEV__ = false;
+  try {
+    return Promise.resolve(fn());
+  } finally {
+    g.__DEV__ = prev;
+  }
+}
+
+describe('startStage / failed — Sentry tag merging', () => {
+  it('passes pipeline_stage by default', async () => {
+    await freshDb();
+    await withDevGateOff(() => {
+      startStage('url_fetch', 'src_t1').failed(new Error('boom'));
+    });
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [, opts] = (Sentry.captureException as jest.Mock).mock.calls[0];
+    expect(opts.tags).toEqual({ pipeline_stage: 'url_fetch' });
+  });
+
+  it('merges caller-supplied tags with pipeline_stage', async () => {
+    await freshDb();
+    await withDevGateOff(() => {
+      startStage('url_fetch', 'src_t2').failed(new Error('boom'), {
+        tags: { platform: 'tiktok', worker_error_code: 'fetch-failed' },
+      });
+    });
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [, opts] = (Sentry.captureException as jest.Mock).mock.calls[0];
+    expect(opts.tags).toEqual({
+      pipeline_stage: 'url_fetch',
+      platform: 'tiktok',
+      worker_error_code: 'fetch-failed',
+    });
+  });
+
+  it('caller cannot override pipeline_stage', async () => {
+    await freshDb();
+    await withDevGateOff(() => {
+      startStage('url_fetch', 'src_t3').failed(new Error('boom'), {
+        tags: { pipeline_stage: 'spoofed' as unknown as string },
+      });
+    });
+    const [, opts] = (Sentry.captureException as jest.Mock).mock.calls[0];
+    expect(opts.tags.pipeline_stage).toBe('url_fetch');
+  });
 });
 
 describe('startStage / done', () => {

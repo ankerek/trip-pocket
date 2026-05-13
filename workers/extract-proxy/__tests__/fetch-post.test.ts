@@ -142,9 +142,12 @@ describe('decodeEfgFromImageUrl', () => {
 });
 
 describe('TikTok author helpers', () => {
-  it('extractAuthorFromTikTokUrl reads /@handle/', () => {
+  it('extractAuthorFromTikTokUrl reads /@handle/ from /video/ and /photo/ paths', () => {
     expect(
       extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/@khaby/video/12')),
+    ).toBe('@khaby');
+    expect(
+      extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/@khaby/photo/12')),
     ).toBe('@khaby');
     expect(extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/'))).toBeNull();
   });
@@ -202,12 +205,22 @@ const IG_OG_HTML = (caption: string, image: string, title: string) =>
     <meta property="og:image" content="${image}" />
   </head></html>`;
 
-const TT_OG_HTML = (caption: string, image: string, title: string) =>
-  `<html><head>
-    <meta property="og:title" content="${title}" />
-    <meta property="og:description" content="${caption}" />
-    <meta property="og:image" content="${image}" />
-  </head></html>`;
+// Minimal HTML envelope for the TikTok rehydration parser. Wraps an
+// `itemStruct` shape under the documented field path.
+function ttRehydHtml(item: object): string {
+  const data = JSON.stringify({
+    __DEFAULT_SCOPE__: {
+      'webapp.reflow.video.detail': {
+        itemInfo: { itemStruct: item },
+      },
+    },
+  });
+  return (
+    '<!doctype html><html><body>' +
+    `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">${data}</script>` +
+    '</body></html>'
+  );
+}
 
 // IG embeds a base64 `efg` query param on og:image that encodes the post
 // type. Tests that exercise the og:-only path need to use an image URL with
@@ -640,34 +653,74 @@ describe('handleFetchPost — Instagram', () => {
 });
 
 describe('handleFetchPost — TikTok', () => {
-  it('parses og tags from the canonical URL (primary path)', async () => {
-    const html = TT_OG_HTML(
-      'best ramen in Tokyo',
-      'https://p16-sign.tiktokcdn.com/cover.jpg',
-      'foodietravels on TikTok',
-    );
+  it('extracts all slides for a /photo/ URL via the rehydration parser', async () => {
+    const html = ttRehydHtml({
+      desc: '5 cafes in Tokyo',
+      author: { uniqueId: 'foodietravels' },
+      imagePost: {
+        images: [
+          { imageURL: { urlList: ['https://p16/1.jpg'] } },
+          { imageURL: { urlList: ['https://p16/2.jpg'] } },
+          { imageURL: { urlList: ['https://p16/3.jpg'] } },
+        ],
+      },
+      video: { cover: 'https://p16/c.jpg' }, // ignored when imagePost present
+    });
     global.fetch = scriptedFetch([
       {
-        match: (url) => url === 'https://www.tiktok.com/@foodietravels/video/123',
+        match: (url) =>
+          url === 'https://www.tiktok.com/@foodietravels/photo/123',
         response: () =>
-          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+          new Response(html, {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
       },
     ]);
     const resp = await handleFetchPost(
-      postJson({ url: 'https://www.tiktok.com/@foodietravels/video/123' }),
+      postJson({ url: 'https://www.tiktok.com/@foodietravels/photo/123' }),
+      makeEnv(),
+    );
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get('cache-control')).toContain('s-maxage=86400');
+    const body = (await resp.json()) as FetchPostResponse;
+    expect(body.platform).toBe('tiktok');
+    expect(body.caption).toBe('5 cafes in Tokyo');
+    expect(body.author).toBe('@foodietravels');
+    expect(body.imageUrls).toEqual([
+      'https://p16/1.jpg',
+      'https://p16/2.jpg',
+      'https://p16/3.jpg',
+    ]);
+  });
+
+  it('returns the video cover for a /video/ URL via the rehydration parser', async () => {
+    const html = ttRehydHtml({
+      desc: 'video caption',
+      author: { uniqueId: 'foo' },
+      video: { cover: 'https://p16/cover.jpg' },
+    });
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.tiktok.com/@foo/video/9',
+        response: () =>
+          new Response(html, {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+      },
+    ]);
+    const resp = await handleFetchPost(
+      postJson({ url: 'https://www.tiktok.com/@foo/video/9' }),
       makeEnv(),
     );
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as FetchPostResponse;
-    expect(body.platform).toBe('tiktok');
-    expect(body.caption).toBe('best ramen in Tokyo');
-    expect(body.imageUrls).toEqual([
-      'https://p16-sign.tiktokcdn.com/cover.jpg',
-    ]);
-    expect(body.author).toBe('@foodietravels');
+    expect(body.imageUrls).toEqual(['https://p16/cover.jpg']);
+    expect(body.author).toBe('@foo');
   });
 
-  it('falls back to oEmbed when og tags are missing', async () => {
+  it('falls back to oEmbed when the page is an anti-bot stub (no rehydration JSON)', async () => {
     global.fetch = scriptedFetch([
       {
         match: (url) => url === 'https://www.tiktok.com/@foo/video/9',
@@ -699,6 +752,32 @@ describe('handleFetchPost — TikTok', () => {
     expect(body.caption).toBe('oembed caption');
     expect(body.imageUrls[0]).toContain('thumb.jpg');
     expect(body.author).toBe('@foo');
+  });
+
+  it('returns 502 fetch-failed when both rehydration parse and oEmbed fail', async () => {
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.tiktok.com/@foo/video/9',
+        response: () =>
+          new Response('<html></html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+      },
+      {
+        match: (url) => url.startsWith('https://www.tiktok.com/oembed?'),
+        response: () => new Response('', { status: 500 }),
+      },
+    ]);
+    const resp = await handleFetchPost(
+      postJson({ url: 'https://www.tiktok.com/@foo/video/9' }),
+      makeEnv(),
+    );
+    expect(resp.status).toBe(502);
+    expect(resp.headers.get('cache-control')).toBe('no-store');
+    expect(((await resp.json()) as { error: string }).error).toBe(
+      'fetch-failed',
+    );
   });
 });
 
@@ -875,25 +954,50 @@ describe('handleFetchPost — _debug echo', () => {
     expect(dbg.apifyOutcome).toBe('not_configured');
   });
 
-  it('tiktok_og — primary path on TikTok', async () => {
-    const html = TT_OG_HTML('cap', 'https://p16/c.jpg', 'foo on TikTok');
+  it('tiktok_rehyd_photo — photo post extracted via rehydration', async () => {
+    const html = ttRehydHtml({
+      desc: 'x',
+      author: { uniqueId: 'u' },
+      imagePost: { images: [{ imageURL: { urlList: ['https://cdn/a.jpg'] } }] },
+    });
     global.fetch = scriptedFetch([
       {
-        match: (url) => url === 'https://www.tiktok.com/@foo/video/1',
+        match: (url) => url === 'https://www.tiktok.com/@u/photo/1',
         response: () =>
           new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
       },
     ]);
     const dbg = await debugOf(
-      postJson({ url: 'https://www.tiktok.com/@foo/video/1' }),
+      postJson({ url: 'https://www.tiktok.com/@u/photo/1' }),
       makeEnv(),
     );
-    expect(dbg.route).toBe('tiktok_og');
+    expect(dbg.route).toBe('tiktok_rehyd_photo');
     expect(dbg.ogOutcome).toBe('ok');
     expect(dbg.apifyOutcome).toBe('not_called');
   });
 
-  it('tiktok_oembed — fallback path on TikTok', async () => {
+  it('tiktok_rehyd_video — video post extracted via rehydration', async () => {
+    const html = ttRehydHtml({
+      desc: 'x',
+      author: { uniqueId: 'u' },
+      video: { cover: 'https://cdn/c.jpg' },
+    });
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.tiktok.com/@u/video/1',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.tiktok.com/@u/video/1' }),
+      makeEnv(),
+    );
+    expect(dbg.route).toBe('tiktok_rehyd_video');
+    expect(dbg.ogOutcome).toBe('ok');
+  });
+
+  it('tiktok_oembed_fallback — anti-bot stub, oEmbed picks up', async () => {
     global.fetch = scriptedFetch([
       {
         match: (url) => url === 'https://www.tiktok.com/@foo/video/2',
@@ -920,7 +1024,8 @@ describe('handleFetchPost — _debug echo', () => {
       postJson({ url: 'https://www.tiktok.com/@foo/video/2' }),
       makeEnv(),
     );
-    expect(dbg.route).toBe('tiktok_oembed');
+    expect(dbg.route).toBe('tiktok_oembed_fallback');
+    expect(dbg.ogOutcome).toBe('empty');
   });
 });
 

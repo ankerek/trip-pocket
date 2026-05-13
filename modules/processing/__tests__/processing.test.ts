@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/react-native';
+
 import {
   openDatabase,
   runMigrations,
@@ -551,6 +553,50 @@ describe('createProcessor', () => {
         }>(`SELECT ocr_status, extraction_status FROM sources WHERE id = 'u1'`);
         expect(row?.ocr_status).toBe('failed');
         expect(row?.extraction_status).toBe('failed');
+      });
+
+      it('tags url_fetch Sentry events with platform + worker_error_code', async () => {
+        // Verifies the §Monitoring tag enrichment from the TikTok rehydration
+        // spec — Sentry events from url_fetch failures must be filterable by
+        // platform and worker_error_code so we can split "TikTok extraction
+        // failing" from generic noise. Tags only fire in production, so flip
+        // __DEV__ off for the duration of the test.
+        const g = globalThis as { __DEV__?: boolean };
+        const prev = g.__DEV__;
+        g.__DEV__ = false;
+        try {
+          (Sentry.captureException as jest.Mock).mockClear();
+
+          const db = await freshDb();
+          await seedUrlSource(db, 'tt1', 'https://www.tiktok.com/@u/photo/9');
+
+          const fetchPost: UrlFetcher = jest
+            .fn()
+            .mockRejectedValue(
+              new FetchPostError('not-found', {
+                kind: 'permanent',
+                code: 'not-found',
+              }),
+            );
+          const p = createProcessor({
+            db,
+            ocr: jest.fn(),
+            fetchPost,
+            maxRetries: 3,
+          });
+          p.enqueueUrlFetch('tt1');
+          await drain(p);
+
+          expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+          const [, opts] = (Sentry.captureException as jest.Mock).mock.calls[0];
+          expect(opts.tags).toEqual({
+            pipeline_stage: 'url_fetch',
+            platform: 'tiktok',
+            worker_error_code: 'not-found',
+          });
+        } finally {
+          g.__DEV__ = prev;
+        }
       });
 
       it('runUrlFetchSweep picks up kind=url rows with NULL file_path AND NULL caption', async () => {

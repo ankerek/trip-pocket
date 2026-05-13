@@ -33,8 +33,9 @@ export const fetchPostDebugSchema = z.object({
     'og_then_apify_carousel',
     'og_then_apify_unknown_efg',
     'og_failed_apify_fallback',
-    'tiktok_og',
-    'tiktok_oembed',
+    'tiktok_rehyd_photo',
+    'tiktok_rehyd_video',
+    'tiktok_oembed_fallback',
   ]),
   ogOutcome: z.enum([
     'ok',
@@ -467,42 +468,104 @@ export function extractAuthorFromIgTitle(title: string | null): string | null {
 async function fetchTikTok(
   target: URL,
 ): Promise<{ result: FetchPostResponse; dispatch: Omit<FetchPostDebug, 'cacheHit'> }> {
-  // Resolve short links so we end up on the canonical /@user/video/<id>.
+  // Resolve short links so we end up on the canonical /@user/video/<id> or
+  // /@user/photo/<id>. On HEAD failure the original URL is reused; the
+  // parser will likely fail and oEmbed will fire (and resolves redirects itself).
   const canonical = await resolveTikTokCanonical(target);
 
-  // Primary path: og: tags from the canonical URL (mirrors IG).
+  // Stage 1: rehydration JSON parse. og:* meta tags are no longer present on
+  // TikTok pages, so this is the primary path. See
+  // docs/superpowers/specs/2026-05-13-tiktok-slideshow-parsing-design.md.
+  let primaryError: UpstreamError | null = null;
   try {
     const html = await fetchHtml(canonical.toString(), IG_UA);
-    const captionRaw = findOgMeta(html, 'og:description');
-    const imageRaw = findOgMeta(html, 'og:image');
-    const titleRaw = findOgMeta(html, 'og:title');
-    if (captionRaw || imageRaw) {
-      return {
-        result: {
-          platform: 'tiktok',
-          permalink: canonical.toString(),
-          caption: captionRaw ? decodeHtmlEntities(captionRaw) : '',
-          imageUrls: imageRaw ? [decodeHtmlEntities(imageRaw)] : [],
-          author: extractAuthorFromTikTokUrl(canonical) ??
-            extractAuthorFromTikTokTitle(titleRaw),
-        },
-        dispatch: { route: 'tiktok_og', ogOutcome: 'ok', apifyOutcome: 'not_called' },
-      };
+    const data = extractTikTokRehydrationJson(html);
+    const mapped = mapTikTokRehydrationItem(data, canonical.toString());
+    const { _route, ...result } = mapped;
+    console.log(
+      'extract-proxy/tiktok-rehyd: ok',
+      `type=${_route}`,
+      `slides=${result.imageUrls.length}`,
+      `captionLen=${result.caption.length}`,
+    );
+    return {
+      result,
+      dispatch: {
+        route: _route === 'photo' ? 'tiktok_rehyd_photo' : 'tiktok_rehyd_video',
+        ogOutcome: 'ok',
+        apifyOutcome: 'not_called',
+      },
+    };
+  } catch (err) {
+    if (err instanceof UpstreamError) {
+      primaryError = err;
+      console.log(
+        'extract-proxy/tiktok-rehyd: fallback',
+        `reason=${rehydReasonForLog(err)}`,
+      );
+    } else {
+      throw err;
     }
-  } catch {
-    // Fall through to oEmbed below — primary path may be transiently broken.
   }
 
-  // Fallback: oEmbed. Officially documented; should always return *something*
-  // for a public live post. ogOutcome=empty when og: returned but had no
-  // useful fields; the catch block above masks the distinction between
-  // "empty" and "errored" so we report 'empty' as the closest closed-vocab
-  // match for both.
-  const result = await fetchTikTokOEmbed(canonical);
-  return {
-    result,
-    dispatch: { route: 'tiktok_oembed', ogOutcome: 'empty', apifyOutcome: 'not_called' },
-  };
+  // Stage 2: oEmbed fallback. Officially documented; the safety net when the
+  // rehydration parser fails for any reason (anti-bot stub, schema drift,
+  // deleted post, transient HTTP error).
+  try {
+    const result = await fetchTikTokOEmbed(canonical);
+    return {
+      result,
+      dispatch: {
+        route: 'tiktok_oembed_fallback',
+        ogOutcome: ogOutcomeFromRehydError(primaryError),
+        apifyOutcome: 'not_called',
+      },
+    };
+  } catch (oembedErr) {
+    console.error(
+      'extract-proxy/tiktok: total-failure',
+      `primary=${ogOutcomeFromRehydError(primaryError)}`,
+      `oembed=${oembedErr instanceof UpstreamError ? ogOutcomeFromError(oembedErr) : 'network'}`,
+      `url_shape=${parseTikTokUrlShape(target)}`,
+    );
+    throw oembedErr;
+  }
+}
+
+function rehydReasonForLog(err: UpstreamError): string {
+  if (
+    err.code === 'tiktok-no-rehydration' ||
+    err.code === 'tiktok-rehyd-non-json' ||
+    err.code === 'tiktok-rehyd-no-item'
+  ) {
+    return err.code.replace(/^tiktok-(rehyd-)?/, '');
+  }
+  // HTTP-level error codes from fetchHtml — keep them as-is for grep.
+  return err.code;
+}
+
+function ogOutcomeFromRehydError(
+  err: UpstreamError | null,
+): FetchPostDebug['ogOutcome'] {
+  if (!err) return 'empty';
+  // Parser-level failures (blob missing / malformed / item missing) all map
+  // to "primary returned nothing usable" — closed-vocab `empty`.
+  if (
+    err.code === 'tiktok-no-rehydration' ||
+    err.code === 'tiktok-rehyd-non-json' ||
+    err.code === 'tiktok-rehyd-no-item'
+  ) {
+    return 'empty';
+  }
+  return ogOutcomeFromError(err);
+}
+
+function parseTikTokUrlShape(url: URL): 'photo' | 'video' | 'short' | 'other' {
+  const host = url.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+  if (host === 'vm.tiktok.com' || host === 'vt.tiktok.com') return 'short';
+  if (/^\/@[^/]+\/photo\//.test(url.pathname)) return 'photo';
+  if (/^\/@[^/]+\/video\//.test(url.pathname)) return 'video';
+  return 'other';
 }
 
 async function resolveTikTokCanonical(target: URL): Promise<URL> {
@@ -579,8 +642,9 @@ async function fetchTikTokOEmbed(canonical: URL): Promise<FetchPostResponse> {
 }
 
 export function extractAuthorFromTikTokUrl(url: URL): string | null {
-  // /@handle/video/<id>
-  const m = url.pathname.match(/^\/@([^/]+)\/video\//);
+  // /@handle/video/<id> or /@handle/photo/<id> — TikTok slideshows live under
+  // /photo/ and the regex used to silently miss them.
+  const m = url.pathname.match(/^\/@([^/]+)\/(?:video|photo)\//);
   return m ? `@${m[1]}` : null;
 }
 
@@ -590,6 +654,100 @@ export function extractAuthorFromTikTokTitle(title: string | null): string | nul
   const idx = decoded.indexOf(' on TikTok');
   if (idx > 0) return decoded.slice(0, idx).trim();
   return null;
+}
+
+// --- TikTok rehydration parser -------------------------------------------
+
+// TikTok embeds the full post payload as a JSON-typed <script> tag in the
+// static HTML. og:* meta tags are no longer present on TikTok pages (as of
+// 2026-05), so this is the primary extraction path; oEmbed is the fallback
+// when this fails (anti-bot stub, schema drift, deleted post).
+//
+// See docs/superpowers/specs/2026-05-13-tiktok-slideshow-parsing-design.md.
+
+const TIKTOK_REHYD_RE =
+  /<script\s+id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]+?)<\/script>/;
+
+export function extractTikTokRehydrationJson(html: string): unknown {
+  const m = html.match(TIKTOK_REHYD_RE);
+  if (!m || !m[1]) throw new UpstreamError(502, 'tiktok-no-rehydration');
+  try {
+    return JSON.parse(m[1]);
+  } catch {
+    throw new UpstreamError(502, 'tiktok-rehyd-non-json');
+  }
+}
+
+export type MappedTikTokItem = FetchPostResponse & {
+  _route: 'photo' | 'video';
+};
+
+export function mapTikTokRehydrationItem(
+  raw: unknown,
+  canonical: string,
+): MappedTikTokItem {
+  // Field path:
+  //   __DEFAULT_SCOPE__
+  //     .webapp.reflow.video.detail
+  //     .itemInfo.itemStruct
+  // Same route is used for both /photo/ and /video/ URLs; `imagePost`'s
+  // presence inside `itemStruct` is the photo-vs-video discriminator.
+  const scope = getProp(raw, '__DEFAULT_SCOPE__');
+  const detail = getProp(scope, 'webapp.reflow.video.detail');
+  const itemInfo = getProp(detail, 'itemInfo');
+  const item = getProp(itemInfo, 'itemStruct');
+  if (!isObject(item)) throw new UpstreamError(502, 'tiktok-rehyd-no-item');
+
+  const caption = asString(getProp(item, 'desc')) ?? '';
+  const uniqueId = asString(getProp(getProp(item, 'author'), 'uniqueId'));
+  const author = uniqueId && uniqueId.length > 0 ? `@${uniqueId}` : null;
+
+  const imagePost = getProp(item, 'imagePost');
+  if (isObject(imagePost)) {
+    const images = getProp(imagePost, 'images');
+    const imageUrls: string[] = [];
+    if (Array.isArray(images)) {
+      for (const img of images) {
+        const urlList = getProp(getProp(img, 'imageURL'), 'urlList');
+        if (Array.isArray(urlList)) {
+          const u = asString(urlList[0]);
+          if (u && u.length > 0) imageUrls.push(u);
+        }
+      }
+    }
+    return {
+      platform: 'tiktok',
+      permalink: canonical,
+      caption,
+      imageUrls,
+      author,
+      _route: 'photo',
+    };
+  }
+
+  const cover = asString(getProp(getProp(item, 'video'), 'cover'));
+  const imageUrls = cover && cover.length > 0 ? [cover] : [];
+  return {
+    platform: 'tiktok',
+    permalink: canonical,
+    caption,
+    imageUrls,
+    author,
+    _route: 'video',
+  };
+}
+
+function getProp(o: unknown, key: string): unknown {
+  if (isObject(o) && key in o) return (o as Record<string, unknown>)[key];
+  return undefined;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function asString(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
 }
 
 // --- Shared HTML fetch ---------------------------------------------------

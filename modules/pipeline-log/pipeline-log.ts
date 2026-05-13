@@ -23,9 +23,18 @@ export type PipelineStage =
   | 'enrichment'
   | 'trip_assign';
 
+export interface StageFailOptions {
+  /**
+   * Extra Sentry tags merged into `captureException`. The `pipeline_stage`
+   * key is always set by the stage itself and cannot be overridden — keep
+   * caller-supplied tags scoped to platform / error_code / cause-y signals.
+   */
+  tags?: Record<string, string>;
+}
+
 export interface Stage {
   done(extra?: Record<string, unknown>): void;
-  failed(err: unknown): void;
+  failed(err: unknown, opts?: StageFailOptions): void;
 }
 
 const ERROR_SUMMARY_MAX_LEN = 80;
@@ -65,7 +74,7 @@ export function startStage(stage: PipelineStage, sourceId?: string): Stage {
       Sentry.addBreadcrumb({ category: `pipeline.${stage}`, level: 'info' });
     },
 
-    failed(err: unknown): void {
+    failed(err: unknown, opts?: StageFailOptions): void {
       if (settled) return;
       settled = true;
       const durationMs = Date.now() - startMs;
@@ -96,8 +105,10 @@ export function startStage(stage: PipelineStage, sourceId?: string): Stage {
         console.error(`[pipeline.${stage}]`, err);
         return;
       }
+      // Caller tags first, stage tag last — `pipeline_stage` is reserved.
+      const tags = { ...(opts?.tags ?? {}), pipeline_stage: stage };
       Sentry.addBreadcrumb({ category: `pipeline.${stage}.error`, level: 'error' });
-      Sentry.captureException(err, { tags: { pipeline_stage: stage } });
+      Sentry.captureException(err, { tags });
     },
   };
 }

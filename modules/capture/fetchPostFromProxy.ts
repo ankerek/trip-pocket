@@ -11,6 +11,10 @@ import { z } from 'zod';
 // docs/superpowers/specs/2026-05-13-pipeline-observability-design.md
 // §Worker debug echo.
 export type FetchPostDebug = {
+  // Phone Zod accepts the union of old + new values during the rollout
+  // window so a not-yet-upgraded worker (still emitting `tiktok_og` /
+  // `tiktok_oembed`) parses cleanly. The old values can be dropped once the
+  // worker has been on the new dispatch for ~1 week.
   route:
     | 'og_only'
     | 'og_only_apify_disabled'
@@ -18,7 +22,10 @@ export type FetchPostDebug = {
     | 'og_then_apify_unknown_efg'
     | 'og_failed_apify_fallback'
     | 'tiktok_og'
-    | 'tiktok_oembed';
+    | 'tiktok_oembed'
+    | 'tiktok_rehyd_photo'
+    | 'tiktok_rehyd_video'
+    | 'tiktok_oembed_fallback';
   ogOutcome:
     | 'ok'
     | 'empty'
@@ -84,6 +91,9 @@ const debugSchema = z.object({
     'og_failed_apify_fallback',
     'tiktok_og',
     'tiktok_oembed',
+    'tiktok_rehyd_photo',
+    'tiktok_rehyd_video',
+    'tiktok_oembed_fallback',
   ]),
   ogOutcome: z.enum([
     'ok',
@@ -207,4 +217,31 @@ export async function fetchPostFromProxy(
     });
   }
   return parsed.data;
+}
+
+// Maps a fetchPost failure to the closed-vocab `worker_error_code` Sentry tag
+// the pipeline-observability spec defines. Anything that isn't an explicit
+// not-found / private / unsupported-url collapses into `fetch-failed` —
+// 429s, 5xx, network failures, and schema violations all land there.
+export type WorkerErrorCode =
+  | 'fetch-failed'
+  | 'not-found'
+  | 'private'
+  | 'unsupported-url'
+  | 'rate-limited';
+
+export function workerErrorCodeFor(err: unknown): WorkerErrorCode {
+  if (!(err instanceof FetchPostError)) return 'fetch-failed';
+  if (err.classification.kind === 'permanent') {
+    const code = err.classification.code;
+    if (code === 'not-found' || code === 'private' || code === 'unsupported-url') {
+      return code;
+    }
+    return 'fetch-failed';
+  }
+  // Retryable cases. Distinguish CF rate-limiter trips (429) from generic
+  // upstream/network failures so the Sentry filter `worker_error_code:
+  // rate-limited` is queryable.
+  if (err.message.includes('-429')) return 'rate-limited';
+  return 'fetch-failed';
 }
