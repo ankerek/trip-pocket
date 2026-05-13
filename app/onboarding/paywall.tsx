@@ -24,8 +24,8 @@ type Plan = 'yearly' | 'monthly';
 
 const PLANS: Record<Plan, { price: string; per: string; note: string; badge?: string }> = {
   // TODO replace with real App Store SKU pricing pulled from StoreKit
-  yearly: { price: '$39.99', per: '/yr', note: 'Save 50% — billed yearly after trial', badge: 'BEST VALUE' },
-  monthly: { price: '$6.99', per: '/mo', note: 'Billed monthly after trial' },
+  yearly: { price: '$39.99', per: '/yr', note: 'Save 50%. Billed yearly after the trial.', badge: 'BEST VALUE' },
+  monthly: { price: '$6.99', per: '/mo', note: 'Billed monthly after the trial.' },
 };
 
 // Hand-written per-destination headline. DESTINATION_LABEL alone produces
@@ -144,7 +144,7 @@ export default function PaywallScreen() {
             className="mt-2 text-center text-text-muted"
             style={{ fontSize: 15, lineHeight: 22 }}
           >
-            Capture screenshots. The AI finds the place. One tap opens Maps when you arrive.
+            Save it now. Find it when you actually need it.
           </Text>
 
           {/* Plan pills */}

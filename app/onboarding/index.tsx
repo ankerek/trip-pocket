@@ -1,35 +1,84 @@
+import { useEffect } from 'react';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
+import type { ViewStyle } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Image, Pressable, Text, View } from '@/tw';
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useThemeColors } from '@/tw/theme';
+
+type ThemeColors = ReturnType<typeof useThemeColors>;
 import * as Haptics from 'expo-haptics';
-import { Icon } from '@/components/Icon';
 
-// Screen 1 — Welcome. No back button, no progress bar. Shows a stylized
-// device-frame preview of the Pocket grid so the user sees the end state
-// before opting in.
+// Screen 1 — Welcome. No back button, no progress bar. A casually fanned
+// stack of five place cards drops in to preview the end state before the
+// user opts in.
 
-const PREVIEW_TILES: { uri: string; name: string; city: string }[] = [
+type FannedTile = {
+  uri: string;
+  name: string;
+  city: string;
+  /** Outer-wrapper absolute positioning. */
+  position: Pick<ViewStyle, 'top' | 'bottom' | 'left' | 'right' | 'marginLeft'>;
+  /** Static rotation applied to the inner card. */
+  rotation: number;
+  /** Stacking — only the centered foreground card overrides the default. */
+  zIndex?: number;
+  /** Drop-in delay, in ms. */
+  delay: number;
+};
+
+// Two-level nesting (outer animated wrapper, inner rotated card) keeps
+// the drop-in transform from fighting the static rotation. Positions and
+// rotations follow the design spec.
+const FANNED_TILES: FannedTile[] = [
+  {
+    uri: 'https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=600&q=70',
+    name: 'Cappadocia',
+    city: 'Göreme, Türkiye',
+    position: { top: 30, left: 12 },
+    rotation: -10,
+    delay: 100,
+  },
+  {
+    uri: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=600&q=70',
+    name: 'Eiffel Tower',
+    city: 'Paris, France',
+    position: { top: 18, right: 18 },
+    rotation: 6,
+    delay: 250,
+  },
   {
     uri: 'https://images.unsplash.com/photo-1583032015879-e5022cb87c3b?w=600&q=70',
     name: 'Maru Tonkatsu',
-    city: 'Shibuya',
+    city: 'Shibuya, Japan',
+    position: { top: 70, left: '50%', marginLeft: -65 },
+    rotation: -2,
+    zIndex: 2,
+    delay: 400,
   },
   {
-    uri: 'https://images.unsplash.com/photo-1545569310-c3d35dbecf61?w=600&q=70',
-    name: 'Fushimi Inari',
-    city: 'Kyoto',
+    uri: 'https://images.unsplash.com/photo-1539037116277-4db20889f2d4?w=600&q=70',
+    name: 'Cinque Terre',
+    city: 'Vernazza, Italy',
+    position: { bottom: 0, left: 32 },
+    rotation: 8,
+    delay: 550,
   },
   {
-    uri: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=600&q=70',
-    name: 'Blue Bottle',
-    city: 'Kiyosumi',
-  },
-  {
-    uri: 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=600&q=70',
-    name: 'Shibuya Sky',
-    city: 'Shibuya',
+    uri: 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=600&q=70',
+    name: 'Oia',
+    city: 'Santorini, Greece',
+    position: { bottom: 14, right: 8 },
+    rotation: -5,
+    delay: 700,
   },
 ];
 
@@ -48,12 +97,12 @@ export default function Welcome() {
         >
           {/* App wordmark */}
           <View className="flex-row items-center">
-            <View
-              className="h-7 w-7 items-center justify-center rounded-md"
-              style={{ backgroundColor: colors.accent }}
-            >
-              <Icon name="tray.full" size={16} tintColor="#ffffff" />
-            </View>
+            <Image
+              source={require('@/assets/pocket-trip-icon-2.png')}
+              style={{ width: 28, height: 28, borderRadius: 7 }}
+              contentFit="cover"
+              accessibilityIgnoresInvertColors
+            />
             <Text
               className="ml-2 text-text"
               style={{ fontSize: 17, fontWeight: '700', letterSpacing: -0.2 }}
@@ -62,36 +111,25 @@ export default function Welcome() {
             </Text>
           </View>
 
-          {/* Preview grid (faux device frame) */}
+          {/* Fanned card stack */}
           <View
-            className="mt-6 overflow-hidden"
             style={{
               width: '100%',
               maxWidth: 360,
-              aspectRatio: 0.85,
-              borderRadius: 28,
-              backgroundColor: colors.surface,
-              borderWidth: 1,
-              borderColor: colors.hairline,
-              padding: 12,
+              height: 300,
+              marginTop: 24,
+              position: 'relative',
             }}
           >
-            <View className="flex-row" style={{ gap: 6 }}>
-              {PREVIEW_TILES.slice(0, 2).map((t) => (
-                <PreviewTile key={t.uri} tile={t} />
-              ))}
-            </View>
-            <View className="mt-1.5 flex-row" style={{ gap: 6 }}>
-              {PREVIEW_TILES.slice(2, 4).map((t) => (
-                <PreviewTile key={t.uri} tile={t} />
-              ))}
-            </View>
+            {FANNED_TILES.map((tile) => (
+              <FannedTileCard key={tile.name} tile={tile} colors={colors} />
+            ))}
           </View>
 
           {/* Headline */}
           <Text
-            className="mt-8 text-center text-text"
-            style={{ fontSize: 32, fontWeight: '700', letterSpacing: -0.5, lineHeight: 38 }}
+            className="text-center text-text"
+            style={{ marginTop: 56, fontSize: 32, fontWeight: '700', letterSpacing: -0.5, lineHeight: 38 }}
           >
             Save travel inspiration{'\n'}before it gets lost.
           </Text>
@@ -99,7 +137,7 @@ export default function Welcome() {
             className="mt-3 text-center text-text-muted"
             style={{ fontSize: 16, lineHeight: 22, maxWidth: 320 }}
           >
-            Trip Pocket turns the screenshots you already take into places you can actually use.
+            Take a screenshot or share an Instagram or TikTok post. Our AI turns it into a place on a map you can actually use.
           </Text>
         </View>
 
@@ -128,47 +166,111 @@ export default function Welcome() {
   );
 }
 
-function PreviewTile({ tile }: { tile: { uri: string; name: string; city: string } }) {
+function FannedTileCard({
+  tile,
+  colors,
+}: {
+  tile: FannedTile;
+  colors: ThemeColors;
+}) {
+  const reducedMotion = useReducedMotion();
+  // 0 → 1 drives the drop-in: opacity 0→1, translateY -180→0, scale 0.6→1.
+  const progress = useSharedValue(reducedMotion ? 1 : 0);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      progress.value = 1;
+      return;
+    }
+    progress.value = withDelay(
+      tile.delay,
+      withTiming(1, {
+        duration: 900,
+        // CSS `ease` default — soft landing, not bouncy.
+        easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+      }),
+    );
+  }, [progress, reducedMotion, tile.delay]);
+
+  const outerStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [
+      { translateY: -180 * (1 - progress.value) },
+      { scale: 0.6 + 0.4 * progress.value },
+    ],
+  }));
+
   return (
-    <View className="flex-1 overflow-hidden" style={{ borderRadius: 12, aspectRatio: 3 / 4 }}>
-      <Image
-        source={{ uri: tile.uri }}
-        style={{ position: 'absolute', inset: 0 }}
-        contentFit="cover"
-        cachePolicy="memory-disk"
-        transition={150}
-      />
-      <LinearGradient
-        colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.55)']}
-        locations={[0, 0.55, 1]}
-        style={{ position: 'absolute', inset: 0 }}
-      />
-      <View style={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>
-        <Text
-          numberOfLines={1}
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        outerStyle,
+        {
+          position: 'absolute',
+          width: 130,
+          zIndex: tile.zIndex,
+          ...tile.position,
+        },
+      ]}
+    >
+      <View style={{ transform: [{ rotate: `${tile.rotation}deg` }] }}>
+        <View
           style={{
-            color: '#ffffff',
-            fontSize: 13,
-            fontWeight: '700',
-            textShadowColor: 'rgba(0,0,0,0.45)',
-            textShadowOffset: { width: 0, height: 1 },
-            textShadowRadius: 2,
+            backgroundColor: colors.bg,
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: colors.hairline,
+            overflow: 'hidden',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.16,
+            shadowRadius: 14,
+            elevation: 6,
           }}
         >
-          {tile.name}
-        </Text>
-        <Text
-          numberOfLines={1}
-          style={{
-            color: 'rgba(255,255,255,0.85)',
-            fontSize: 10,
-            fontWeight: '500',
-            marginTop: 1,
-          }}
-        >
-          {tile.city}
-        </Text>
+          <View style={{ width: '100%', aspectRatio: 4 / 5 }}>
+            <Image
+              source={{ uri: tile.uri }}
+              style={{ position: 'absolute', inset: 0 }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
+            />
+            <LinearGradient
+              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.7)']}
+              locations={[0, 0.5, 1]}
+              style={{ position: 'absolute', inset: 0 }}
+            />
+            <View style={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: '#ffffff',
+                  fontSize: 12,
+                  fontWeight: '700',
+                  letterSpacing: -0.1,
+                  textShadowColor: 'rgba(0,0,0,0.45)',
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 2,
+                }}
+              >
+                {tile.name}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: 'rgba(255,255,255,0.88)',
+                  fontSize: 10,
+                  fontWeight: '500',
+                  marginTop: 1,
+                }}
+              >
+                {tile.city}
+              </Text>
+            </View>
+          </View>
+        </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }

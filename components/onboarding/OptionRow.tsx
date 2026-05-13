@@ -39,12 +39,14 @@ export function OptionRow({
       accessibilityRole={variant === 'multi' ? 'checkbox' : 'radio'}
       accessibilityState={{ selected, checked: selected }}
       accessibilityLabel={label}
-      className="mb-2 flex-row items-center rounded-2xl border bg-surface px-4"
+      className="mb-2 flex-row items-center rounded-2xl bg-surface px-4"
       style={{
         minHeight: 56,
         paddingVertical: 12,
         borderColor: selected ? colors.accent : colors.hairline,
-        borderWidth: selected ? 2 : 1,
+        // Keep the border width constant so the row's inner box doesn't
+        // shift by 1px when the selection state flips.
+        borderWidth: 2,
       }}
     >
       {icon ? (

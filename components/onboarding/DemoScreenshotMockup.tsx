@@ -14,12 +14,10 @@ import { Icon } from '@/components/Icon';
 import { useThemeColors } from '@/tw/theme';
 import type { DemoScreenshotFixture } from '@/lib/onboarding/demoFixtures';
 
-// Example 1's "before" state — a tilted faux IG list-post card. The whole
-// thing reads as a screenshot, not a UI: drop shadow, slight rotation,
-// IG-style interaction row at the bottom. Spec section "Example 1 — From
-// a screenshot" in 2026-05-13-onboarding-redesign-design.md.
-
-const TILT_DEG = -4;
+// Example 1's "before" state — a faux IG list-post card. The whole
+// thing reads as a screenshot, not a UI: drop shadow, IG-style
+// interaction row at the bottom. Spec section "Example 1 — From a
+// screenshot" in 2026-05-13-onboarding-redesign-design.md.
 
 const IG_ICONS: { name: string; key: string }[] = [
   { name: 'heart', key: 'heart' },
@@ -60,7 +58,6 @@ export function DemoScreenshotMockup({
   return (
     <View
       style={{
-        transform: [{ rotate: `${TILT_DEG}deg` }],
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 12 },
         shadowOpacity: 0.18,

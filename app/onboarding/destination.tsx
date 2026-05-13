@@ -29,7 +29,7 @@ export default function DestinationScreen() {
     <OnboardingScaffold
       step={1}
       headline="What trip are you collecting ideas for?"
-      sub="One quick question — we'll personalize the rest."
+      sub="One quick question, so the rest fits you."
       footer={
         <PrimaryButton
           label="Continue"

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -31,7 +31,12 @@ import type { DemoShareFixture } from '@/lib/onboarding/demoFixtures';
 
 const IG_ICONS_LEFT: string[] = ['heart', 'bubble.right'];
 
-export type SharePathPhase = 'idle' | 'sheet' | 'picker' | 'fading';
+export type SharePathPhase = 'idle' | 'sheet' | 'picker' | 'extracting' | 'fading';
+
+// Height of the glowing scan band that sweeps the card during the
+// 'extracting' phase. Matches the value used by ExtractingFrame in
+// app/onboarding/demo.tsx so the two examples read as the same effect.
+const SCAN_BAND_HEIGHT = 64;
 
 type Props = {
   fixture: DemoShareFixture;
@@ -64,6 +69,11 @@ export function DemoSharePathMockup({
   const sheetY = useSharedValue(1);
   const pickerY = useSharedValue(1);
   const cardOpacity = useSharedValue(1);
+  // Scan-line progress 0 → 1 during the 'extracting' phase.
+  const scan = useSharedValue(0);
+  // Measured card height so the scan line lands exactly at the bottom
+  // edge before looping back to the top.
+  const [cardHeight, setCardHeight] = useState(0);
 
   // --- Phase-driven pulses on the relevant tap target. ---
 
@@ -126,7 +136,36 @@ export function DemoSharePathMockup({
     cardOpacity.value = withTiming(target, { duration: 380, easing: Easing.in(Easing.quad) });
   }, [phase, cardOpacity]);
 
-  const cardStyle = useAnimatedStyle(() => ({ opacity: cardOpacity.value }));
+  // Scan-line loop runs only while 'extracting' is active. Reset on
+  // entry so each pass starts at the top of the card.
+  useEffect(() => {
+    if (phase !== 'extracting' || reducedMotion) {
+      cancelAnimation(scan);
+      scan.value = 0;
+      return;
+    }
+    scan.value = 0;
+    scan.value = withRepeat(
+      withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.cubic) }),
+      -1,
+      false,
+    );
+    return () => cancelAnimation(scan);
+  }, [phase, reducedMotion, scan]);
+
+  // Slight dim + tiny scale-down while extracting reads as "being read".
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value * (phase === 'extracting' ? 0.92 : 1),
+    transform: [{ scale: phase === 'extracting' ? 0.98 : 1 }],
+  }));
+  const scanStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY:
+          -SCAN_BAND_HEIGHT / 2 + scan.value * Math.max(cardHeight, 1),
+      },
+    ],
+  }));
   const shareIconStyle = useAnimatedStyle(() => ({ opacity: sharePulse.value }));
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: 320 * sheetY.value }],
@@ -146,6 +185,7 @@ export function DemoSharePathMockup({
         <View
           className="overflow-hidden bg-bg"
           style={{ borderRadius: 18, borderWidth: 1, borderColor: colors.hairline }}
+          onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         >
           {/* Header strip */}
           <View
@@ -222,6 +262,46 @@ export function DemoSharePathMockup({
             <View className="flex-1" />
             <Icon name="bookmark" size={16} tintColor={colors.text} />
           </View>
+
+          {/* Scan-line overlay — sweeps top → bottom over the post during
+              the 'extracting' phase. Sits inside the overflow:hidden
+              wrapper so the glow clips to the card's rounded edges. */}
+          {phase === 'extracting' && cardHeight > 0 ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                {
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: SCAN_BAND_HEIGHT,
+                  justifyContent: 'center',
+                },
+                scanStyle,
+              ]}
+            >
+              <LinearGradient
+                colors={[
+                  'rgba(20, 184, 166, 0)',
+                  'rgba(20, 184, 166, 0.35)',
+                  'rgba(20, 184, 166, 0)',
+                ]}
+                locations={[0, 0.5, 1]}
+                style={{ position: 'absolute', inset: 0 }}
+              />
+              <View
+                style={{
+                  height: 2,
+                  backgroundColor: colors.accent,
+                  shadowColor: colors.accent,
+                  shadowOpacity: 0.9,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 0 },
+                }}
+              />
+            </Animated.View>
+          ) : null}
         </View>
       </Animated.View>
 

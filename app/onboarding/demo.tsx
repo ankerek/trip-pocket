@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Animated, {
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { ScrollView, Text, View } from '@/tw';
 import { useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
@@ -35,14 +38,17 @@ type Phase =
   | 'idle2'
   | 'shareSheet2'   // user must tap the Trip Pocket icon in the share sheet
   | 'waitingPick'   // trip picker visible, user must tap the Japan pill
+  | 'extracting2'   // post-tap: scan-line over the IG card before reveal
   | 'revealed2';
 
 const TIMINGS = {
   extracting1: 1400,
+  extracting2: 1500,
 };
 
 export default function DemoScreen() {
   const router = useRouter();
+  const colors = useThemeColors();
 
   const [phase, setPhase] = useState<Phase>('idle1');
   const finishedRef = useRef(false);
@@ -91,7 +97,12 @@ export default function DemoScreen() {
 
   function onJapanPick() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setPhase('revealed2');
+    // Picker slides out and the scan-line plays over the IG card.
+    // After the extraction window, flip to the reveal.
+    setPhase('extracting2');
+    scheduleTimer(() => {
+      setPhase('revealed2');
+    }, TIMINGS.extracting2);
   }
 
   function finishToPaywall() {
@@ -105,7 +116,7 @@ export default function DemoScreen() {
   const footer = (() => {
     switch (phase) {
       case 'idle1':
-        return <PrimaryButton label="See it extract" onPress={startExtracting1} />;
+        return <PrimaryButton label="Try it" onPress={startExtracting1} />;
       case 'extracting1':
         return null;
       case 'revealed1':
@@ -137,6 +148,8 @@ export default function DemoScreen() {
             Tap the highlighted trip to save it.
           </Text>
         );
+      case 'extracting2':
+        return null;
       case 'revealed2':
         return <PrimaryButton label="Continue" onPress={finishToPaywall} />;
     }
@@ -145,7 +158,8 @@ export default function DemoScreen() {
   // Hide the back chevron during the busy extraction phase — leaving
   // mid-animation would leak shared-value state. All other phases are
   // user-driven and safe to back out of.
-  const showBack = phase !== 'extracting1' && phase !== 'revealed2';
+  const showBack =
+    phase !== 'extracting1' && phase !== 'extracting2' && phase !== 'revealed2';
 
   // Step-pill label updates with phase to reinforce which example you're on.
   const isExample1 =
@@ -159,6 +173,7 @@ export default function DemoScreen() {
     if (phase === 'idle2') return 'idle';
     if (phase === 'shareSheet2') return 'sheet';
     if (phase === 'waitingPick') return 'picker';
+    if (phase === 'extracting2') return 'extracting';
     if (phase === 'revealed2') return 'fading';
     return 'idle';
   })();
@@ -176,19 +191,7 @@ export default function DemoScreen() {
         style={{ flex: 1 }}
       >
         <Text
-          className="text-text-muted"
-          style={{
-            fontSize: 11,
-            fontWeight: '700',
-            letterSpacing: 0.6,
-            marginTop: 4,
-          }}
-        >
-          {stepLabel}
-        </Text>
-
-        <Text
-          className="mt-3 text-center text-text"
+          className="mt-1 text-center text-text"
           style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4, lineHeight: 34 }}
         >
           Watch it work.
@@ -197,10 +200,20 @@ export default function DemoScreen() {
           className="mt-2 text-center text-text-muted"
           style={{ fontSize: 15, lineHeight: 22, paddingHorizontal: 8 }}
         >
-          Two ways places land in Trip Pocket.
+          Two ways to add a place.
+        </Text>
+        <Text
+          className="mt-3 text-text-muted"
+          style={{
+            fontSize: 11,
+            fontWeight: '700',
+            letterSpacing: 0.6,
+          }}
+        >
+          {stepLabel}
         </Text>
 
-        <View style={{ width: '100%', marginTop: 18, alignItems: 'center' }}>
+        <View style={{ width: '100%', marginTop: 40, alignItems: 'center' }}>
           {(phase === 'idle1' || phase === 'extracting1') ? (
             <ExtractingFrame
               variant={phase === 'idle1' ? 'idle' : 'busy'}
@@ -209,14 +222,30 @@ export default function DemoScreen() {
 
           {phase === 'revealed1' ? <RevealedExample1 /> : null}
 
-          {(phase === 'idle2' || phase === 'shareSheet2' || phase === 'waitingPick') ? (
-            <DemoSharePathMockup
-              fixture={DEMO_SHARE}
-              phase={sharePathPhase}
-              onSharePressed={onSharePressed}
-              onTripPocketPressed={onTripPocketPressed}
-              onJapanPick={onJapanPick}
-            />
+          {(phase === 'idle2' ||
+            phase === 'shareSheet2' ||
+            phase === 'waitingPick' ||
+            phase === 'extracting2') ? (
+            <>
+              <DemoSharePathMockup
+                fixture={DEMO_SHARE}
+                phase={sharePathPhase}
+                onSharePressed={onSharePressed}
+                onTripPocketPressed={onTripPocketPressed}
+                onJapanPick={onJapanPick}
+              />
+              {phase === 'extracting2' ? (
+                <View className="mt-3 flex-row items-center" style={{ gap: 6 }}>
+                  <Icon name="sparkles" size={14} tintColor={colors.accent} />
+                  <Text
+                    className="text-text"
+                    style={{ fontSize: 13, fontWeight: '600', letterSpacing: -0.1 }}
+                  >
+                    Extracting the place…
+                  </Text>
+                </View>
+              ) : null}
+            </>
           ) : null}
 
           {phase === 'revealed2' ? <RevealedExample2 /> : null}
@@ -226,62 +255,117 @@ export default function DemoScreen() {
   );
 }
 
+// Height of the glowing scan band. The bright 2px line sits in the
+// middle; the gradient on either side fakes a soft halo.
+const SCAN_BAND_HEIGHT = 64;
+
 function ExtractingFrame({ variant }: { variant: 'idle' | 'busy' }) {
   const colors = useThemeColors();
   const scale = useSharedValue(1);
-  const sparkleOpacity = useSharedValue(0);
+  const scan = useSharedValue(0);
+  const labelOpacity = useSharedValue(0);
+  // Measured screenshot height — drives the scan-line travel distance so
+  // the line lands exactly at the bottom edge of the card on each loop.
+  const [cardHeight, setCardHeight] = useState(0);
 
   useEffect(() => {
     if (variant === 'busy') {
-      scale.value = withTiming(0.95, { duration: 300, easing: Easing.out(Easing.cubic) });
-      sparkleOpacity.value = withTiming(1, {
-        duration: 400,
-        easing: Easing.in(Easing.quad),
+      scale.value = withTiming(0.97, {
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
       });
+      labelOpacity.value = withTiming(1, { duration: 280 });
+      scan.value = 0;
+      scan.value = withRepeat(
+        withTiming(1, {
+          duration: 1500,
+          easing: Easing.inOut(Easing.cubic),
+        }),
+        -1,
+        false,
+      );
     } else {
       scale.value = withTiming(1, { duration: 200 });
-      sparkleOpacity.value = withTiming(0, { duration: 200 });
+      labelOpacity.value = withTiming(0, { duration: 200 });
+      cancelAnimation(scan);
+      scan.value = 0;
     }
-  }, [variant, scale, sparkleOpacity]);
+  }, [variant, scale, scan, labelOpacity]);
 
   const stackStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
+    opacity: variant === 'busy' ? 0.92 : 1,
   }));
-  const sparkleStyle = useAnimatedStyle(() => ({ opacity: sparkleOpacity.value }));
+  // Travel from above the top edge to just past the bottom so the line
+  // visibly enters and exits the card on each loop.
+  const scanStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY:
+          -SCAN_BAND_HEIGHT / 2 +
+          scan.value * Math.max(cardHeight, 1),
+      },
+    ],
+  }));
+  const labelStyle = useAnimatedStyle(() => ({ opacity: labelOpacity.value }));
 
   return (
-    <View style={{ width: '100%', maxWidth: 320, alignItems: 'center' }}>
-      <Animated.View style={[stackStyle, { opacity: variant === 'busy' ? 0.65 : 1 }]}>
-        <DemoScreenshotMockup fixture={DEMO_SCREENSHOT} pulsing={variant === 'idle'} />
-      </Animated.View>
-      {variant === 'busy' ? (
-        <Animated.View
-          style={[
-            sparkleStyle,
-            {
-              position: 'absolute',
-              top: '50%',
-              left: 0,
-              right: 0,
-              alignItems: 'center',
-              marginTop: -36,
-            },
-          ]}
-        >
-          <View
-            className="h-14 w-14 items-center justify-center rounded-full"
-            style={{ backgroundColor: 'rgba(20, 184, 166, 0.18)' }}
+    <View style={{ width: '100%', maxWidth: 300, alignItems: 'center' }}>
+      <View
+        style={{ position: 'relative', alignSelf: 'stretch' }}
+        onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
+      >
+        <Animated.View style={stackStyle}>
+          <DemoScreenshotMockup fixture={DEMO_SCREENSHOT} pulsing={variant === 'idle'} />
+        </Animated.View>
+        {variant === 'busy' && cardHeight > 0 ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: 0,
+                height: SCAN_BAND_HEIGHT,
+                justifyContent: 'center',
+              },
+              scanStyle,
+            ]}
           >
-            <Icon name="sparkles" size={28} tintColor={colors.accent} />
-          </View>
+            <LinearGradient
+              colors={[
+                'rgba(20, 184, 166, 0)',
+                'rgba(20, 184, 166, 0.35)',
+                'rgba(20, 184, 166, 0)',
+              ]}
+              locations={[0, 0.5, 1]}
+              style={{ position: 'absolute', inset: 0 }}
+            />
+            <View
+              style={{
+                height: 2,
+                backgroundColor: colors.accent,
+                shadowColor: colors.accent,
+                shadowOpacity: 0.9,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 0 },
+              }}
+            />
+          </Animated.View>
+        ) : null}
+      </View>
+      <Animated.View style={labelStyle}>
+        <View className="mt-3 flex-row items-center" style={{ gap: 6 }}>
+          <Icon name="sparkles" size={14} tintColor={colors.accent} />
           <Text
-            className="mt-2 text-text"
+            className="text-text"
             style={{ fontSize: 13, fontWeight: '600', letterSpacing: -0.1 }}
           >
             Extracting 3 places…
           </Text>
-        </Animated.View>
-      ) : null}
+        </View>
+      </Animated.View>
     </View>
   );
 }

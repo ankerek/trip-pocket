@@ -1,7 +1,16 @@
 import '../global.css';
 import * as Sentry from '@sentry/react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
+
+// Hold the native splash until we've decided whether to push the
+// onboarding modal. Without this, the JS layer becomes ready a frame
+// or two before the modal is pushed, and the user sees the (tabs) home
+// flash for that interval before the modal fades in on top.
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // Already-hidden / unsupported environments are fine to swallow.
+});
 import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { initSentry, attachInstallId } from '@/lib/observability';
@@ -210,11 +219,24 @@ export default function RootLayout() {
   // underlying (tabs) stays mounted beneath the modal — that way the
   // paywall exit can `dismissAll()` and reveal it instantly with no second
   // slide-in transition on top of the modal's fade-out.
+  //
+  // The splash hide is gated on this same step so first launch goes
+  // splash → onboarding directly, with no (tabs) flash in between. The
+  // ~400ms tail covers the modal's fade-in animation.
+  const [splashHidden, setSplashHidden] = useState(false);
   useEffect(() => {
-    if (!ready) return;
-    if (!needsOnboarding) return;
-    router.push('/onboarding');
-  }, [ready, needsOnboarding, router]);
+    if (!ready || splashHidden) return;
+    if (needsOnboarding) {
+      router.push('/onboarding');
+      const t = setTimeout(() => {
+        void SplashScreen.hideAsync();
+        setSplashHidden(true);
+      }, 400);
+      return () => clearTimeout(t);
+    }
+    void SplashScreen.hideAsync();
+    setSplashHidden(true);
+  }, [ready, needsOnboarding, splashHidden, router]);
 
   if (!ready) return null;
   return (

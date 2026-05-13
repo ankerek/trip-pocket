@@ -16,17 +16,17 @@ const ROWS: Row[] = [
   {
     icon: 'square.and.arrow.down',
     pain: 'Screenshots vanish into your camera roll',
-    solution: 'One share to Trip Pocket, sorted into the right trip.',
+    solution: 'Share once to Trip Pocket and it lands in the right trip.',
   },
   {
     icon: 'text.viewfinder',
     pain: 'Blurry IG post, no idea where it is',
-    solution: 'AI reads the screenshot — place, city, category, done.',
+    solution: 'AI reads the screenshot and pulls the place name and city out for you.',
   },
   {
     icon: 'photo.stack',
     pain: 'Was it that café in Shibuya or Kichijoji?',
-    solution: 'Real venue photos and addresses, fetched on demand.',
+    solution: 'Each place gets a real photo and address.',
   },
   {
     icon: 'map.fill',
@@ -41,8 +41,8 @@ export default function SolutionScreen() {
   return (
     <OnboardingScaffold
       step={3}
-      headline="Welcome to a smarter way to save travel ideas."
-      sub="Here's how Trip Pocket turns this around."
+      headline="Here's the fix for each one."
+      sub="Old pain on top. The fix, right below."
       footer={
         <PrimaryButton
           label="Continue"
