@@ -2,7 +2,16 @@ import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
 import { findCollidingByExternalId } from '@/modules/storage/places';
 import { transferJunctions } from '@/modules/storage/place_sources';
-import { pipelineStep, pipelineError } from '@/lib/observability';
+import { startStage } from '@/modules/pipeline-log';
+
+// Optional debug echo from the worker (search/details/blurb sub-step
+// outcomes). Lives in modules/enrichment/proxy.ts so the schema is the
+// source of truth; re-typed loosely here to avoid a circular import.
+export type EnrichDebugEcho = {
+  searchOutcome: string;
+  detailsOutcome: string;
+  blurbOutcome: string;
+};
 
 // /enrich response, mirrors the worker's enrichResponseSchema.
 export type EnrichOutcome =
@@ -23,8 +32,9 @@ export type EnrichOutcome =
       city: string | null;
       country_code: string | null;
       model: string;
+      _debug?: EnrichDebugEcho;
     }
-  | { kind: 'not-found' };
+  | { kind: 'not-found'; _debug?: EnrichDebugEcho };
 
 export type EnrichRequestPayload = {
   place_id: string;
@@ -72,14 +82,29 @@ type PlaceSnapshot = {
   address: string | null;
   // Most recent non-null OCR text from any attached source.
   ocr_caption: string;
+  // Loaded for the blurb-retry path: when a place is `enriched` but its
+  // description is still null (Gemini failed the first time), processOne
+  // re-runs /enrich rather than short-circuiting.
+  description: string | null;
   created_at: string;
 };
+
+// Throttle window for the blurb-retry path: once we re-enrich an enriched
+// place because its description was null, don't try again for 5 minutes even
+// if the row stays null. Defends against list re-renders that would otherwise
+// fire enqueueEnrichment on every component mount. Cleared on app restart —
+// the next cold launch is itself a retry signal.
+const BLURB_RETRY_THROTTLE_MS = 5 * 60 * 1000;
 
 export function createEnricher(opts: CreateEnricherOptions): Enricher {
   const getNow = opts.now ?? (() => new Date().toISOString());
 
   // Per-place-id dedup. Cleared once a row settles.
   const inflightById = new Set<string>();
+  // Per-instance throttle for the blurb-retry path; see BLURB_RETRY_THROTTLE_MS.
+  // Lives on the enricher (not module-level) so test setups that build a fresh
+  // enricher per case don't leak throttle state.
+  const blurbRetryAt = new Map<string, number>();
   // Tracks every async operation we've kicked off; _awaitIdle() drains it.
   const pending = new Set<Promise<unknown>>();
 
@@ -112,18 +137,42 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
   async function processOne(id: string): Promise<void> {
     const place = await loadPlace(id);
     if (!place) return;
-    if (place.enrichment_status === 'enriched' || place.enrichment_status === 'not-found') {
-      return;
+    if (place.enrichment_status === 'not-found') return;
+    // 'enriched' is short-circuit by default, EXCEPT when description is
+    // null — that means /enrich's first pass got Google Places data back
+    // but the Gemini blurb failed. The blurb-retry path re-runs /enrich
+    // once the in-memory throttle has elapsed.
+    if (place.enrichment_status === 'enriched') {
+      if (place.description !== null) return;
+      const nextAllowed = blurbRetryAt.get(id) ?? 0;
+      if (Date.now() < nextAllowed) return;
+      blurbRetryAt.set(id, Date.now() + BLURB_RETRY_THROTTLE_MS);
     }
     if (!place.ocr_caption || place.ocr_caption.trim().length === 0) {
       // Without an OCR caption the worker can't run the blurb step. Mark
       // 'not-found' rather than 'failed' so it doesn't retry on every open.
-      await enqueueWrite(() => markNotFound(id));
-      notifyChange('places');
+      // Don't downgrade an already-enriched row though (blurb-retry path):
+      // a missing caption shouldn't destroy real lat/lng/photo data.
+      if (place.enrichment_status !== 'enriched') {
+        await enqueueWrite(() => markNotFound(id));
+        notifyChange('places');
+      }
       return;
     }
 
-    pipelineStep('enrichment');
+    // Enrichment is logically per-place (one place ↔ N sources), but the
+    // diagnostics stream groups by source_id. To keep the common "shared X
+    // → see what happened" trace in one group, tag this stage with the
+    // most-recently-attached source. For multi-source places the choice is
+    // a heuristic; placeId stays in the firehose extras either way.
+    const latestSrc = await opts.db.getFirstAsync<{ source_id: string }>(
+      `SELECT source_id FROM place_sources
+        WHERE place_id = ?
+     ORDER BY extracted_at DESC
+        LIMIT 1`,
+      id,
+    );
+    const stage = startStage('enrichment', latestSrc?.source_id);
     let outcome: EnrichOutcome | EnrichmentError;
     try {
       outcome = await opts.enrich({
@@ -139,13 +188,31 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     }
 
     if (outcome instanceof EnrichmentError) {
-      pipelineError('enrichment', outcome);
-      await enqueueWrite(() => applyError(id));
-      notifyChange('places');
+      stage.failed(outcome);
+      // Don't downgrade an already-enriched row to 'failed' on a retry —
+      // a transient /enrich failure on the blurb-retry path shouldn't lose
+      // the existing lat/lng/photo. The throttle map will gate further
+      // attempts for 5 minutes.
+      if (place.enrichment_status !== 'enriched') {
+        await enqueueWrite(() => applyError(id));
+        notifyChange('places');
+      }
       return;
     }
 
-    await enqueueWrite(() => applyOutcome(place, outcome as EnrichOutcome));
+    const enriched = outcome as EnrichOutcome;
+    stage.done({
+      placeId: place.id,
+      kind: enriched.kind,
+      hadPhoto: enriched.kind === 'enriched' ? Boolean(enriched.photo_name) : false,
+      hadAddress: enriched.kind === 'enriched' ? Boolean(enriched.formatted_address) : false,
+      hadRating: enriched.kind === 'enriched' ? enriched.rating !== null : false,
+      // Spread the worker's _debug echo (search/details/blurb outcomes) so
+      // the firehose surfaces sub-step degradation without `wrangler tail`.
+      ...(enriched._debug ?? {}),
+    });
+
+    await enqueueWrite(() => applyOutcome(place, enriched));
     notifyChange('places');
     notifyChange('place_sources');
   }
@@ -157,9 +224,10 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       city: string | null;
       trip_id: string | null;
       enrichment_status: PlaceSnapshot['enrichment_status'];
+      description: string | null;
       created_at: string;
     }>(
-      `SELECT id, name, city, trip_id, enrichment_status, created_at
+      `SELECT id, name, city, trip_id, enrichment_status, description, created_at
          FROM places WHERE id = ?`,
       id,
     );
@@ -195,12 +263,18 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       enrichment_status: place.enrichment_status,
       address: addrRow?.extracted_address ?? null,
       ocr_caption: ocrRow?.ocr_text ?? '',
+      description: place.description,
       created_at: place.created_at,
     };
   }
 
   async function applyOutcome(place: PlaceSnapshot, outcome: EnrichOutcome): Promise<void> {
     if (outcome.kind === 'not-found') {
+      // Don't downgrade an already-enriched row to 'not-found' just because
+      // Google's index churned and a fresh search came back empty. The
+      // blurb-retry path re-runs the full /enrich and could otherwise
+      // destroy good enrichment data.
+      if (place.enrichment_status === 'enriched') return;
       await markNotFound(place.id);
       return;
     }

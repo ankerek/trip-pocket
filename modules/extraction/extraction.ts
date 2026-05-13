@@ -2,7 +2,7 @@ import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
 import { findSoleMatchByNormalizedKey, normalizePlaceKey } from '@/modules/storage/places';
 import { linkPlaceSource } from '@/modules/storage/place_sources';
-import { pipelineStep, pipelineError } from '@/lib/observability';
+import { startStage, type Stage } from '@/modules/pipeline-log';
 
 export type ExtractedPlaceInput = {
   name: string;
@@ -120,14 +120,14 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       return { kind: 'done' };
     }
 
-    pipelineStep('extraction');
+    const stage = startStage('extraction', id);
     let result: ExtractionResult;
     try {
       result = await opts.extract(ocrText);
     } catch (err) {
       const classification =
         err instanceof ExtractionError ? err.classification : ({ kind: 'retryable' } as const);
-      return classifyFailure(id, classification, err);
+      return classifyFailure(id, classification, err, stage);
     }
 
     // Per-call dedup: drop case-insensitive name + trimmed-city + trimmed-address
@@ -167,12 +167,22 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       // FK violation (source hard-deleted between load and insert) is permanent;
       // anything else is treated as retryable.
       const isPermanent = String(err).includes('FOREIGN KEY');
-      return classifyFailure(id, isPermanent ? { kind: 'permanent' } : { kind: 'retryable' }, err);
+      return classifyFailure(
+        id,
+        isPermanent ? { kind: 'permanent' } : { kind: 'retryable' },
+        err,
+        stage,
+      );
     }
 
     notifyChange('places');
     notifyChange('place_sources');
     notifyChange('sources');
+    stage.done({
+      placesCount: distinct.length,
+      placesJson: JSON.stringify(distinct),
+      model: result.model,
+    });
     return { kind: 'done' };
   }
 
@@ -241,19 +251,22 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     id: string,
     classification: ExtractionErrorKind,
     err: unknown,
+    stage: Stage,
   ): ProcessOutcome {
+    // Every classifyFailure invocation ends *this attempt*. A retry/deferred
+    // outcome creates a fresh stage in the next processOne call, so emitting
+    // failed here gives the per-attempt rows the diagnostics stream wants.
+    stage.failed(err);
     if (classification.kind === 'deferred') {
       return { kind: 'deferred', retryAfterMs: classification.retryAfterMs };
     }
     if (classification.kind === 'permanent') {
-      pipelineError('extraction', err);
       void markFailed(id);
       return { kind: 'done' };
     }
     const next = (retryCount.get(id) ?? 0) + 1;
     retryCount.set(id, next);
     if (next < maxRetries) return { kind: 'retry' };
-    pipelineError('extraction', err);
     void markFailed(id);
     return { kind: 'done' };
   }

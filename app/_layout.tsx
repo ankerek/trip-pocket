@@ -23,6 +23,7 @@ import {
 } from '@/modules/capture';
 import { createProcessor, provideProcessor, type Processor } from '@/modules/processing';
 import { fetchPostFromProxy } from '@/modules/capture/fetchPostFromProxy';
+import { initPipelineLog, sweepPipelineEvents } from '@/modules/pipeline-log';
 import { Directory, File, Paths } from 'expo-file-system';
 import {
   createExtractor,
@@ -78,6 +79,17 @@ export default function RootLayout() {
       await runMigrations(db, migrations);
       provideDatabase(db);
       void attachInstallId();
+
+      // Pipeline observability: read the firehose flag once at boot so the
+      // first stage emission honours its persisted state, then trim the
+      // pipeline_events table to the 1000-row LRU cap. Both calls are
+      // best-effort — failure must not block app start.
+      try {
+        await initPipelineLog(db);
+        await sweepPipelineEvents(undefined, db);
+      } catch (err) {
+        console.warn('[pipeline-log] init failed', err);
+      }
 
       // OCR + URL-fetch pipeline. createProcessor + provideProcessor wires up
       // the singleton importImage talks to. runStartupRecovery is the
@@ -241,6 +253,14 @@ export default function RootLayout() {
               sheetGrabberVisible: true,
               sheetAllowedDetents: [0.5, 1.0],
               title: 'OCR debug',
+            }}
+          />
+          <Stack.Screen
+            name="diagnostics/pipeline-log"
+            options={{
+              headerShown: true,
+              title: 'Pipeline log',
+              ...SHARED_HEADER_OPTIONS,
             }}
           />
           <Stack.Screen

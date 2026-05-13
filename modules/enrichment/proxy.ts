@@ -5,6 +5,35 @@ import {
   type EnrichRequestPayload,
 } from './enrichment';
 
+// Closed-vocab debug echo from the worker. Optional because an older deployed
+// worker that hasn't shipped the v0.4 echo will omit it. See
+// docs/superpowers/specs/2026-05-13-pipeline-observability-design.md
+// §Worker debug echo.
+const debugSchema = z.object({
+  searchOutcome: z.enum([
+    'ok',
+    'empty',
+    'rate_limited',
+    'upstream_4xx',
+    'upstream_5xx',
+    'network',
+    'non_json',
+  ]),
+  detailsOutcome: z.enum([
+    'not_called',
+    'ok',
+    'missing_id',
+    'rate_limited',
+    'upstream_4xx',
+    'upstream_5xx',
+    'network',
+    'non_json',
+  ]),
+  blurbOutcome: z.enum(['not_called', 'ok', 'empty', 'failed']),
+});
+
+export type EnrichDebug = z.infer<typeof debugSchema>;
+
 const responseSchema = z.union([
   z.object({
     status: z.literal('enriched'),
@@ -23,11 +52,21 @@ const responseSchema = z.union([
     city: z.string().nullable(),
     country_code: z.string().regex(/^[A-Z]{2}$/).nullable(),
     model: z.string().min(1),
+    _debug: debugSchema.optional(),
   }),
-  z.object({ status: z.literal('not-found') }),
+  z.object({
+    status: z.literal('not-found'),
+    _debug: debugSchema.optional(),
+  }),
 ]);
 
-const DEFAULT_TIMEOUT_MS = 15000;
+// 25s budget for the full /enrich round-trip. The worker does three
+// sub-steps (Places searchText, Places details, Gemini blurb) and the
+// in-call blurb retry can add another ~500ms + one Gemini attempt. 15s
+// was tight enough that slow-but-recovering Gemini calls hit AbortError;
+// 25s gives the worker headroom while still surfacing genuinely-hung
+// upstreams as `retryable` failures within a single foreground.
+const DEFAULT_TIMEOUT_MS = 25000;
 
 export type EnrichFromProxyOptions = {
   timeoutMs?: number;
@@ -87,7 +126,7 @@ export async function enrichFromProxy(
   }
 
   if (parsed.data.status === 'not-found') {
-    return { kind: 'not-found' };
+    return { kind: 'not-found', _debug: parsed.data._debug };
   }
   return {
     kind: 'enriched',
@@ -103,5 +142,6 @@ export async function enrichFromProxy(
     city: parsed.data.city,
     country_code: parsed.data.country_code,
     model: parsed.data.model,
+    _debug: parsed.data._debug,
   };
 }

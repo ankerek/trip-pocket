@@ -422,4 +422,163 @@ describe('handleEnrich', () => {
     const text = await res.text();
     expect(text).not.toContain(caption);
   });
+
+  // --- _debug echo matrix ---
+  // Mirrors the worker debug echo from /fetch-post: success responses carry
+  // per-step outcomes the phone forwards into the firehose. Error responses
+  // (4xx/5xx) deliberately do NOT carry _debug — those failures already
+  // surface as the HTTP error code and are visible in `wrangler tail`.
+
+  describe('_debug echo', () => {
+    type DebugBody = {
+      status: 'enriched' | 'not-found';
+      _debug?: {
+        searchOutcome: string;
+        detailsOutcome: string;
+        blurbOutcome: string;
+      };
+    };
+
+    it('enriched + blurb ok → search=ok details=ok blurb=ok', async () => {
+      globalThis.fetch = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        { match: isGemini, response: () => geminiOk() },
+      ]);
+      const body = (await (await handleEnrich(postJson(validBody), makeEnv())).json()) as DebugBody;
+      expect(body._debug).toEqual({
+        searchOutcome: 'ok',
+        detailsOutcome: 'ok',
+        blurbOutcome: 'ok',
+      });
+    });
+
+    it('enriched + blurb failed → search=ok details=ok blurb=failed', async () => {
+      globalThis.fetch = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        { match: isGemini, response: () => new Response('boom', { status: 500 }) },
+      ]);
+      const body = (await (await handleEnrich(postJson(validBody), makeEnv())).json()) as DebugBody;
+      expect(body._debug?.blurbOutcome).toBe('failed');
+    });
+
+    it('enriched + blurb empty text → search=ok details=ok blurb=empty', async () => {
+      // Gemini returns 200 but no usable text (e.g. whitespace-only). Worker
+      // distinguishes this from a thrown error so triage can tell "model
+      // declined" from "model errored".
+      globalThis.fetch = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        { match: isGemini, response: () => geminiOk('   ') },
+      ]);
+      const body = (await (await handleEnrich(postJson(validBody), makeEnv())).json()) as DebugBody;
+      expect(body._debug?.blurbOutcome).toBe('empty');
+    });
+
+    it('not-found → search=empty details=not_called blurb=not_called', async () => {
+      globalThis.fetch = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchEmpty() },
+      ]);
+      const body = (await (await handleEnrich(postJson(validBody), makeEnv())).json()) as DebugBody;
+      expect(body.status).toBe('not-found');
+      expect(body._debug).toEqual({
+        searchOutcome: 'empty',
+        detailsOutcome: 'not_called',
+        blurbOutcome: 'not_called',
+      });
+    });
+
+    it('search 5xx → error response without _debug', async () => {
+      // Error responses deliberately omit _debug (parallel to /fetch-post).
+      globalThis.fetch = scriptedFetch([
+        { match: isSearchText, response: () => new Response('boom', { status: 500 }) },
+      ]);
+      const res = await handleEnrich(postJson(validBody), makeEnv());
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body._debug).toBeUndefined();
+    });
+  });
+
+  // --- in-call blurb retry ---
+  // safeBuildBlurb does one transient retry (network/5xx). 4xx and 429 skip
+  // the retry because retrying in-call won't change the outcome.
+
+  describe('blurb retry', () => {
+    function geminiCallCount(spy: typeof fetch): number {
+      return ((spy as unknown as jest.Mock).mock.calls as Array<[unknown]>).filter((c) =>
+        isGemini(String(c[0])),
+      ).length;
+    }
+
+    it('retries a transient 5xx and succeeds on the second attempt', async () => {
+      let calls = 0;
+      const fetchSpy = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        {
+          match: isGemini,
+          response: () => {
+            calls += 1;
+            return calls === 1
+              ? new Response('boom', { status: 503 })
+              : geminiOk('second-attempt blurb');
+          },
+        },
+      ]);
+      globalThis.fetch = fetchSpy;
+
+      const res = await handleEnrich(postJson(validBody), makeEnv());
+      const body = (await res.json()) as { description: string; _debug?: { blurbOutcome: string } };
+      expect(body.description).toBe('second-attempt blurb');
+      expect(body._debug?.blurbOutcome).toBe('ok');
+      expect(geminiCallCount(fetchSpy)).toBe(2);
+    });
+
+    it('does NOT retry a 4xx (permanent) — gives up after one attempt', async () => {
+      const fetchSpy = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        { match: isGemini, response: () => new Response('bad', { status: 400 }) },
+      ]);
+      globalThis.fetch = fetchSpy;
+
+      const res = await handleEnrich(postJson(validBody), makeEnv());
+      const body = (await res.json()) as { description: string | null; _debug?: { blurbOutcome: string } };
+      expect(body.description).toBeNull();
+      expect(body._debug?.blurbOutcome).toBe('failed');
+      expect(geminiCallCount(fetchSpy)).toBe(1);
+    });
+
+    it('does NOT retry a 429 (rate-limited) — short backoff would just hit the limit again', async () => {
+      const fetchSpy = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        { match: isGemini, response: () => new Response('slow down', { status: 429 }) },
+      ]);
+      globalThis.fetch = fetchSpy;
+
+      const res = await handleEnrich(postJson(validBody), makeEnv());
+      const body = (await res.json()) as { description: string | null; _debug?: { blurbOutcome: string } };
+      expect(body.description).toBeNull();
+      expect(body._debug?.blurbOutcome).toBe('failed');
+      expect(geminiCallCount(fetchSpy)).toBe(1);
+    });
+
+    it('gives up after 2 failed transient attempts (does not loop)', async () => {
+      const fetchSpy = scriptedFetch([
+        { match: isSearchText, response: () => placesSearchOk() },
+        { match: isPlaceDetails, response: () => placesDetailsOk() },
+        { match: isGemini, response: () => new Response('boom', { status: 503 }) },
+      ]);
+      globalThis.fetch = fetchSpy;
+
+      const res = await handleEnrich(postJson(validBody), makeEnv());
+      const body = (await res.json()) as { description: string | null; _debug?: { blurbOutcome: string } };
+      expect(body.description).toBeNull();
+      expect(body._debug?.blurbOutcome).toBe('failed');
+      expect(geminiCallCount(fetchSpy)).toBe(2);
+    });
+  });
 });
