@@ -40,13 +40,13 @@ export default function SolutionScreen() {
   const colors = useThemeColors();
   return (
     <OnboardingScaffold
-      step={5}
+      step={3}
       headline="Welcome to a smarter way to save travel ideas."
       sub="Here's how Trip Pocket turns this around."
       footer={
         <PrimaryButton
           label="Continue"
-          onPress={() => router.push('/onboarding/preferences')}
+          onPress={() => router.push('/onboarding/demo')}
         />
       }
     >

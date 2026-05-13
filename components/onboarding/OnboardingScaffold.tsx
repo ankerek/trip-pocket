@@ -7,8 +7,10 @@ import { useThemeColors } from '@/tw/theme';
 import { OnboardingProgressBar } from './OnboardingProgressBar';
 
 type Props = {
-  /** 1-based step among progress-visible screens (2-11). 0 hides progress. */
+  /** 1-based step among progress-visible screens (1-4 in v2). 0 hides progress. */
   step: number;
+  /** Total progress-visible screens (v2: 4). */
+  total?: number;
   /** Show the chevron-back top-left affordance. */
   showBack?: boolean;
   /** Headline shown at the top of the scrollable body. */
@@ -26,6 +28,7 @@ type Props = {
 
 export function OnboardingScaffold({
   step,
+  total = 4,
   showBack = true,
   headline,
   sub,
@@ -70,7 +73,7 @@ export function OnboardingScaffold({
           <View className="flex-1" />
           <View className="h-9 w-9" />
         </View>
-        <OnboardingProgressBar step={step} />
+        <OnboardingProgressBar step={step} total={total} />
 
         <Body {...bodyProps} className={scroll ? undefined : 'flex-1 px-6 pt-2 pb-6'}>
           {headline ? (
@@ -89,7 +92,11 @@ export function OnboardingScaffold({
               {sub}
             </Text>
           ) : null}
-          <View className={headline || sub ? 'mt-6' : 'mt-2'}>{children}</View>
+          <View
+            className={`${headline || sub ? 'mt-6' : 'mt-2'}${scroll ? '' : ' flex-1'}`}
+          >
+            {children}
+          </View>
         </Body>
 
         {footer ? (

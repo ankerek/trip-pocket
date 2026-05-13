@@ -206,14 +206,14 @@ export default function RootLayout() {
   }, [ctx]);
 
   // First-launch redirect. Fires once after the boot pipeline is ready so
-  // we don't race the router. The /onboarding flow flips the flag when
-  // the user completes the paywall (or taps "x" on it during dev), so we
-  // intentionally key on the initial-render value of `needsOnboarding`
-  // rather than re-reading the file on every change.
+  // we don't race the router. We `push` (rather than `replace`) so the
+  // underlying (tabs) stays mounted beneath the modal — that way the
+  // paywall exit can `dismissAll()` and reveal it instantly with no second
+  // slide-in transition on top of the modal's fade-out.
   useEffect(() => {
     if (!ready) return;
     if (!needsOnboarding) return;
-    router.replace('/onboarding');
+    router.push('/onboarding');
   }, [ready, needsOnboarding, router]);
 
   if (!ready) return null;

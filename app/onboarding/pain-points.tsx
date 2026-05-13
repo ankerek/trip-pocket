@@ -4,10 +4,11 @@ import { useRouter } from 'expo-router';
 import { OnboardingScaffold } from '@/components/onboarding/OnboardingScaffold';
 import { OptionRow } from '@/components/onboarding/OptionRow';
 import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
-import { useOnboarding } from '@/lib/onboarding/state';
 
 // Screen 3 — Pain points. Multi-select. Used to make the user feel
-// understood; no downstream logic depends on the picks.
+// understood; no downstream logic depends on the picks. Selections are
+// component-local — the v2 OnboardingAnswers shape no longer carries
+// painPoints (spec: 2026-05-13-onboarding-redesign-design.md).
 const OPTIONS: { id: string; label: string }[] = [
   { id: 'camera-roll', label: 'Camera roll full of screenshots I never look at again' },
   { id: 'forgot-which', label: "I can't remember which café I screenshotted" },
@@ -20,8 +21,7 @@ const OPTIONS: { id: string; label: string }[] = [
 
 export default function PainPointsScreen() {
   const router = useRouter();
-  const { answers, set } = useOnboarding();
-  const [picked, setPicked] = useState<string[]>(answers.painPoints);
+  const [picked, setPicked] = useState<string[]>([]);
 
   function toggle(id: string) {
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
@@ -35,10 +35,7 @@ export default function PainPointsScreen() {
       footer={
         <PrimaryButton
           label="Continue"
-          onPress={() => {
-            set('painPoints', picked);
-            router.push('/onboarding/social-proof');
-          }}
+          onPress={() => router.push('/onboarding/solution')}
         />
       }
     >

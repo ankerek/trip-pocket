@@ -1,281 +1,327 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, Text, View, Image } from '@/tw';
-import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  Easing,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
+import { ScrollView, Text, View } from '@/tw';
+import { useRouter } from 'expo-router';
+import { Icon } from '@/components/Icon';
+import { useThemeColors } from '@/tw/theme';
 import { OnboardingScaffold } from '@/components/onboarding/OnboardingScaffold';
 import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
-import { Icon } from '@/components/Icon';
-import { useThemeColors, durations } from '@/tw/theme';
-import { useOnboarding, type DemoPlacePick } from '@/lib/onboarding/state';
-import { pickDemoSeed } from '@/lib/onboarding/demoPlaces';
+import { DemoPlaceCard } from '@/components/onboarding/DemoPlaceCard';
+import { DemoScreenshotMockup } from '@/components/onboarding/DemoScreenshotMockup';
+import {
+  DemoSharePathMockup,
+  type SharePathPhase,
+} from '@/components/onboarding/DemoSharePathMockup';
+import { DEMO_SCREENSHOT, DEMO_SHARE } from '@/lib/onboarding/demoFixtures';
+import * as Haptics from 'expo-haptics';
 
-// Screen 10 — The demo. Users tap ✓ or ✗ on a stack of curated cards.
-// Their kept picks become the starter trip on Screen 11.
+// Screen 5 — The demo. Two-example sequence:
+//   Ex 1: tap the tilted screenshot → "extracting…" pulse → 3 place cards
+//   Ex 2: tap the live IG card → share-sheet → trip-picker → user taps
+//         "Japan" → 1 place card with "Saved to Japan" header
 //
-// Design notes:
-// - Buttons advance the deck. When the deck is exhausted we auto-navigate.
-// - There's also an explicit "Done" CTA that's always tappable (it just
-//   commits whatever has been picked so far, or none) — this is the
-//   user's escape hatch and the primary reason the screen never "feels
-//   stuck": there is always a forward affordance regardless of state.
-// - Card-off animation uses a setTimeout to advance state rather than
-//   relying on Reanimated's withTiming callback, which doesn't fire
-//   reliably on all RN/Reanimated combinations.
-// - State setters use the functional form so rapid taps can't race a
-//   stale closure.
+// State machine and rationale documented in
+// docs/superpowers/specs/2026-05-13-onboarding-redesign-design.md.
 
-const CATEGORY_ICON: Record<DemoPlacePick['category'], string> = {
-  food: 'fork.knife',
-  activity: 'figure.walk',
-  place: 'mappin.circle',
-};
+type Phase =
+  | 'idle1'
+  | 'extracting1'
+  | 'revealed1'
+  | 'idle2'
+  | 'shareSheet2'   // user must tap the Trip Pocket icon in the share sheet
+  | 'waitingPick'   // trip picker visible, user must tap the Japan pill
+  | 'revealed2';
 
-const CATEGORY_LABEL: Record<DemoPlacePick['category'], string> = {
-  food: 'Food',
-  activity: 'Activity',
-  place: 'Place',
+const TIMINGS = {
+  extracting1: 1400,
 };
 
 export default function DemoScreen() {
   const router = useRouter();
-  const colors = useThemeColors();
-  const { answers, set } = useOnboarding();
 
-  const seed = useMemo(
-    () =>
-      pickDemoSeed(
-        answers.destination ?? 'bucket-list',
-        answers.categories,
-        5,
-      ),
-    [answers.destination, answers.categories],
-  );
-
-  const [index, setIndex] = useState(0);
-  const [picks, setPicks] = useState<DemoPlacePick[]>([]);
+  const [phase, setPhase] = useState<Phase>('idle1');
   const finishedRef = useRef(false);
 
-  const tx = useSharedValue(0);
-  const rotate = useSharedValue(0);
-  const opacity = useSharedValue(1);
+  // Cleanup any pending timers when the screen unmounts (back-nav etc).
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const scheduleTimer = useCallback(
+    (fn: () => void, ms: number) => {
+      const id = setTimeout(fn, ms);
+      timersRef.current.push(id);
+    },
+    [],
+  );
+  useEffect(() => () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  }, []);
 
-  const cardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { rotate: `${rotate.value}deg` }],
-    opacity: opacity.value,
-  }));
+  // --- Example 1 transitions ---
 
-  // Reset the card pose when the index advances. Runs after render so the
-  // new card snaps to center (still invisible at opacity 0) before fading in.
-  useEffect(() => {
-    tx.value = 0;
-    rotate.value = 0;
-    opacity.value = withTiming(1, { duration: durations.short });
-  }, [index, tx, rotate, opacity]);
-
-  const total = seed.length;
-  const done = index >= total;
-
-  // Auto-finish once the deck is exhausted. finishedRef prevents the
-  // navigation from running twice if React re-fires the effect during
-  // the replace transition.
-  useEffect(() => {
-    if (!done) return;
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-    set('starterPlaces', picks);
-    router.replace('/onboarding/value');
-  }, [done, picks, set, router]);
-
-  function advance(keep: boolean) {
-    const card = seed[index];
-    if (!card) return;
-    void Haptics.impactAsync(
-      keep ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light,
-    );
-    const direction = keep ? 1 : -1;
-    tx.value = withTiming(direction * 420, { duration: durations.short });
-    rotate.value = withTiming(direction * 14, { duration: durations.short });
-    opacity.value = withTiming(0, { duration: durations.short });
-    // setTimeout (instead of withTiming's completion callback) makes
-    // advancement bullet-proof — the deck progresses even if the worklet
-    // callback path is finicky on a given device/Reanimated version.
-    setTimeout(() => {
-      if (keep) setPicks((p) => [...p, card]);
-      setIndex((i) => i + 1);
-    }, durations.short);
+  function startExtracting1() {
+    void Haptics.selectionAsync();
+    setPhase('extracting1');
+    scheduleTimer(() => {
+      setPhase('revealed1');
+    }, TIMINGS.extracting1);
   }
 
-  function finishNow() {
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-    set('starterPlaces', picks);
-    router.replace('/onboarding/value');
+  function nextToExample2() {
+    void Haptics.selectionAsync();
+    setPhase('idle2');
   }
 
-  const current = seed[index];
-  const remaining = Math.max(0, total - index);
-  const counterLabel =
-    picks.length === 0
-      ? `${remaining} CARD${remaining === 1 ? '' : 'S'} LEFT`
-      : `${picks.length} SAVED · ${remaining} LEFT`;
+  // --- Example 2 transitions (all user-driven). ---
+
+  function onSharePressed() {
+    void Haptics.selectionAsync();
+    setPhase('shareSheet2');
+  }
+
+  function onTripPocketPressed() {
+    // Trip Pocket icon tapped — share sheet animates out, trip picker
+    // animates in. Both are driven by the mockup's phase prop.
+    setPhase('waitingPick');
+  }
+
+  function onJapanPick() {
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setPhase('revealed2');
+  }
+
+  function finishToPaywall() {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    router.push('/onboarding/paywall');
+  }
+
+  // --- Footer CTA derivation ---
+
+  const footer = (() => {
+    switch (phase) {
+      case 'idle1':
+        return <PrimaryButton label="See it extract" onPress={startExtracting1} />;
+      case 'extracting1':
+        return null;
+      case 'revealed1':
+        return <PrimaryButton label="Next: from a share" onPress={nextToExample2} />;
+      case 'idle2':
+        return (
+          <Text
+            className="text-center text-text-muted"
+            style={{ fontSize: 12, lineHeight: 18, paddingVertical: 14 }}
+          >
+            Tap the highlighted share icon on the post.
+          </Text>
+        );
+      case 'shareSheet2':
+        return (
+          <Text
+            className="text-center text-text-muted"
+            style={{ fontSize: 12, lineHeight: 18, paddingVertical: 14 }}
+          >
+            Tap Trip Pocket in the share sheet.
+          </Text>
+        );
+      case 'waitingPick':
+        return (
+          <Text
+            className="text-center text-text-muted"
+            style={{ fontSize: 12, lineHeight: 18, paddingVertical: 14 }}
+          >
+            Tap the highlighted trip to save it.
+          </Text>
+        );
+      case 'revealed2':
+        return <PrimaryButton label="Continue" onPress={finishToPaywall} />;
+    }
+  })();
+
+  // Hide the back chevron during the busy extraction phase — leaving
+  // mid-animation would leak shared-value state. All other phases are
+  // user-driven and safe to back out of.
+  const showBack = phase !== 'extracting1' && phase !== 'revealed2';
+
+  // Step-pill label updates with phase to reinforce which example you're on.
+  const isExample1 =
+    phase === 'idle1' || phase === 'extracting1' || phase === 'revealed1';
+  const stepLabel = isExample1
+    ? '1 / 2 · FROM A SCREENSHOT'
+    : '2 / 2 · FROM A SHARE';
+
+  // Sub-mockup phase mapping for example 2.
+  const sharePathPhase: SharePathPhase = (() => {
+    if (phase === 'idle2') return 'idle';
+    if (phase === 'shareSheet2') return 'sheet';
+    if (phase === 'waitingPick') return 'picker';
+    if (phase === 'revealed2') return 'fading';
+    return 'idle';
+  })();
 
   return (
     <OnboardingScaffold
-      step={9}
-      headline="Pick the places that look like you."
-      sub="Tap ✓ to keep, ✗ to skip. We'll save them as your starter trip."
+      step={4}
+      showBack={showBack}
       scroll={false}
-      footer={
-        <PrimaryButton
-          label={picks.length === 0 ? 'Skip — build empty trip' : 'Done — build my trip'}
-          onPress={finishNow}
-        />
-      }
+      footer={footer}
     >
-      <View className="flex-1 items-center justify-between" style={{ paddingTop: 6 }}>
+      <ScrollView
+        contentContainerClassName="items-center pb-4"
+        showsVerticalScrollIndicator={false}
+        style={{ flex: 1 }}
+      >
         <Text
           className="text-text-muted"
-          style={{ fontSize: 12, fontWeight: '700', letterSpacing: 0.6 }}
-        >
-          {counterLabel}
-        </Text>
-
-        <View
           style={{
-            width: '100%',
-            maxWidth: 320,
-            aspectRatio: 3 / 4,
-            position: 'relative',
-            marginVertical: 8,
+            fontSize: 11,
+            fontWeight: '700',
+            letterSpacing: 0.6,
+            marginTop: 4,
           }}
         >
-          {/* Next-card peek for stack depth */}
-          {seed[index + 1] ? (
-            <View
-              className="overflow-hidden rounded-3xl border border-hairline bg-surface"
-              style={{
-                position: 'absolute',
-                inset: 0,
-                transform: [{ scale: 0.95 }, { translateY: 14 }],
-                opacity: 0.55,
-              }}
+          {stepLabel}
+        </Text>
+
+        <Text
+          className="mt-3 text-center text-text"
+          style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4, lineHeight: 34 }}
+        >
+          Watch it work.
+        </Text>
+        <Text
+          className="mt-2 text-center text-text-muted"
+          style={{ fontSize: 15, lineHeight: 22, paddingHorizontal: 8 }}
+        >
+          Two ways places land in Trip Pocket.
+        </Text>
+
+        <View style={{ width: '100%', marginTop: 18, alignItems: 'center' }}>
+          {(phase === 'idle1' || phase === 'extracting1') ? (
+            <ExtractingFrame
+              variant={phase === 'idle1' ? 'idle' : 'busy'}
             />
           ) : null}
 
-          {current ? (
-            <Animated.View
-              style={[
-                {
-                  position: 'absolute',
-                  inset: 0,
-                  borderRadius: 24,
-                  overflow: 'hidden',
-                  backgroundColor: colors.surface,
-                  borderWidth: 1,
-                  borderColor: colors.hairline,
-                },
-                cardStyle,
-              ]}
-            >
-              <Image
-                source={{ uri: current.imageUrl }}
-                style={{ position: 'absolute', inset: 0 }}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-                transition={200}
-              />
-              <LinearGradient
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.6)']}
-                locations={[0, 0.5, 1]}
-                style={{ position: 'absolute', inset: 0 }}
-              />
-              <View
-                style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }}
-              >
-                <View
-                  className="flex-row items-center self-start rounded-full px-2.5 py-1"
-                  style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
-                >
-                  <Icon
-                    name={CATEGORY_ICON[current.category]}
-                    size={11}
-                    tintColor="#ffffff"
-                  />
-                  <Text
-                    style={{
-                      marginLeft: 4,
-                      color: '#ffffff',
-                      fontSize: 11,
-                      fontWeight: '700',
-                      letterSpacing: 0.4,
-                    }}
-                  >
-                    {CATEGORY_LABEL[current.category].toUpperCase()}
-                  </Text>
-                </View>
-                <Text
-                  style={{
-                    color: '#ffffff',
-                    fontSize: 22,
-                    fontWeight: '700',
-                    marginTop: 8,
-                    letterSpacing: -0.3,
-                    textShadowColor: 'rgba(0,0,0,0.45)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 3,
-                  }}
-                >
-                  {current.name}
-                </Text>
-                <Text
-                  style={{
-                    color: 'rgba(255,255,255,0.92)',
-                    fontSize: 13,
-                    fontWeight: '500',
-                    marginTop: 2,
-                  }}
-                >
-                  {current.city}
-                </Text>
-              </View>
-            </Animated.View>
-          ) : null}
-        </View>
+          {phase === 'revealed1' ? <RevealedExample1 /> : null}
 
-        <View className="flex-row" style={{ gap: 24 }}>
-          <Pressable
-            onPress={() => advance(false)}
-            disabled={!current}
-            accessibilityRole="button"
-            accessibilityLabel="Skip this place"
-            className="h-16 w-16 items-center justify-center rounded-full"
-            style={{
-              backgroundColor: colors.surface,
-              borderWidth: 1.5,
-              borderColor: colors.hairline,
-              opacity: current ? 1 : 0.4,
-            }}
-          >
-            <Icon name="xmark" size={22} tintColor={colors.textMuted} />
-          </Pressable>
-          <Pressable
-            onPress={() => advance(true)}
-            disabled={!current}
-            accessibilityRole="button"
-            accessibilityLabel="Keep this place"
-            className="h-16 w-16 items-center justify-center rounded-full"
-            style={{ backgroundColor: colors.accent, opacity: current ? 1 : 0.4 }}
-          >
-            <Icon name="heart.fill" size={22} tintColor="#ffffff" />
-          </Pressable>
+          {(phase === 'idle2' || phase === 'shareSheet2' || phase === 'waitingPick') ? (
+            <DemoSharePathMockup
+              fixture={DEMO_SHARE}
+              phase={sharePathPhase}
+              onSharePressed={onSharePressed}
+              onTripPocketPressed={onTripPocketPressed}
+              onJapanPick={onJapanPick}
+            />
+          ) : null}
+
+          {phase === 'revealed2' ? <RevealedExample2 /> : null}
         </View>
-      </View>
+      </ScrollView>
     </OnboardingScaffold>
+  );
+}
+
+function ExtractingFrame({ variant }: { variant: 'idle' | 'busy' }) {
+  const colors = useThemeColors();
+  const scale = useSharedValue(1);
+  const sparkleOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (variant === 'busy') {
+      scale.value = withTiming(0.95, { duration: 300, easing: Easing.out(Easing.cubic) });
+      sparkleOpacity.value = withTiming(1, {
+        duration: 400,
+        easing: Easing.in(Easing.quad),
+      });
+    } else {
+      scale.value = withTiming(1, { duration: 200 });
+      sparkleOpacity.value = withTiming(0, { duration: 200 });
+    }
+  }, [variant, scale, sparkleOpacity]);
+
+  const stackStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+  const sparkleStyle = useAnimatedStyle(() => ({ opacity: sparkleOpacity.value }));
+
+  return (
+    <View style={{ width: '100%', maxWidth: 320, alignItems: 'center' }}>
+      <Animated.View style={[stackStyle, { opacity: variant === 'busy' ? 0.65 : 1 }]}>
+        <DemoScreenshotMockup fixture={DEMO_SCREENSHOT} pulsing={variant === 'idle'} />
+      </Animated.View>
+      {variant === 'busy' ? (
+        <Animated.View
+          style={[
+            sparkleStyle,
+            {
+              position: 'absolute',
+              top: '50%',
+              left: 0,
+              right: 0,
+              alignItems: 'center',
+              marginTop: -36,
+            },
+          ]}
+        >
+          <View
+            className="h-14 w-14 items-center justify-center rounded-full"
+            style={{ backgroundColor: 'rgba(20, 184, 166, 0.18)' }}
+          >
+            <Icon name="sparkles" size={28} tintColor={colors.accent} />
+          </View>
+          <Text
+            className="mt-2 text-text"
+            style={{ fontSize: 13, fontWeight: '600', letterSpacing: -0.1 }}
+          >
+            Extracting 3 places…
+          </Text>
+        </Animated.View>
+      ) : null}
+    </View>
+  );
+}
+
+function RevealedExample1() {
+  const colors = useThemeColors();
+  return (
+    <View style={{ width: '100%' }}>
+      <View
+        className="flex-row items-center"
+        style={{ gap: 8, marginBottom: 10, paddingHorizontal: 4 }}
+      >
+        <Icon name="checkmark.seal.fill" size={16} tintColor={colors.accent} />
+        <Text className="text-text" style={{ fontSize: 15, fontWeight: '700' }}>
+          3 places found
+        </Text>
+      </View>
+      <View style={{ gap: 8 }}>
+        {DEMO_SCREENSHOT.reveals.map((place) => (
+          <DemoPlaceCard key={place.name} place={place} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function RevealedExample2() {
+  const colors = useThemeColors();
+  return (
+    <View style={{ width: '100%' }}>
+      <View
+        className="flex-row items-center"
+        style={{ gap: 8, marginBottom: 10, paddingHorizontal: 4 }}
+      >
+        <Icon name="checkmark.seal.fill" size={16} tintColor={colors.accent} />
+        <Text className="text-text" style={{ fontSize: 15, fontWeight: '700' }}>
+          Saved to {DEMO_SHARE.tripPickerLabel}
+        </Text>
+      </View>
+      <DemoPlaceCard place={DEMO_SHARE.reveal} />
+    </View>
   );
 }

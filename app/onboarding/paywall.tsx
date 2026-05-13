@@ -8,8 +8,9 @@ import { Icon } from '@/components/Icon';
 import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
 import { useThemeColors } from '@/tw/theme';
 import { markOnboardingComplete } from '@/lib/onboarding/storage';
+import { useOnboarding, type Destination } from '@/lib/onboarding/state';
 
-// Screen 12 — Paywall. PLACEHOLDER. PRODUCT.md specifies 7-day free trial,
+// Screen 6 — Paywall. PLACEHOLDER. PRODUCT.md specifies 7-day free trial,
 // then auto-renewing monthly or yearly. Wire this to RevenueCat (or
 // StoreKit + expo-iap) before App Store submission.
 //
@@ -27,11 +28,29 @@ const PLANS: Record<Plan, { price: string; per: string; note: string; badge?: st
   monthly: { price: '$6.99', per: '/mo', note: 'Billed monthly after trial' },
 };
 
+// Hand-written per-destination headline. DESTINATION_LABEL alone produces
+// awkward strings ("Your US road trip trip starts here.") so each value is
+// authored individually. Spec: 2026-05-13-onboarding-redesign-design.md.
+const PAYWALL_HEADLINE: Record<Destination, string> = {
+  japan: 'Your Japan trip starts here.',
+  sea: 'Your Southeast Asia trip starts here.',
+  europe: 'Your Europe trip starts here.',
+  'us-roadtrip': 'Your US road trip starts here.',
+  'city-break': 'Your city break starts here.',
+  'bucket-list': 'Your bucket list starts here.',
+  general: 'Your next trip starts here.',
+};
+const FALLBACK_HEADLINE = 'Your next trip starts here.';
+
 export default function PaywallScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const [plan, setPlan] = useState<Plan>('yearly');
+  const { answers } = useOnboarding();
+  const headline = answers.destination
+    ? PAYWALL_HEADLINE[answers.destination]
+    : FALLBACK_HEADLINE;
 
   function handleStartTrial() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -39,7 +58,7 @@ export default function PaywallScreen() {
     // simulates a successful purchase so the rest of the flow is
     // exercisable end-to-end during dev. Replace before launch.
     markOnboardingComplete();
-    router.replace('/(tabs)/(places)');
+    exitOnboarding();
   }
 
   function handleRestore() {
@@ -49,7 +68,20 @@ export default function PaywallScreen() {
     // found" message. For dev, treat restore as a successful unlock so
     // QA can iterate on the post-onboarding app.
     markOnboardingComplete();
-    router.replace('/(tabs)/(places)');
+    exitOnboarding();
+  }
+
+  function exitOnboarding() {
+    // The paywall sits inside two nested Stacks:
+    //   root Stack [ (tabs), onboarding (fullScreenModal) ]
+    //     └── onboarding Stack [ index, destination, …, paywall ]
+    // router.dismissAll() only targets the *closest* Stack, so on its
+    // own it pops the inner Stack back to /onboarding (Welcome) and
+    // leaves the modal mounted — the user lands on the start of
+    // onboarding again. We follow it with router.dismiss() to pop the
+    // modal off the root Stack so (tabs) becomes visible underneath.
+    router.dismissAll();
+    router.dismiss();
   }
 
   return (
@@ -71,7 +103,7 @@ export default function PaywallScreen() {
           <Pressable
             onPress={() => {
               markOnboardingComplete();
-              router.replace('/(tabs)/(places)');
+              exitOnboarding();
             }}
             accessibilityRole="button"
             accessibilityLabel="Close paywall"
@@ -106,7 +138,7 @@ export default function PaywallScreen() {
             className="mt-6 text-center text-text"
             style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4, lineHeight: 34 }}
           >
-            Your pocket for{'\n'}travel ideas.
+            {headline}
           </Text>
           <Text
             className="mt-2 text-center text-text-muted"
@@ -114,26 +146,6 @@ export default function PaywallScreen() {
           >
             Capture screenshots. The AI finds the place. One tap opens Maps when you arrive.
           </Text>
-
-          {/* Featured testimonial — replace with a real App Store review */}
-          <View
-            className="mt-6 rounded-2xl border border-hairline bg-surface px-4 py-4"
-          >
-            <View className="flex-row" style={{ gap: 2 }}>
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Icon key={i} name="star.fill" size={13} tintColor={colors.accent} />
-              ))}
-            </View>
-            <Text
-              className="mt-2 text-text"
-              style={{ fontSize: 15, lineHeight: 22, fontWeight: '500' }}
-            >
-              “I finally stopped re-Googling the same cafés. It&apos;s just there.”
-            </Text>
-            <Text className="mt-2 text-text-muted" style={{ fontSize: 12 }}>
-              — Maya, Tokyo five times in two years
-            </Text>
-          </View>
 
           {/* Plan pills */}
           <View className="mt-6" style={{ gap: 10 }}>

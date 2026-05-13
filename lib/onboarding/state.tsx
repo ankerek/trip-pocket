@@ -10,32 +10,19 @@ export type Destination =
   | 'bucket-list'
   | 'general';
 
-export type Category = 'food' | 'culture' | 'nature' | 'stays' | 'shopping' | 'nightlife';
-
-export type DemoPlacePick = {
-  id: string;
-  name: string;
-  city: string;
-  category: 'place' | 'food' | 'activity';
-  imageUrl: string;
-};
-
+// v2 (2026-05-13) — slimmed to a single field. The prior shape carried
+// `painPoints`, `agreedPains`, `categories`, `photosPrimed`, and
+// `starterPlaces`; none of those fields had any downstream consumer in
+// the redesigned flow, so they're gone. `painPoints` is now ephemeral
+// state inside `app/onboarding/pain-points.tsx` only.
+//
+// Spec: docs/superpowers/specs/2026-05-13-onboarding-redesign-design.md
 export type OnboardingAnswers = {
   destination: Destination | null;
-  painPoints: string[];
-  agreedPains: string[];
-  categories: Category[];
-  photosPrimed: boolean;
-  starterPlaces: DemoPlacePick[];
 };
 
 const EMPTY_ANSWERS: OnboardingAnswers = {
   destination: null,
-  painPoints: [],
-  agreedPains: [],
-  categories: [],
-  photosPrimed: false,
-  starterPlaces: [],
 };
 
 type Ctx = {
@@ -47,11 +34,17 @@ type Ctx = {
 const OnboardingContext = createContext<Ctx | null>(null);
 
 function loadInitial(): OnboardingAnswers {
+  // Explicit key extraction so old v1 payloads (with `categories`,
+  // `painPoints`, etc.) don't leak unknown fields into the v2 runtime
+  // object. Spread (`{ ...EMPTY_ANSWERS, ...parsed }`) would carry them
+  // through even though the TypeScript type doesn't include them.
   try {
     const raw = readOnboardingAnswers();
     if (!raw) return EMPTY_ANSWERS;
     const parsed = JSON.parse(raw) as Partial<OnboardingAnswers>;
-    return { ...EMPTY_ANSWERS, ...parsed };
+    return {
+      destination: parsed.destination ?? null,
+    };
   } catch {
     return EMPTY_ANSWERS;
   }
