@@ -81,7 +81,9 @@ export function initPipelineLog(): Promise<void>; // reads firehose flag from me
 export function sweepPipelineEvents(): Promise<void>; // LRU trim, called from startup recovery
 ```
 
-The `Stage` handle holds the start timestamp and stage metadata. `done`/`failed` are idempotent — second call on the same handle is a no-op (so weird retry loops that double-call don't double-emit). Both methods are synchronous from the caller's perspective; the SQLite insert is fire-and-forget (errors are `console.warn`'d but never surface to the pipeline).
+The `Stage` handle holds the start timestamp and stage metadata. `done`/`failed` are idempotent — second call on the same handle is a no-op (so weird control flow that double-calls doesn't double-emit). Both methods are synchronous from the caller's perspective; the SQLite insert is fire-and-forget (errors are `console.warn`'d but never surface to the pipeline).
+
+**Retries are per-attempt, not per-logical-stage.** The retry loops in `processOne`/`processUrlFetch` (3-try budgets, today) call `startStage` once *per attempt*. A flaky OCR that succeeds on attempt 3 produces three `ocr` rows: two `failed` then one `done`, all sharing the same `source_id`. This is intentional — transient flakiness is exactly the kind of signal you want visible when debugging "this carousel sometimes works, sometimes doesn't." Multiple rows for the same `(source_id, stage)` pair are normal in the UI; the stream renders them in chronological order with their distinct durations and error summaries.
 
 ## Stages + call-site migration
 
@@ -167,14 +169,16 @@ Success response shape becomes:
 }
 ```
 
-**Field values** (all closed enums; no free text, no content):
+**Field values** (all closed enums; no free text, no content). The enums must match the worker's existing internal `UpstreamError.code` and `ApifyError.code` taxonomies — adding a new branch in the worker requires expanding the enum and bumping the response in lock-step.
 
 | Field | Values |
 |---|---|
-| `route` | `og_only` · `og_then_apify_carousel` · `og_then_apify_unknown_efg` · `og_failed_apify_fallback` · `tiktok_og` · `tiktok_oembed` |
-| `ogOutcome` | `ok` · `empty_desc` · `empty_image` · `http_429` · `http_4xx` · `http_5xx` · `timeout` · `not_called` |
-| `apifyOutcome` | `not_called` · `ok` · `empty` · `carousel_no_children` · `auth` · `rate_limited` · `upstream` · `timeout` · `network` |
+| `route` | `og_only` · `og_only_apify_disabled` · `og_then_apify_carousel` · `og_then_apify_unknown_efg` · `og_failed_apify_fallback` · `tiktok_og` · `tiktok_oembed` |
+| `ogOutcome` | `ok` · `empty` · `not_found` · `private` · `unsupported_url` · `rate_limited` · `timeout` · `network` · `upstream_5xx` · `not_called` |
+| `apifyOutcome` | `not_called` · `not_configured` · `ok` · `empty` · `carousel_no_children` · `auth` · `actor_not_found` · `rate_limited` · `timeout` · `network` · `upstream` · `non_json` |
 | `cacheHit` | `true` · `false` |
+
+The `og_only_apify_disabled` route is critical: it's the soft-degrade case where Apify *should* have fired (carousel / unknown efg / og-failed) but `APIFY_TOKEN` was unset, so the worker silently returned the og: result instead. Without a dedicated route value, a carousel that silently dropped slides 2..N would look identical to a real single-image og:-only fetch — exactly the dispatch decision the `_debug` echo is meant to surface.
 
 **Privacy posture unchanged.** All values are closed enums describing routing decisions — no URLs, no caption text, no actor responses. The worker's existing privacy rule (log status, latency, error class only — never URL or caption) extends naturally: `_debug` carries the same shapes Workers logs already capture, just promoted into the response.
 
@@ -201,7 +205,7 @@ CREATE TABLE pipeline_events (
   status        TEXT NOT NULL CHECK (status IN ('done','failed')),
   occurred_at   TEXT NOT NULL,        -- ISO timestamp, end of stage
   duration_ms   INTEGER NOT NULL,
-  error_summary TEXT                  -- "<Error.name>: <truncated message>"
+  error_summary TEXT                  -- "<Error.name>" or "<Error.name>:<code>" — never raw .message
 );
 
 CREATE INDEX idx_pipeline_events_source ON pipeline_events(source_id);
@@ -209,9 +213,14 @@ CREATE INDEX idx_pipeline_events_occurred ON pipeline_events(occurred_at DESC);
 ```
 
 **Field rules:**
-- `source_id` is **nullable** — share-extension stages emit before a source row exists.
+- `source_id` is **nullable** but only as a fallback. The standard pattern is: the main-app ingest path **pre-allocates the source UUID** at the start of `share_import` / `url_share_import` and threads the same UUID through to `storage` and every downstream stage. All rows for the same import then share one `source_id`, even if `storage` itself fails — those orphans group correctly in the Diagnostics stream under the pre-allocated id (the source-detail header shows "(missing)" if no `sources` row materializes). `source_id` only stays `NULL` for pre-app activity that can't get an id yet (e.g. raw share-extension instrumentation if it's ever added — currently out of scope).
 - `occurred_at` is the **end** of the stage. Start time is computable as `occurred_at − duration_ms` if ever needed; storing it separately wastes space at no benefit.
-- `error_summary` is `<Error.name>: <first 200 chars of message>` for failures, `NULL` for successes. The 200-char cap is structural — a stack-trace dump can't blow up the column. The full error continues to flow to Sentry / `console.error` independently.
+- `error_summary` carries **only the error class** plus, if present, a known sub-class's `code` property — never the raw `.message`. Format:
+  - For sub-classed errors that expose a `code` field (`UpstreamError`, `ApifyError`, `FetchPostError`, `ExtractionError`, `EnrichmentError`): `"<Error.name>:<code>"`, e.g. `"ApifyError:apify-auth"`, `"FetchPostError:not-found"`.
+  - For plain `Error`: just `Error.name`, e.g. `"TypeError"`.
+  - Truncated at 80 chars structurally so this column can never grow unbounded.
+
+  Raw `err.message` is deliberately excluded because upstream library messages can carry URLs, file paths, captions, or model output. Sub-class codes are closed vocabularies defined in this codebase, so persisting them is safe. The full error (including raw message) still flows to Sentry / `console.error` independently — we just don't persist it on-device.
 - No content fields (`ocr_text`, `caption`, `places_json`, etc.). No outcome counts (`places_count`, `image_urls_count`, etc.). The in-app stream answers "what stages ran and which failed"; counts are firehose-only.
 
 **Retention:** LRU sweep keeping the most recent 1000 rows globally. At ~9 events per source × heaviest case 100 sources/week ≈ 900 events/week, the cap rotates weekly — long enough to investigate yesterday's bug, short enough to keep the table trivial (estimated ~50 KB at the cap).
@@ -298,7 +307,7 @@ The formatter:
 
 ## Privacy + relationship to other observability
 
-**Persisted rows hold no content.** Stages, timestamps, durations, error class + truncated message only. On a stolen device, the table reveals "this user shared 47 things last month, 3 failed in extraction" — nothing about what they shared. This is the same privacy class as `sources.ocr_status` today, just with timestamps and durations added.
+**Persisted rows hold no content.** Stages, timestamps, durations, and error class (plus sub-class `code` from closed vocabularies). Raw `err.message` is never persisted because upstream library messages can carry URLs, file paths, or content. On a stolen device, the table reveals "this user shared 47 things last month, 3 failed in extraction with `ApifyError:apify-auth`" — nothing about what they shared. This is the same privacy class as `sources.ocr_status` today, just with timestamps and durations added.
 
 **Firehose holds full content but is dev-only and local.** Hard-gated by `__DEV__` plus an opt-in toggle. The content never leaves the device and never persists past the Metro process buffer.
 
@@ -323,14 +332,15 @@ Each phase is independently shippable. Phase 1 lands with no behaviour change. P
 `modules/pipeline-log/index.test.ts`:
 
 - `startStage('ocr').done({ ocrLength: 5 })` writes one row, status=done, duration ≈ 0, no error_summary.
-- `startStage('ocr').failed(new Error('boom'))` writes one row, status=failed, error_summary=`Error: boom`.
+- `startStage('ocr').failed(new Error('boom'))` writes one row, status=failed, error_summary=`Error` (raw `.message` is NOT persisted; see Storage / schema).
+- `startStage('apify').failed(new ApifyError(500, 'apify-auth'))` writes error_summary=`ApifyError:apify-auth`.
 - Calling `.done()` twice is a no-op (idempotency).
 - Calling `.failed()` after `.done()` is a no-op.
 - Firehose-off: no `console.log` regardless of dev/prod.
 - Firehose-on + `__DEV__`: `console.log` called with formatted content line; content keys present.
 - Firehose-on + `!__DEV__`: no `console.log` (hard gate).
 - Formatter truncates string values at 500 chars; escapes inner quotes.
-- `error_summary` truncates at 200 chars and prefixes with `err.name`.
+- `error_summary` captures `err.name` (plus `err.code` for sub-classed errors) but never the raw `err.message`; structural truncation at 80 chars.
 - `sweepPipelineEvents` removes rows past the 1000-row cap and keeps the most recent rows intact.
 
 Integration assertions in `modules/processing/__tests__/processing.test.ts`:
