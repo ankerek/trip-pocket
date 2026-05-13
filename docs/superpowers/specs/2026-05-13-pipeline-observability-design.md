@@ -28,6 +28,7 @@ The product-analytics spec (`2026-05-12-telemetry-design.md`) handles a differen
 - Migration of the ~9 existing `pipelineStep` / `pipelineError` call sites in `modules/capture`, `modules/processing`, `modules/extraction`, `modules/enrichment` to the new API.
 - `url_fetch` stage split into `url_fetch` (worker call) + `image_download` (cover + slide downloads).
 - Dev-build-only **Metro firehose**: when toggled on, every stage transition logs a structured one-liner to `console.log` with full content props (caption, OCR text, places JSON). Off by default; gated by `__DEV__` AND a Settings toggle.
+- **Worker debug echo** on `/fetch-post`: the worker adds a small `_debug` object to its success response carrying the route it took (og-only vs Apify-carousel vs Apify-fallback), the og: outcome, the Apify outcome, and the cache hit/miss. The phone client unpacks `_debug` and forwards it into the `url_fetch` stage's `extra` so the firehose shows worker-side dispatch decisions without context-switching to `wrangler tail`.
 - In-app **Pipeline log** screen under `Settings → Diagnostics`, visible in both dev and TestFlight builds. Renders the most recent 200 rows, grouped by `source_id`, with live updates. Includes a "Clear log" button.
 - LRU retention sweep keeping the most recent 1000 rows globally, run once per cold start.
 - Removal of `lib/observability/breadcrumbs.ts` once call sites are migrated.
@@ -135,7 +136,7 @@ The `extra` object is typed loosely (`Record<string, unknown>`). Persistence dro
 |---|---|
 | `share_import` / `url_share_import` | `kind`, `platform?`, `urlHost?` |
 | `storage` | `sourceId`, `tripId?` |
-| `url_fetch` | `httpStatus`, `imageUrlsCount`, `captionLength`, `author?`, `caption` |
+| `url_fetch` | `httpStatus`, `imageUrlsCount`, `captionLength`, `author?`, `caption`, and the `_debug` echo from the worker (route, ogOutcome, apifyOutcome, cacheHit) — see Worker debug echo |
 | `image_download` | `requestedCount`, `downloadedCount`, `coverPath` |
 | `ocr` | `ocrLength`, `ocrText` |
 | `extraction` | `placesCount`, `placesJson`, `model` |
@@ -143,6 +144,50 @@ The `extra` object is typed loosely (`Record<string, unknown>`). Persistence dro
 | `trip_assign` | `tripId`, `method` |
 
 Removal: once all call sites are migrated, `lib/observability/breadcrumbs.ts` is deleted along with its re-exports from `lib/observability/index.ts`. The `PipelineStage` type moves to `modules/pipeline-log/`.
+
+## Worker debug echo
+
+The worker's `/fetch-post` endpoint already computes a `route` decision and per-leg outcomes internally (today they're only `console.log`'d for `wrangler tail`). This spec promotes those values to a small `_debug` object on the success response so the phone can include them in the `url_fetch` stage's firehose line.
+
+Success response shape becomes:
+
+```json
+{
+  "platform": "instagram",
+  "permalink": "https://www.instagram.com/p/ABC/",
+  "caption": "...",
+  "imageUrls": ["..."],
+  "author": "...",
+  "_debug": {
+    "route": "og_then_apify_carousel",
+    "ogOutcome": "ok",
+    "apifyOutcome": "ok",
+    "cacheHit": false
+  }
+}
+```
+
+**Field values** (all closed enums; no free text, no content):
+
+| Field | Values |
+|---|---|
+| `route` | `og_only` · `og_then_apify_carousel` · `og_then_apify_unknown_efg` · `og_failed_apify_fallback` · `tiktok_og` · `tiktok_oembed` |
+| `ogOutcome` | `ok` · `empty_desc` · `empty_image` · `http_429` · `http_4xx` · `http_5xx` · `timeout` · `not_called` |
+| `apifyOutcome` | `not_called` · `ok` · `empty` · `carousel_no_children` · `auth` · `rate_limited` · `upstream` · `timeout` · `network` |
+| `cacheHit` | `true` · `false` |
+
+**Privacy posture unchanged.** All values are closed enums describing routing decisions — no URLs, no caption text, no actor responses. The worker's existing privacy rule (log status, latency, error class only — never URL or caption) extends naturally: `_debug` carries the same shapes Workers logs already capture, just promoted into the response.
+
+**Backwards compatibility.** Existing consumers (today's phone code) ignore unknown fields, so adding `_debug` is non-breaking. Error responses (`{"error": "..."}`) do not carry `_debug` — the failure case is already legible via HTTP status + the existing `apify-failed apify-<code>` `wrangler tail` line.
+
+**Phone client integration.** `modules/capture/fetchPostFromProxy.ts` extends its zod schema to mark `_debug` optional. The processor's `url_fetch` stage forwards `result._debug` verbatim into `stage.done(...)`'s extra, where the firehose formatter renders it inline:
+
+```
+[pipeline] url_fetch done in 587ms source=src_abc123 httpStatus=200 imageUrlsCount=3
+  captionLength=128 route=og_then_apify_carousel ogOutcome=ok apifyOutcome=ok cacheHit=false
+```
+
+The persisted `pipeline_events` row stays unaffected — `_debug` is firehose-only.
 
 ## Storage / schema
 
@@ -265,7 +310,7 @@ The formatter:
 
 1. **Module + table + migration.** Create `modules/pipeline-log/` with the public API, the migration, the firehose formatter, and unit tests. No call sites migrated yet. Existing `pipelineStep`/`pipelineError` keeps working unchanged.
 
-2. **Call-site migration.** Migrate all ~9 call sites to `startStage` / `done` / `failed`. Split `url_fetch` into `url_fetch` + `image_download`. Delete `lib/observability/breadcrumbs.ts`. Adjust integration tests in `modules/processing/__tests__/processing.test.ts` to assert the carousel event sequence.
+2. **Call-site migration + worker debug echo.** Migrate all ~9 call sites to `startStage` / `done` / `failed`. Split `url_fetch` into `url_fetch` + `image_download`. Delete `lib/observability/breadcrumbs.ts`. Adjust integration tests in `modules/processing/__tests__/processing.test.ts` to assert the carousel event sequence. **Same phase:** extend the worker's `/fetch-post` success response with the `_debug` object, update the phone-side response schema in `modules/capture/fetchPostFromProxy.ts`, and have the `url_fetch` stage forward `_debug` into its `extra`. Worker unit tests in `workers/extract-proxy/__tests__/fetch-post.test.ts` assert `_debug.route` matches the dispatch matrix for each branch.
 
 3. **Settings + UI.** Add the firehose toggle in `Settings → Diagnostics` (dev-only) and the Pipeline log screen at `app/diagnostics/pipeline-log.tsx` (all builds). Wire the live-query subscription and Clear button.
 
