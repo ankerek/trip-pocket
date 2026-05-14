@@ -4,11 +4,16 @@
 
 **Goal:** Replace the placeholder onboarding paywall with a real RevenueCat-backed purchase flow, lock the app behind the `pro` entitlement on every launch and foreground, and authenticate the Cloudflare extraction proxy on RC entitlement so only trial-active or subscribed users hit the LLM and Apify paths.
 
-**Architecture:** Three layers. (1) **Worker auth** — a `requireEntitlement` middleware that validates the `X-RC-User-Id` header shape, looks up the subscriber via RC REST, edge-caches the result for 60s, and gates `/extract`, `/enrich`, `/fetch-post` (not `/photo/:name`). (2) **App entitlement module** — `lib/entitlement/` owns RC SDK init, status caching, the plan tile config, and an `EntitlementProvider` that exposes status / purchase / restore via a hook. Mounts above the existing `ready` guard so cached status is available before the splash hides. (3) **Pipeline pause/resume** — a new additive column `*_paused_reason` on `sources` / `places` / `pending_imports` lets a 401 from the proxy mark queued work as paused (rather than failed); a resume sweep fires when entitlement flips inactive→active and re-enqueues the paused rows.
+**Architecture:** Three layers. (1) **Worker auth** — a `requireEntitlement` middleware that validates the `X-RC-User-Id` header shape, looks up the subscriber via RC REST, edge-caches the result for 60s, and gates `/extract`, `/enrich`, `/fetch-post` (not `/photo/:name`). (2) **App entitlement module** — `lib/entitlement/` owns RC SDK init, status caching, the plan tile config, and an `EntitlementProvider` that exposes status / purchase / restore via a hook. Mounts above the existing `ready` guard so cached status is available before the splash hides. (3) **Pipeline pause/resume** — additive nullable columns (`sources.extraction_paused_reason`, `sources.url_fetch_paused_reason`, `places.enrichment_paused_reason`) let a 401 from the proxy mark queued work as paused (rather than failed); a resume hook fires when entitlement flips inactive→active and re-enqueues the paused rows.
 
 **Tech Stack:** `react-native-purchases` (RevenueCat SDK), expo-router, Expo SQLite, Cloudflare Workers + Workers caches API, Jest + React Native Testing Library. Spec: `docs/superpowers/specs/2026-05-14-paywall-and-entitlement-gate-design.md`.
 
-**Divergence from spec:** the spec describes the paused-state as a new value `'paused-entitlement'` in the existing `extraction_status` / `enrichment_status` CHECK enums. The implementation instead adds an additive nullable column `extraction_paused_reason TEXT` (and the same on `places` and `pending_imports`). Reason: the existing enums are guarded by SQLite CHECK constraints, which can't be modified without a table rebuild; an additive column is a one-line `ALTER TABLE` and lets the migration ship without dev-DB wipes. Behavior is identical (sweep filters skip rows with a non-null `paused_reason`, resume sweep clears it).
+**Divergence from spec:** the spec describes the paused-state as a new value `'paused-entitlement'` in the existing `extraction_status` / `enrichment_status` CHECK enums. The implementation instead adds two additive nullable columns to `sources` (`extraction_paused_reason TEXT`, `url_fetch_paused_reason TEXT`) and one to `places` (`enrichment_paused_reason TEXT`). Reasons:
+
+1. The existing enums are guarded by SQLite CHECK constraints which can't be modified without a table rebuild; an additive column is a one-line `ALTER TABLE` and lets the migration ship without dev-DB wipes.
+2. The URL-fetch path runs on `sources` rows in `modules/processing/processing.ts` (the `pending_imports` row is `DELETE`d in `modules/capture/ingest.ts:81-82` once the source row is created), so the spec's `pending_imports` reference is structurally wrong — the pause has to live on `sources`.
+
+Behavior is identical to the spec's intent: sweep filters skip rows with a non-null `*_paused_reason`, and the resume sweep clears the column and re-enqueues.
 
 **Pre-flight before starting:**
 
@@ -427,6 +432,8 @@ function postJson(body: unknown, ip = '1.2.3.4'): Request {
 
 Repeat for `enrich.test.ts`, `fetch-post.test.ts`, `fetch-post-tiktok-rehyd.test.ts`.
 
+**Important:** some tests build the `Request` inline rather than going through `postJson` / `makeRequest` (search each file for `new Request(` after the factory definition — `handler.test.ts:68-90`, `enrich.test.ts:115-128`, etc.). Add `'X-RC-User-Id': VALID_ID` to every such inline POST request as well. The exception is the new "missing header" tests added in Step 2.3, which intentionally omit the header.
+
 - [ ] **Step 2.2: Make sure the existing tests still mock the RC `fetch` call**
 
 The entitlement middleware will issue one `fetch` to `api.revenuecat.com` per fresh test (caches.default is reset in `beforeEach`). The existing handler tests mock `globalThis.fetch` via a `FetchScript` pattern. Extend each test file's `mockFetch` (or `fetchScript`) builder so the **first** matched request is always the RC subscribers endpoint returning an active subscription.
@@ -616,7 +623,8 @@ Spec ref: §"File map" rows for `app.config.ts`, `.env.example`, `eas.json`, `pa
 - Modify: `package.json`
 - Modify: `app.config.ts`
 - Modify: `.env.example` (create if missing)
-- Modify: `eas.json`
+
+(`eas.json` is not edited here — the public key lives in EAS Secrets, not in the build profile.)
 
 - [ ] **Step 4.1: Install the SDK**
 
@@ -669,7 +677,7 @@ Discard the regenerated `ios/` directory if you want a clean working tree (`git 
 - [ ] **Step 4.6: Commit**
 
 ```bash
-git add package.json package-lock.json app.config.ts .env.example eas.json
+git add package.json package-lock.json app.config.ts .env.example
 git commit -m "feat(app): install react-native-purchases SDK and config"
 ```
 
@@ -839,26 +847,37 @@ Quick sanity step. Read `lib/onboarding/storage.ts` start-to-finish — we mirro
 
 Create `lib/entitlement/__tests__/storage.test.ts`. Mirror whatever mocking pattern `lib/onboarding/__tests__/storage.test.ts` uses (typically a Jest mock of `expo-file-system`).
 
+The real `File` class from `expo-file-system` exposes `exists` as a **property**, `textSync()` to read, and `create()` + `write()` to create+write — see `lib/onboarding/storage.ts:9-17`. Mirror that shape in the mock:
+
 ```ts
 import { File, Paths } from 'expo-file-system';
 import { readCachedStatus, writeCachedStatus, resetCachedStatus } from '../storage';
 
 jest.mock('expo-file-system', () => {
   const memory = new Map<string, string>();
+  function key(dir: string, name: string): string {
+    return `${dir}/${name}`;
+  }
   return {
     Paths: { document: '/mock-doc' },
     File: class {
-      constructor(public path: string) {}
-      exists() {
+      private path: string;
+      constructor(dir: string, name: string) {
+        this.path = key(dir, name);
+      }
+      get exists(): boolean {
         return memory.has(this.path);
       }
-      text() {
+      textSync(): string {
         return memory.get(this.path) ?? '';
       }
-      write(text: string) {
+      create(): void {
+        if (!memory.has(this.path)) memory.set(this.path, '');
+      }
+      write(text: string): void {
         memory.set(this.path, text);
       }
-      delete() {
+      delete(): void {
         memory.delete(this.path);
       }
     },
@@ -908,7 +927,7 @@ Expected: failures.
 
 - [ ] **Step 7.4: Implement `storage.ts`**
 
-Create `lib/entitlement/storage.ts`:
+Create `lib/entitlement/storage.ts`. Matches the API shape used by `lib/onboarding/storage.ts`: `exists` is a property, `textSync()` reads, `create()` then `write()` writes.
 
 ```ts
 import { File, Paths } from 'expo-file-system';
@@ -917,24 +936,26 @@ import type { EntitlementStatus } from './status';
 const FILE_NAME = 'entitlement-status.txt';
 
 function file(): File {
-  return new File(`${Paths.document}/${FILE_NAME}`);
+  return new File(Paths.document, FILE_NAME);
 }
 
 export function readCachedStatus(): EntitlementStatus | null {
   const f = file();
-  if (!f.exists()) return null;
-  const text = f.text().trim();
+  if (!f.exists) return null;
+  const text = f.textSync().trim();
   if (text === 'active' || text === 'inactive') return text;
   return null;
 }
 
 export function writeCachedStatus(status: EntitlementStatus): void {
-  file().write(status);
+  const f = file();
+  if (!f.exists) f.create();
+  f.write(status);
 }
 
 export function resetCachedStatus(): void {
   const f = file();
-  if (f.exists()) f.delete();
+  if (f.exists) f.delete();
 }
 ```
 
@@ -1212,7 +1233,7 @@ git commit -m "feat(entitlement): EntitlementProvider with RC init and resume ho
 
 ## Task 10: DB — additive migration for `*_paused_reason` columns
 
-**Goal:** Add three nullable text columns — `sources.extraction_paused_reason`, `places.enrichment_paused_reason`, `pending_imports.import_paused_reason` — so 401-paused rows can be marked without changing the existing CHECK enums.
+**Goal:** Add three nullable text columns — `sources.extraction_paused_reason`, `sources.url_fetch_paused_reason`, `places.enrichment_paused_reason` — so 401-paused rows can be marked without changing the existing CHECK enums. (`pending_imports` is intentionally not touched; see the divergence note at the top.)
 
 Spec divergence note: see top of plan.
 
@@ -1227,11 +1248,13 @@ Create `modules/storage/migrations/0007_entitlement_paused_reason.ts`:
 ```ts
 import type { Migration } from '../db';
 
-// Adds a nullable `*_paused_reason` column to the three pipeline tables.
-// Filled with the literal `'entitlement'` when the proxy returns 401; null
-// otherwise. Sweep filters add `AND <col> IS NULL` so paused rows are
-// skipped; the resume sweep flips them back to null when entitlement is
-// re-acquired.
+// Adds three nullable `*_paused_reason` columns to the pipeline tables.
+// Filled with the literal `'entitlement'` when the worker returns 401;
+// null otherwise. Sweep filters add `AND <col> IS NULL` so paused rows
+// are skipped; the resume sweep flips them back to null when entitlement
+// is re-acquired. The URL-fetch column lives on `sources` (not on
+// `pending_imports`) because by the time url-fetch runs, the pending row
+// has been DELETEd by `ingestPendingImports`.
 
 export const entitlementPausedReason: Migration = {
   version: 7,
@@ -1240,10 +1263,10 @@ export const entitlementPausedReason: Migration = {
       `ALTER TABLE sources ADD COLUMN extraction_paused_reason TEXT`,
     );
     await db.execAsync(
-      `ALTER TABLE places ADD COLUMN enrichment_paused_reason TEXT`,
+      `ALTER TABLE sources ADD COLUMN url_fetch_paused_reason TEXT`,
     );
     await db.execAsync(
-      `ALTER TABLE pending_imports ADD COLUMN import_paused_reason TEXT`,
+      `ALTER TABLE places ADD COLUMN enrichment_paused_reason TEXT`,
     );
   },
 };
@@ -1489,32 +1512,35 @@ Spec ref: §"Client header attachment" lines 422–424.
 
 - [ ] **Step 12.1: Add the header**
 
-Open `modules/extraction/proxy.ts`. Find the `fetch(...)` call that hits `/extract`. Before it, fetch the user ID and treat any failure as 401:
+Open `modules/extraction/proxy.ts`. `extractFromProxy(ocrText, proxyUrl, opts)` already receives the full URL (e.g. `https://….workers.dev/extract`) — do NOT rebuild it. Just add the header.
+
+Find the existing `fetch(proxyUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, ... })` block (around line 42). Add a `getEntitlementUserId()` call above it and inject `X-RC-User-Id`:
 
 ```ts
 import { getEntitlementUserId } from '@/lib/entitlement/userId';
 
-// ... inside extractFromProxy:
+// ... inside extractFromProxy, before the fetch():
 let userId: string;
 try {
   userId = await getEntitlementUserId();
 } catch (err) {
-  // RC not initialized or app-user-id unavailable. Pause the work and let the
-  // provider's init + transition handler resume it later.
+  // RC not initialized or app-user-id unavailable. Pause the work and let
+  // the provider's init + transition handler resume it later.
   throw new ExtractionError('extract-userid-unavailable', { kind: 'entitlement-required' });
 }
 
-const response = await fetch(`${baseUrl}/extract`, {
+response = await fetch(proxyUrl, {
   method: 'POST',
   headers: {
     'content-type': 'application/json',
     'X-RC-User-Id': userId,
   },
-  body: JSON.stringify(payload),
+  body: JSON.stringify({ ocr_text: ocrText }),
+  signal: controller.signal,
 });
 ```
 
-(Adapt to the existing variable / function names.)
+Keep the existing try/catch wrapping and abort-controller wiring around the fetch — only the call signature changes.
 
 - [ ] **Step 12.2: Update the existing tests to mock `getEntitlementUserId`**
 
@@ -1594,13 +1620,44 @@ if (err.classification.kind === 'entitlement-required') {
 }
 ```
 
-- [ ] **Step 13.5: Update the sweep query to skip paused rows**
+- [ ] **Step 13.5: Skip paused rows in the per-place processor**
 
-Find the enrichment sweep SELECT in the same file. Add `AND enrichment_paused_reason IS NULL` to its WHERE clause.
+Unlike the extractor, `modules/enrichment/enrichment.ts` has no sweep loop — it processes one place at a time after `enqueueEnrichment(placeId)` (see `Enricher` type at `modules/enrichment/enrichment.ts:61-65` and `processOne` / load-place body around lines 137–151). Add an early return at the top of the load-place block:
 
-- [ ] **Step 13.6: Add `resumeEntitlementPaused()` to the enrichment module**
+```ts
+const place = await loadPlace(placeId);
+if (!place) return;
+if (place.enrichment_paused_reason === 'entitlement') {
+  // Paused — wait for the resume sweep to re-enqueue.
+  return;
+}
+if (place.enrichment_status === 'not-found') return;
+// ... existing body
+```
 
-Same shape as Task 11.9, but for `places.enrichment_paused_reason`.
+(Adapt to the exact `loadPlace` return shape. Include the new column in its SELECT.)
+
+- [ ] **Step 13.6: Add `resumeEntitlementPaused()` to the enrichment factory**
+
+Since there's no sweep, the resume function clears the column and then re-enqueues each affected place ID via the existing `enqueueEnrichment()`:
+
+```ts
+async function resumeEntitlementPaused(): Promise<void> {
+  const rows = await db.getAllAsync<{ id: string }>(
+    `SELECT id FROM places WHERE enrichment_paused_reason = 'entitlement'`,
+  );
+  if (rows.length === 0) return;
+  await db.runAsync(
+    `UPDATE places
+       SET enrichment_paused_reason = NULL, updated_at = ?
+     WHERE enrichment_paused_reason = 'entitlement'`,
+    [now()],
+  );
+  for (const r of rows) enqueueEnrichment(r.id);
+}
+```
+
+Add `resumeEntitlementPaused: () => Promise<void>` to the `Enricher` type and include it in the factory return.
 
 - [ ] **Step 13.7: Attach the header on the enrichment proxy call**
 
@@ -1625,62 +1682,122 @@ git commit -m "feat(enrichment): entitlement-required + paused state + header"
 
 ## Task 14: Fetch-post — `entitlement-required` + header + resume
 
-**Goal:** Same shape applied to the `/fetch-post` caller used during share-sheet URL ingest. The fetch-post path is slightly different — it writes to `pending_imports`, not to `sources` or `places`, so the paused column is `import_paused_reason` and the sweep is `runForegroundIngest` in `modules/capture/`.
+**Goal:** Same shape applied to the `/fetch-post` caller used during share-sheet URL ingest. By the time URL-fetch work runs, `pending_imports` rows have already been DELETEd by `ingestPendingImports` (`modules/capture/ingest.ts:81-82`); the URL-fetch state machine lives on `sources` rows in `modules/processing/processing.ts` (`processUrlFetch`, around lines 182–249). The paused column therefore lives on **`sources.url_fetch_paused_reason`** and the resume hook re-enqueues at the processing layer, not the capture layer.
 
 **Files:**
-- Modify: `modules/capture/fetchPostFromProxy.ts`
-- Modify: `modules/capture/importUrl.ts` (or wherever the dispatcher persists the failure)
-- Modify: `modules/capture/__tests__/*.ts`
+- Modify: `modules/capture/fetchPostFromProxy.ts` (header + 401 sentinel)
+- Modify: `modules/processing/processing.ts` (pause/resume logic, sweep filter)
+- Modify: `modules/capture/__tests__/fetchPostFromProxy.test.ts`
+- Modify: `modules/processing/__tests__/processing.test.ts` (or equivalent)
 
-- [ ] **Step 14.1: Locate the dispatch path**
+- [ ] **Step 14.1: Re-read the URL-fetch state machine**
 
-```bash
-grep -rn "fetchPostFromProxy\|pending_imports" modules/capture/ | head -10
-```
+Skim `modules/processing/processing.ts` start-to-finish (~250 lines). Identify:
+- The function that enqueues / drives `processUrlFetch` (the equivalent of the extractor sweep — there will be a select-and-loop somewhere that picks up sources where url-fetch hasn't run).
+- Where `processUrlFetch` is called from after a foreground refresh.
+- The catch block(s) around the `await opts.fetchPost(row.url)` call.
 
-Read the file(s) returned to understand which function classifies the proxy response and writes to `pending_imports`. The new behavior: on 401, set `import_paused_reason = 'entitlement'` instead of marking the import failed.
+The plan steps below assume that structure; if the actual implementation differs, mirror the shape rather than the exact line numbers.
 
-- [ ] **Step 14.2: Add a failing test**
+- [ ] **Step 14.2: Add a failing test in `processing.test.ts`**
 
-Mirror Task 11.2 — the test asserts a 401 leaves the `pending_imports` row with `import_paused_reason = 'entitlement'` and the import status unchanged from `'pending'`.
-
-- [ ] **Step 14.3: Route 401 in `fetchPostFromProxy.ts`**
-
-Inside `fetchPostFromProxy`, when the proxy returns 401, return a sentinel result (e.g. `{ kind: 'entitlement-required' }`) rather than throwing into the generic error path. The caller in `importUrl.ts` (or `processing.ts`) inspects the result.
-
-- [ ] **Step 14.4: Persist paused-reason in the caller**
-
-In whichever module dispatches `fetchPostFromProxy`, branch on the new sentinel:
+The test asserts that when `fetchPost` is mocked to throw an `EntitlementRequiredError` (the new sentinel type from step 14.3), `processUrlFetch` leaves the source with `url_fetch_paused_reason = 'entitlement'` and **does not** flip any failure status:
 
 ```ts
-const result = await fetchPostFromProxy(url, userId);
-if (result.kind === 'entitlement-required') {
-  await db.runAsync(
-    `UPDATE pending_imports
-      SET import_paused_reason = 'entitlement'
-    WHERE id = ?`,
-    [importId],
+test('401 from fetch-post pauses the source instead of failing it', async () => {
+  const { db, processing } = await freshProcessing();
+  await insertSource(db, { id: 's1', kind: 'url', url: 'https://instagram.com/p/abc/' });
+  processing.fetchPostMock.mockRejectedValueOnce(new EntitlementRequiredError('fetch-post'));
+
+  await processing.processUrlFetch('s1');
+
+  const row = await db.getFirstAsync<{ url_fetch_paused_reason: string | null }>(
+    `SELECT url_fetch_paused_reason FROM sources WHERE id = 's1'`,
   );
-  return;
+  expect(row?.url_fetch_paused_reason).toBe('entitlement');
+});
+```
+
+(Mirror the existing test harness — variable names depend on the existing fixture.)
+
+- [ ] **Step 14.3: Add an `EntitlementRequiredError` sentinel in `fetchPostFromProxy.ts`**
+
+`fetchPostFromProxy` already throws domain errors. Add a dedicated subclass so the processing-layer catch can distinguish it without string-matching:
+
+```ts
+export class EntitlementRequiredError extends Error {
+  constructor(public readonly call: 'fetch-post' = 'fetch-post') {
+    super('entitlement-required');
+    this.name = 'EntitlementRequiredError';
+  }
 }
 ```
 
-- [ ] **Step 14.5: Update `runForegroundIngest` to skip paused rows**
+In the response-classification path (where the function inspects `response.status`), add a 401 branch above the generic 4xx:
 
-Open `modules/capture/runForegroundIngest.ts` (or wherever the sweep is). Add `AND import_paused_reason IS NULL` to its SELECT.
+```ts
+if (response.status === 401) {
+  throw new EntitlementRequiredError('fetch-post');
+}
+```
 
-- [ ] **Step 14.6: Add `resumeEntitlementPaused()` to the capture module**
+- [ ] **Step 14.4: Catch the sentinel in `processUrlFetch`**
 
-Same shape — clear the column and re-tick `runForegroundIngest`.
+In `modules/processing/processing.ts`, wrap the existing `await opts.fetchPost(row.url)` in a try/catch that handles the new error class **before** the generic failure path:
 
-- [ ] **Step 14.7: Attach the header**
+```ts
+try {
+  result = await opts.fetchPost(row.url);
+  // ... existing success body
+} catch (err) {
+  if (err instanceof EntitlementRequiredError) {
+    await opts.db.runAsync(
+      `UPDATE sources
+         SET url_fetch_paused_reason = 'entitlement', updated_at = ?
+       WHERE id = ?`,
+      [now(), id],
+    );
+    urlFetchStage.done({ pausedReason: 'entitlement' });
+    return { retry: false };
+  }
+  // ... existing failure handling
+}
+```
 
-Same shape as Task 12 inside `fetchPostFromProxy.ts`.
+Add the import `import { EntitlementRequiredError } from '../capture/fetchPostFromProxy';` at the top of the file.
 
-- [ ] **Step 14.8: Run the capture test suite**
+- [ ] **Step 14.5: Skip paused sources in the URL-fetch driver**
+
+Find the driver that picks up URL-fetch-pending sources (the analogue of the extractor sweep) in `modules/processing/processing.ts`. Add `AND url_fetch_paused_reason IS NULL` to its WHERE clause. Also include `url_fetch_paused_reason` in the row's SELECT shape so `processUrlFetch` can short-circuit if a caller invokes it directly on a paused row.
+
+- [ ] **Step 14.6: Add `resumeUrlFetchEntitlementPaused()` to processing**
+
+```ts
+async function resumeUrlFetchEntitlementPaused(): Promise<void> {
+  const rows = await opts.db.getAllAsync<{ id: string }>(
+    `SELECT id FROM sources WHERE url_fetch_paused_reason = 'entitlement'`,
+  );
+  if (rows.length === 0) return;
+  await opts.db.runAsync(
+    `UPDATE sources
+       SET url_fetch_paused_reason = NULL, updated_at = ?
+     WHERE url_fetch_paused_reason = 'entitlement'`,
+    [now()],
+  );
+  for (const r of rows) enqueueUrlFetch(r.id);    // existing enqueue function
+}
+```
+
+Add it to the public processing-module export shape (look at the existing factory return to match conventions).
+
+- [ ] **Step 14.7: Attach the header in `fetchPostFromProxy`**
+
+Same shape as Task 12: `await getEntitlementUserId()` and add `X-RC-User-Id` to the existing `fetch(...)` call. If `getEntitlementUserId()` rejects, throw `new EntitlementRequiredError('fetch-post')` — same effect as a server 401.
+
+- [ ] **Step 14.8: Run both test suites**
 
 ```bash
-npm test --silent -- modules/capture
+npm test --silent -- modules/processing modules/capture
 ```
 
 Expected: all pass.
@@ -1688,28 +1805,29 @@ Expected: all pass.
 - [ ] **Step 14.9: Commit**
 
 ```bash
-git add modules/capture/
-git commit -m "feat(capture): entitlement-required + paused state + header on /fetch-post"
+git add modules/capture/ modules/processing/
+git commit -m "feat(processing): entitlement-required pause + resume for /fetch-post"
 ```
 
 ---
 
 ## Task 15: Wire resume handlers into the provider
 
-**Goal:** The three pipeline modules now expose `resumeEntitlementPaused()`. Register them with the provider once the app is mounted, so an `inactive → active` transition fans out to all three.
+**Goal:** The three pipeline modules now expose resume functions. Register them with the provider once the app is mounted, so an `inactive → active` transition fans out to all three.
 
 **Files:**
-- Modify: `app/_layout.tsx` (Task 21 covers the bigger restructure; this task just adds the registration effect)
+- Modify: `app/_layout.tsx`
 
-> **Sequencing note:** this task depends on Task 21's `RootLayoutInner` split. If you're going strictly task-by-task, defer this until after Task 21 and revisit. If you're batching, do them together.
+> **Sequencing:** This task depends on Tasks 11, 13, 14 (which define the three resume exports) **and** Task 21 (which creates `RootLayoutInner`). Execute **after** Task 24, before Task 25. The numbering here matches dependency order — don't actually do Task 15 between Tasks 14 and 16.
 
 - [ ] **Step 15.1: Add a one-shot effect in `RootLayoutInner` that registers resume handlers**
 
-Inside `RootLayoutInner` (after Task 21):
+Inside `RootLayoutInner`:
 
 ```tsx
 const { registerResumeHandler } = useEntitlement();
 useEffect(() => {
+  if (!ctx) return;
   const unsubs: Array<() => void> = [];
   unsubs.push(registerResumeHandler(async () => {
     await extractor.resumeEntitlementPaused();
@@ -1718,19 +1836,19 @@ useEffect(() => {
     await enricher.resumeEntitlementPaused();
   }));
   unsubs.push(registerResumeHandler(async () => {
-    await resumeImportEntitlementPaused();
+    await processing.resumeUrlFetchEntitlementPaused();
   }));
   return () => unsubs.forEach((u) => u());
-}, [registerResumeHandler, extractor, enricher]);
+}, [registerResumeHandler, ctx, extractor, enricher, processing]);
 ```
 
-Substitute the actual exports from each module — the import names depend on how each module's existing factory return is named in `app/_layout.tsx`.
+The references to `extractor`, `enricher`, and `processing` are whatever the existing root layout uses to hold the factory results from `modules/extraction`, `modules/enrichment`, and `modules/processing`. Mirror the existing binding names — read the file before writing this hook to confirm.
 
 - [ ] **Step 15.2: Commit**
 
 ```bash
 git add app/_layout.tsx
-git commit -m "feat(app): fan resume sweep across extraction/enrichment/capture on entitlement active"
+git commit -m "feat(app): fan resume across extraction/enrichment/processing on entitlement active"
 ```
 
 ---
@@ -1747,7 +1865,13 @@ git commit -m "feat(app): fan resume sweep across extraction/enrichment/capture 
 In `app/onboarding/paywall.tsx` (lines ~23–29), delete the `type Plan = 'yearly' | 'monthly';` and the local `PLANS` const. Replace with:
 
 ```ts
-import { PLANS, DEFAULT_SELECTED_PLAN, type PlanId } from '@/lib/entitlement/plans';
+import type { PurchasesPackage } from 'react-native-purchases';
+import {
+  PLANS,
+  DEFAULT_SELECTED_PLAN,
+  type PlanId,
+  type PlanConfig,
+} from '@/lib/entitlement/plans';
 import { useEntitlement } from '@/lib/entitlement/provider';
 ```
 
@@ -1786,7 +1910,45 @@ function deriveNoteFromPackage(pkg: PurchasesPackage, plan: PlanConfig): string 
 }
 ```
 
-- [ ] **Step 16.4: Run typecheck**
+- [ ] **Step 16.4: Derive trial-length copy from the active package**
+
+The current paywall hardcodes "7 days" twice (CTA `"Start your 7-day free trial"` on line ~220 and footer `"No charge for 7 days"` on line ~227). Spec §"Trial length, pricing, and currency" requires both to come from the active intro offer, not from a string literal.
+
+Add a helper near the top of the file:
+
+```ts
+function trialDaysFromPackage(pkg: PurchasesPackage | undefined): number | null {
+  const period = pkg?.product.introPrice?.periodNumberOfUnits;
+  const unit = pkg?.product.introPrice?.periodUnit;
+  if (period == null || unit == null) return null;
+  switch (unit) {
+    case 'DAY':   return period;
+    case 'WEEK':  return period * 7;
+    case 'MONTH': return period * 30;
+    case 'YEAR':  return period * 365;
+    default:      return null;
+  }
+}
+```
+
+Compute the value at render and feed it into the CTA + footer copy:
+
+```tsx
+const selectedPkg = offerings?.current?.availablePackages.find(
+  (p) => p.product.identifier === PLANS.find((pl) => pl.id === plan)?.productId,
+);
+const trialDays = trialDaysFromPackage(selectedPkg);
+const trialCtaLabel = trialDays
+  ? `Start your ${trialDays}-day free trial`
+  : 'Start your free trial';
+const trialFooterCopy = trialDays
+  ? `Cancel anytime. No charge for ${trialDays} days. Then your plan auto-renews.`
+  : 'Cancel anytime during the free trial. Then your plan auto-renews.';
+```
+
+Replace the literal `"Start your 7-day free trial"` on the `<PrimaryButton label=...>` with `{trialCtaLabel}`, and the footer `<Text>` body with `{trialFooterCopy}`.
+
+- [ ] **Step 16.5: Run typecheck**
 
 ```bash
 npx tsc --noEmit
@@ -1794,11 +1956,11 @@ npx tsc --noEmit
 
 Expected: clean.
 
-- [ ] **Step 16.5: Commit**
+- [ ] **Step 16.6: Commit**
 
 ```bash
 git add app/onboarding/paywall.tsx
-git commit -m "feat(paywall): render tiles from PLANS config + live offering prices"
+git commit -m "feat(paywall): render tiles + trial copy from RC offerings"
 ```
 
 ---
@@ -1812,9 +1974,11 @@ git commit -m "feat(paywall): render tiles from PLANS config + live offering pri
 
 - [ ] **Step 17.1: Rewrite `handleStartTrial`**
 
-Replace the existing function (around line 55) with:
+Replace the existing function (around line 55) with the snippet below. Note `showToast` takes an object `{ kind, message }` — see `lib/toast/toast.ts:14-19`:
 
 ```tsx
+import { showToast } from '@/lib/toast/toast';
+
 const [busy, setBusy] = useState(false);
 const { purchasePlan } = useEntitlement();
 
@@ -1830,11 +1994,9 @@ async function handleStartTrial() {
     return;
   }
   if (result.reason === 'user-cancelled') return;       // silent
-  showToast("Couldn't start your trial. Try again.");   // existing toast service
+  showToast({ kind: 'error', message: "Couldn't start your trial. Try again." });
 }
 ```
-
-(Import `showToast` from wherever it lives — see `lib/toast/`.)
 
 - [ ] **Step 17.2: Disable both CTAs while busy**
 
@@ -1871,10 +2033,10 @@ async function handleRestore() {
     return;
   }
   if (result.ok) {
-    showToast('No purchases to restore.');
+    showToast({ kind: 'success', message: 'No purchases to restore.' });
     return;
   }
-  showToast('Restore failed. Check your connection.');
+  showToast({ kind: 'error', message: 'Restore failed. Check your connection.' });
 }
 ```
 
@@ -2251,15 +2413,18 @@ On the dev iPhone with the **development build**:
 1. Open Instagram, share any post → Trip Pocket → pick a trip.
 2. Trip Pocket should accept the import.
 
-- [ ] **Step 26.3: Confirm the import is paused**
+- [ ] **Step 26.3: Confirm the source is paused**
 
-1. Open the diagnostics view (or run a SQL query via a debug shell):
+By the time the worker call fires, `ingestPendingImports` has already moved the row into `sources` (and DELETEd the pending row). Run:
 
-   ```sql
-   SELECT id, import_paused_reason FROM pending_imports ORDER BY created_at DESC LIMIT 1;
-   ```
+```sql
+SELECT id, url_fetch_paused_reason
+FROM sources
+WHERE kind = 'url'
+ORDER BY created_at DESC LIMIT 1;
+```
 
-2. Expected: `import_paused_reason = 'entitlement'`.
+Expected: `url_fetch_paused_reason = 'entitlement'`.
 
 - [ ] **Step 26.4: Subscribe via the paywall**
 
@@ -2268,15 +2433,15 @@ On the dev iPhone with the **development build**:
 
 - [ ] **Step 26.5: Confirm the paused row resumes**
 
-1. Within a few seconds (the customer-info listener fires, the resume sweep runs), the `import_paused_reason` should be `NULL` and the import should progress through fetch-post → OCR → extraction → enrichment.
+1. Within a few seconds (the customer-info listener fires, the resume hook runs), the `url_fetch_paused_reason` should be `NULL` and the source should progress through fetch-post → OCR → extraction → enrichment.
 
 2. Re-run the SQL:
 
    ```sql
-   SELECT id, import_paused_reason FROM pending_imports WHERE id = '<the-id>';
+   SELECT id, url_fetch_paused_reason FROM sources WHERE id = '<the-id>';
    ```
 
-Pass criteria: ✅ row's `import_paused_reason` is `NULL`, ✅ the source eventually becomes a place tile on the home grid.
+Pass criteria: ✅ row's `url_fetch_paused_reason` is `NULL`, ✅ the source eventually becomes a place tile on the home grid.
 
 No commit — manual checkpoint.
 
