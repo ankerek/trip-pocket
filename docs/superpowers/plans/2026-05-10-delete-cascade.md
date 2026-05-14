@@ -9,6 +9,7 @@
 **Tech Stack:** Expo SQLite, expo-file-system (`File` class), React Native + expo-router, Jest + React Native Testing Library. Spec: `docs/superpowers/specs/2026-05-10-delete-cascade-design.md`.
 
 **Pre-flight before starting:**
+
 1. Wipe the dev DB. Either delete the simulator app, or remove `trip-pocket.db` from the simulator app sandbox. Schema changes won't apply over an existing DB because `runMigrations` skips by version.
 2. Confirm baseline test suite is green: `npm test --silent` should report `Test Suites: 23 passed, Tests: 234 passed`.
 
@@ -19,6 +20,7 @@
 **Goal:** Rename and rewrite the trip-delete function. Default `mode='untriage'` matches today's gentle behaviour but hard-deletes the trip row. New `mode='cascade'` removes member sources (with file unlinks), member places (with orphan-prune scoping), tags, and the trip itself.
 
 **Files:**
+
 - Modify: `modules/storage/trips.ts`
 - Modify: `modules/storage/index.ts:47-56`
 - Modify: `modules/storage/__tests__/trips.test.ts`
@@ -32,13 +34,7 @@ Replace the entire file with:
 import { File } from 'expo-file-system';
 import { openDatabase, runMigrations, type Database } from '../db';
 import { migrations } from '../migrations';
-import {
-  createTrip,
-  listTrips,
-  getTrip,
-  renameTrip,
-  deleteTrip,
-} from '../trips';
+import { createTrip, listTrips, getTrip, renameTrip, deleteTrip } from '../trips';
 import { insertSource, listSources } from '../sources';
 import { linkPlaceSource } from '../place_sources';
 
@@ -50,17 +46,19 @@ async function freshDb(): Promise<Database> {
   return db;
 }
 
-async function seedPlace(
-  db: Database,
-  id: string,
-  tripId: string | null,
-): Promise<void> {
+async function seedPlace(db: Database, id: string, tripId: string | null): Promise<void> {
   const now = '2026-05-10T10:00:00.000Z';
   await db.runAsync(
     `INSERT INTO places (id, trip_id, name, city, normalized_key,
                          enrichment_status, owner_id, created_at, updated_at)
      VALUES (?, ?, 'Place ' || ?, 'Tokyo', 'p-' || ?, 'pending', ?, ?, ?)`,
-    id, tripId, id, id, ownerId, now, now,
+    id,
+    tripId,
+    id,
+    id,
+    ownerId,
+    now,
+    now,
   );
 }
 
@@ -109,9 +107,13 @@ describe('trips repository', () => {
       const db = await freshDb();
       await createTrip(db, { id: 't1', name: 'Japan', ownerId });
       await insertSource(db, {
-        id: 's1', tripId: 't1', filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: 't1',
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await seedPlace(db, 'p1', 't1');
 
@@ -142,24 +144,36 @@ describe('trips repository', () => {
 
       await createTrip(db, { id: 't1', name: 'Japan', ownerId });
       await insertSource(db, {
-        id: 's1', tripId: 't1', filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: 't1',
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await insertSource(db, {
-        id: 's2', tripId: 't1', filePath: '/x/s2.jpg',
-        contentHash: 'h-s2', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:01Z', ownerId,
+        id: 's2',
+        tripId: 't1',
+        filePath: '/x/s2.jpg',
+        contentHash: 'h-s2',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:01Z',
+        ownerId,
       });
       await seedPlace(db, 'p1', 't1');
       await seedPlace(db, 'p2', 't1');
       await linkPlaceSource(db, {
-        placeId: 'p1', sourceId: 's1',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'p1',
+        sourceId: 's1',
+        extractionModel: 'gemini',
+        ownerId,
       });
       await linkPlaceSource(db, {
-        placeId: 'p2', sourceId: 's2',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'p2',
+        sourceId: 's2',
+        extractionModel: 'gemini',
+        ownerId,
       });
 
       await deleteTrip(db, 't1', 'cascade', { unlinkFile: fakeUnlink });
@@ -186,23 +200,35 @@ describe('trips repository', () => {
       await createTrip(db, { id: 'tB', name: 'Korea', ownerId });
       // pShared has two sources: sA in trip tA, sB in trip tB.
       await insertSource(db, {
-        id: 'sA', tripId: 'tA', filePath: '/x/sA.jpg',
-        contentHash: 'h-A', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 'sA',
+        tripId: 'tA',
+        filePath: '/x/sA.jpg',
+        contentHash: 'h-A',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await insertSource(db, {
-        id: 'sB', tripId: 'tB', filePath: '/x/sB.jpg',
-        contentHash: 'h-B', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:01Z', ownerId,
+        id: 'sB',
+        tripId: 'tB',
+        filePath: '/x/sB.jpg',
+        contentHash: 'h-B',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:01Z',
+        ownerId,
       });
       await seedPlace(db, 'pShared', 'tA');
       await linkPlaceSource(db, {
-        placeId: 'pShared', sourceId: 'sA',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'pShared',
+        sourceId: 'sA',
+        extractionModel: 'gemini',
+        ownerId,
       });
       await linkPlaceSource(db, {
-        placeId: 'pShared', sourceId: 'sB',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'pShared',
+        sourceId: 'sB',
+        extractionModel: 'gemini',
+        ownerId,
       });
 
       await deleteTrip(db, 'tA', 'cascade', { unlinkFile: () => {} });
@@ -219,9 +245,7 @@ describe('trips repository', () => {
       );
       expect(sB?.trip_id).toBe('tB');
       // sA gone, junction sA gone.
-      expect(
-        await db.getFirstAsync(`SELECT id FROM sources WHERE id = 'sA'`),
-      ).toBeNull();
+      expect(await db.getFirstAsync(`SELECT id FROM sources WHERE id = 'sA'`)).toBeNull();
       const sharedJunctions = await db.getAllAsync<{ source_id: string }>(
         `SELECT source_id FROM place_sources WHERE place_id = 'pShared'`,
       );
@@ -274,11 +298,13 @@ export async function deleteTrip(
     await db.withTransactionAsync(async () => {
       await db.runAsync(
         `UPDATE sources SET trip_id = NULL, updated_at = ? WHERE trip_id = ?`,
-        now, id,
+        now,
+        id,
       );
       await db.runAsync(
         `UPDATE places SET trip_id = NULL, updated_at = ? WHERE trip_id = ?`,
-        now, id,
+        now,
+        id,
       );
       await db.runAsync(`DELETE FROM trips WHERE id = ?`, id);
     });
@@ -328,7 +354,8 @@ export async function deleteTrip(
     // Defensive untriage: places that survived but were assigned to this trip.
     await db.runAsync(
       `UPDATE places SET trip_id = NULL, updated_at = ? WHERE trip_id = ?`,
-      now, id,
+      now,
+      id,
     );
     // Now safe to delete sources (junctions and tags are gone).
     await db.runAsync(`DELETE FROM sources WHERE trip_id = ?`, id);
@@ -370,23 +397,15 @@ export {
 Edit lines 6-11 (import) and line 104 (call site):
 
 Replace:
+
 ```ts
-import {
-  getTrip,
-  renameTrip,
-  softDeleteTrip,
-  type Trip,
-} from '@/modules/storage';
+import { getTrip, renameTrip, softDeleteTrip, type Trip } from '@/modules/storage';
 ```
 
 With:
+
 ```ts
-import {
-  getTrip,
-  renameTrip,
-  deleteTrip,
-  type Trip,
-} from '@/modules/storage';
+import { getTrip, renameTrip, deleteTrip, type Trip } from '@/modules/storage';
 ```
 
 Replace `await softDeleteTrip(db, id);` (line 104) with `await deleteTrip(db, id);`.
@@ -428,6 +447,7 @@ EOF
 **Goal:** Make `transferJunctions` use hard-DELETE on the loser-side rows. Same shape, no change to call sites yet — the enrichment-merge sequence change is Task 3.
 
 **Files:**
+
 - Modify: `modules/storage/place_sources.ts:123-153`
 
 - [ ] **Step 2.1: Edit `modules/storage/place_sources.ts`**
@@ -489,10 +509,7 @@ export async function transferJunctions(
     winnerId,
     loserId,
   );
-  await db.runAsync(
-    `DELETE FROM place_sources WHERE place_id = ?`,
-    loserId,
-  );
+  await db.runAsync(`DELETE FROM place_sources WHERE place_id = ?`, loserId);
   notifyChange('place_sources');
   notifyChange('places');
 }
@@ -506,7 +523,7 @@ export async function transferJunctions(
 npx jest modules/storage 2>&1 | tail -10
 ```
 
-Expected: all green. `transferJunctions` callers (currently only `enrichment.ts`) still work — the enrichment merge soft-deletes the loser place *before* calling `transferJunctions`, so the place still has its junctions during the call (now we just hard-DELETE them instead of soft-DELETE).
+Expected: all green. `transferJunctions` callers (currently only `enrichment.ts`) still work — the enrichment merge soft-deletes the loser place _before_ calling `transferJunctions`, so the place still has its junctions during the call (now we just hard-DELETE them instead of soft-DELETE).
 
 - [ ] **Step 2.3: Commit**
 
@@ -528,9 +545,10 @@ EOF
 
 ## Task 3: enrichment — resequence the collision merge
 
-**Goal:** Change the collision-merge sequence so the loser place is hard-DELETEd *before* the winner is promoted to its `external_place_id`. Today's order (soft-delete loser → move junctions → write enrichment) relied on the partial-by-`deleted_at` unique index. The new schema's index has no `deleted_at` predicate, so loser must be physically gone before winner takes the same `external_place_id`.
+**Goal:** Change the collision-merge sequence so the loser place is hard-DELETEd _before_ the winner is promoted to its `external_place_id`. Today's order (soft-delete loser → move junctions → write enrichment) relied on the partial-by-`deleted_at` unique index. The new schema's index has no `deleted_at` predicate, so loser must be physically gone before winner takes the same `external_place_id`.
 
 **Files:**
+
 - Modify: `modules/enrichment/enrichment.ts:245-265`
 - Modify: `modules/enrichment/__tests__/enrichment.test.ts` (existing collision tests)
 
@@ -558,7 +576,8 @@ it('hard-deletes the loser place row entirely', async () => {
   // Whichever side won, the loser is GONE — no row, not soft-deleted.
   const surviving = await db.getAllAsync<{ id: string }>(
     `SELECT id FROM places WHERE id IN (?, ?)`,
-    incomingId, existingId,
+    incomingId,
+    existingId,
   );
   expect(surviving).toHaveLength(1);
 });
@@ -570,16 +589,12 @@ it('winner ends up with all junctions from both sides (deduped)', async () => {
 
   await runEnrichment(incomingId);
 
-  const survivor = (await db.getFirstAsync<{ id: string }>(
-    `SELECT id FROM places LIMIT 1`,
-  ))!.id;
+  const survivor = (await db.getFirstAsync<{ id: string }>(`SELECT id FROM places LIMIT 1`))!.id;
   const junctions = await db.getAllAsync<{ source_id: string }>(
     `SELECT source_id FROM place_sources WHERE place_id = ? ORDER BY source_id`,
     survivor,
   );
-  expect(junctions.map((r) => r.source_id)).toEqual(
-    [sharedSourceId, otherSourceId].sort(),
-  );
+  expect(junctions.map((r) => r.source_id)).toEqual([sharedSourceId, otherSourceId].sort());
 });
 
 it('winner has external_place_id set; no UNIQUE violation', async () => {
@@ -685,6 +700,7 @@ EOF
 **Goal:** Hard-DELETE the place row, hard-DELETE its junctions, and orphan-prune any source whose only junction was to this place.
 
 **Files:**
+
 - Modify: `modules/storage/places.ts:218-228` (softDeletePlace)
 - Modify: `modules/storage/index.ts` (export rename)
 - Modify: `modules/storage/__tests__/places.test.ts`
@@ -704,15 +720,21 @@ describe('deletePlace — hard delete + symmetric orphan prune', () => {
   const seedSource = async (db: Database, id: string): Promise<void> => {
     const now = '2026-05-10T10:00:00Z';
     await insertSource(db, {
-      id, tripId: null, filePath: `/x/${id}.jpg`,
-      contentHash: `h-${id}`, origin: 'manual',
-      capturedAt: now, ownerId,
+      id,
+      tripId: null,
+      filePath: `/x/${id}.jpg`,
+      contentHash: `h-${id}`,
+      origin: 'manual',
+      capturedAt: now,
+      ownerId,
     });
   };
   const link = async (db: Database, placeId: string, sourceId: string): Promise<void> => {
     await linkPlaceSource(db, {
-      placeId, sourceId,
-      extractionModel: 'gemini', ownerId,
+      placeId,
+      sourceId,
+      extractionModel: 'gemini',
+      ownerId,
     });
   };
 
@@ -789,6 +811,7 @@ Also: in the existing `countPlacesByTrip` test at line 227-237 (the "excludes so
 Also: the existing `movePlaceToTrip` test at line 172-198 ("skips soft-deleted junctions when picking sources to move") simulates a soft-deleted junction. Rewrite to simulate via `DELETE FROM place_sources` instead of `UPDATE place_sources SET deleted_at`:
 
 Find:
+
 ```ts
 await db.runAsync(
   `UPDATE place_sources SET deleted_at = ? WHERE place_id = ? AND source_id = ?`,
@@ -799,6 +822,7 @@ await db.runAsync(
 ```
 
 Replace with:
+
 ```ts
 await db.runAsync(
   `DELETE FROM place_sources WHERE place_id = ? AND source_id = ?`,
@@ -824,12 +848,7 @@ Find lines 218-228:
 ```ts
 export async function softDeletePlace(db: Database, id: string): Promise<void> {
   const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE places SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-    now,
-    now,
-    id,
-  );
+  await db.runAsync(`UPDATE places SET deleted_at = ?, updated_at = ? WHERE id = ?`, now, now, id);
   notifyChange('places');
   notifyChange('trips');
 }
@@ -957,6 +976,7 @@ EOF
 **Goal:** Hard-DELETE the source row, the file, the tags, and the junctions; orphan-prune any place whose only junction was to this source.
 
 **Files:**
+
 - Modify: `modules/storage/sources.ts:246-256` (softDeleteSource)
 - Modify: `modules/storage/index.ts` (export rename)
 - Modify: `modules/storage/__tests__/sources.test.ts`
@@ -966,6 +986,7 @@ EOF
 - [ ] **Step 5.1: Update existing `softDeleteSource` tests in `modules/storage/__tests__/sources.test.ts`**
 
 In the file, find:
+
 - Line 9: `softDeleteSource,` import — change to `deleteSource,`.
 - Line 86 (inside a test that simulates soft-deletion): `'UPDATE sources SET deleted_at = ? WHERE id = ?'` — replace with `'DELETE FROM sources WHERE id = ?'` and remove the `'2026-05-10T11:00:00Z'` arg.
 - Line 148: same pattern as 86 — replace UPDATE-deleted-at with DELETE FROM sources.
@@ -976,9 +997,13 @@ it('deleteSource removes the row, junctions, tags, and the file', async () => {
   const db = await freshDb();
   const deletedFiles: string[] = [];
   await insertSource(db, {
-    id: 'a', tripId: null, filePath: '/x/a.jpg',
-    contentHash: 'h-a', origin: 'manual',
-    capturedAt: '2026-05-04T10:00:00Z', ownerId,
+    id: 'a',
+    tripId: null,
+    filePath: '/x/a.jpg',
+    contentHash: 'h-a',
+    origin: 'manual',
+    capturedAt: '2026-05-04T10:00:00Z',
+    ownerId,
   });
   await deleteSource(db, 'a', {
     unlinkFile: (p) => deletedFiles.push(p),
@@ -996,36 +1021,40 @@ it('deleteSource removes the row, junctions, tags, and the file', async () => {
 
 ```ts
 describe('deleteSource — orphan-prune places', () => {
-  const seedPlace = async (
-    db: Database,
-    placeId: string,
-    tripId: string | null,
-  ): Promise<void> => {
+  const seedPlace = async (db: Database, placeId: string, tripId: string | null): Promise<void> => {
     const now = '2026-05-10T10:00:00Z';
     await db.runAsync(
       `INSERT INTO places (id, trip_id, name, city, normalized_key,
                            enrichment_status, owner_id, created_at, updated_at)
        VALUES (?, ?, 'Place ' || ?, 'Tokyo', 'p-' || ?, 'pending', ?, ?, ?)`,
-      placeId, tripId, placeId, placeId, ownerId, now, now,
+      placeId,
+      tripId,
+      placeId,
+      placeId,
+      ownerId,
+      now,
+      now,
     );
   };
-  const link = async (
-    db: Database,
-    placeId: string,
-    sourceId: string,
-  ): Promise<void> => {
+  const link = async (db: Database, placeId: string, sourceId: string): Promise<void> => {
     await linkPlaceSource(db, {
-      placeId, sourceId,
-      extractionModel: 'gemini', ownerId,
+      placeId,
+      sourceId,
+      extractionModel: 'gemini',
+      ownerId,
     });
   };
 
   it('orphan-prunes a place whose only source was this one', async () => {
     const db = await freshDb();
     await insertSource(db, {
-      id: 's1', tripId: null, filePath: '/x/s1.jpg',
-      contentHash: 'h-s1', origin: 'manual',
-      capturedAt: '2026-05-10T10:00:00Z', ownerId,
+      id: 's1',
+      tripId: null,
+      filePath: '/x/s1.jpg',
+      contentHash: 'h-s1',
+      origin: 'manual',
+      capturedAt: '2026-05-10T10:00:00Z',
+      ownerId,
     });
     await seedPlace(db, 'pOnlyHere', null);
     await link(db, 'pOnlyHere', 's1');
@@ -1039,14 +1068,22 @@ describe('deleteSource — orphan-prune places', () => {
   it('preserves a place that has another live source', async () => {
     const db = await freshDb();
     await insertSource(db, {
-      id: 's1', tripId: null, filePath: '/x/s1.jpg',
-      contentHash: 'h-s1', origin: 'manual',
-      capturedAt: '2026-05-10T10:00:00Z', ownerId,
+      id: 's1',
+      tripId: null,
+      filePath: '/x/s1.jpg',
+      contentHash: 'h-s1',
+      origin: 'manual',
+      capturedAt: '2026-05-10T10:00:00Z',
+      ownerId,
     });
     await insertSource(db, {
-      id: 's2', tripId: null, filePath: '/x/s2.jpg',
-      contentHash: 'h-s2', origin: 'manual',
-      capturedAt: '2026-05-10T10:00:01Z', ownerId,
+      id: 's2',
+      tripId: null,
+      filePath: '/x/s2.jpg',
+      contentHash: 'h-s2',
+      origin: 'manual',
+      capturedAt: '2026-05-10T10:00:01Z',
+      ownerId,
     });
     await seedPlace(db, 'pShared', null);
     await link(db, 'pShared', 's1');
@@ -1061,14 +1098,20 @@ describe('deleteSource — orphan-prune places', () => {
   it('removes tags attached to the deleted source', async () => {
     const db = await freshDb();
     await insertSource(db, {
-      id: 's1', tripId: null, filePath: '/x/s1.jpg',
-      contentHash: 'h-s1', origin: 'manual',
-      capturedAt: '2026-05-10T10:00:00Z', ownerId,
+      id: 's1',
+      tripId: null,
+      filePath: '/x/s1.jpg',
+      contentHash: 'h-s1',
+      origin: 'manual',
+      capturedAt: '2026-05-10T10:00:00Z',
+      ownerId,
     });
     await db.runAsync(
       `INSERT INTO tags (id, source_id, kind, value, owner_id, created_at, updated_at)
        VALUES ('tag1', 's1', 'food', 'sushi', ?, ?, ?)`,
-      ownerId, '2026-05-10T10:00:00Z', '2026-05-10T10:00:00Z',
+      ownerId,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
     );
 
     await deleteSource(db, 's1', { unlinkFile: () => {} });
@@ -1086,6 +1129,7 @@ Make sure `linkPlaceSource` is imported at the top of the file (add `import { li
 These tests assert `deleted_at IS NOT NULL` on junction / place rows. Once the schema and function move to hard-DELETE, the assertion changes from "deleted_at not null" to "row not found". Replace each assertion in this describe block:
 
 For example, line 449-460 becomes:
+
 ```ts
 const link = await db.getFirstAsync<{ source_id: string }>(
   `SELECT source_id FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
@@ -1094,10 +1138,11 @@ expect(link).toBeNull();
 const place = await db.getFirstAsync<{ trip_id: string | null }>(
   `SELECT trip_id FROM places WHERE id = 'p1'`,
 );
-expect(place).toBeNull();   // place was orphan-pruned
+expect(place).toBeNull(); // place was orphan-pruned
 ```
 
 For the second test (line 462-483, "breaks only the link..."):
+
 ```ts
 const linkA = await db.getFirstAsync(
   `SELECT source_id FROM place_sources WHERE source_id = 'sA' AND place_id = 'p1'`,
@@ -1110,7 +1155,7 @@ expect(linkB).toBeTruthy();
 const place = await db.getFirstAsync<{ trip_id: string | null }>(
   `SELECT trip_id FROM places WHERE id = 'p1'`,
 );
-expect(place?.trip_id).toBeNull();   // place still alive, still untriaged
+expect(place?.trip_id).toBeNull(); // place still alive, still untriaged
 ```
 
 Apply the same pattern to the remaining tests in this describe block — every `not.toBeNull()` on `deleted_at` becomes `expect(row).toBeNull()` (row gone), and every `toBeNull()` on `deleted_at` becomes `expect(row).toBeTruthy()` (row alive).
@@ -1132,12 +1177,7 @@ Find lines 246-256:
 ```ts
 export async function softDeleteSource(db: Database, id: string): Promise<void> {
   const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE sources SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-    now,
-    now,
-    id,
-  );
+  await db.runAsync(`UPDATE sources SET deleted_at = ?, updated_at = ? WHERE id = ?`, now, now, id);
   notifyChange('sources');
   notifyChange('trips');
 }
@@ -1230,10 +1270,12 @@ export {
 - [ ] **Step 5.7: Update consumers**
 
 In `app/sources/[id].tsx`:
+
 - Line 8: `softDeleteSource,` → `deleteSource,`.
 - Line 114: `await softDeleteSource(db, source.id);` → `await deleteSource(db, source.id);`.
 
 In `components/PlaceGrid.tsx`:
+
 - Line 5: `import { softDeleteSource } from '@/modules/storage';` → `import { deleteSource } from '@/modules/storage';`.
 - Line 51: `await softDeleteSource(db, id);` → `await deleteSource(db, id);`.
 
@@ -1271,6 +1313,7 @@ EOF
 **Goal:** The `excludePlaceIds` path inside `assignSourceTrip` (sources.ts:191-217) currently soft-deletes both the junction and (when the place is orphaned and untriaged) the place row. Swap both to hard-DELETE. The carve-out documented in spec §3.5 — "do not source-prune the source being assigned" — is preserved automatically: this function never inspects the source side's junction count.
 
 **Files:**
+
 - Modify: `modules/storage/sources.ts:183-244`
 
 - [ ] **Step 6.1: Edit `modules/storage/sources.ts`**
@@ -1349,7 +1392,7 @@ Also, in the cascade UPDATE that pulls untriaged places into the trip (lines 224
     AND id IN (
       SELECT place_id FROM place_sources
        WHERE source_id = ?
-    )`
+    )`;
 ```
 
 - [ ] **Step 6.2: Run tests**
@@ -1386,6 +1429,7 @@ EOF
 **Goal:** `cleanupOrphans` currently soft-deletes orphan sources (sources whose file disappeared). Switch to hard-DELETE via `deleteSource` so orphan-prune and file consistency are handled automatically.
 
 **Files:**
+
 - Modify: `modules/capture/cleanupOrphans.ts:33-41`
 - Modify: `modules/capture/__tests__/cleanupOrphans.test.ts:61` (simulate orphan via DELETE not UPDATE deleted_at)
 - Modify: `modules/processing/__tests__/processing.test.ts:293`
@@ -1445,9 +1489,10 @@ const rows = await db.getAllAsync<{ id: string; file_path: string }>(
 
 - [ ] **Step 7.2: Update `modules/capture/__tests__/cleanupOrphans.test.ts`**
 
-Find the test that uses `UPDATE sources SET deleted_at = ?` (line 61) — that test simulates a *previously* orphaned source and verifies the worker is idempotent. With hard-delete, "previously soft-deleted" doesn't exist; rewrite the test to simulate the source already being hard-deleted (no row to start with).
+Find the test that uses `UPDATE sources SET deleted_at = ?` (line 61) — that test simulates a _previously_ orphaned source and verifies the worker is idempotent. With hard-delete, "previously soft-deleted" doesn't exist; rewrite the test to simulate the source already being hard-deleted (no row to start with).
 
 Find:
+
 ```ts
 await db.runAsync(
   `UPDATE sources SET deleted_at = ?, updated_at = ? WHERE id = ?`,
@@ -1463,9 +1508,13 @@ Replace the surrounding test (whichever it is — find its describe/it block) so
 it('is idempotent on the second pass', async () => {
   const db = await freshDb();
   await insertSource(db, {
-    id: 's1', tripId: null, filePath: '/x/s1.jpg',
-    contentHash: 'h-s1', origin: 'manual',
-    capturedAt: '2026-05-10T10:00:00Z', ownerId,
+    id: 's1',
+    tripId: null,
+    filePath: '/x/s1.jpg',
+    contentHash: 'h-s1',
+    origin: 'manual',
+    capturedAt: '2026-05-10T10:00:00Z',
+    ownerId,
   });
   // First sweep removes the orphan.
   const first = await cleanupOrphanSources(db, { fileExists: () => false });
@@ -1483,11 +1532,13 @@ Also update any other test in this file that reads `WHERE deleted_at IS NULL` fr
 - [ ] **Step 7.3: Update `modules/processing/__tests__/processing.test.ts:293`**
 
 Find the line:
+
 ```ts
 await db.runAsync(`UPDATE sources SET deleted_at = ? WHERE id = ?`, '2026-05-07T11:00:00Z', 'f1');
 ```
 
 Replace with:
+
 ```ts
 await db.runAsync(`DELETE FROM sources WHERE id = ?`, 'f1');
 ```
@@ -1497,11 +1548,13 @@ If the surrounding test asserts that processing skips the soft-deleted source, t
 - [ ] **Step 7.4: Update `modules/extraction/__tests__/extraction.test.ts:675`**
 
 Find:
+
 ```ts
 await db.runAsync(`UPDATE sources SET deleted_at = ? WHERE id = 's1'`, NOW);
 ```
 
 Replace with:
+
 ```ts
 await db.runAsync(`DELETE FROM sources WHERE id = 's1'`);
 ```
@@ -1548,6 +1601,7 @@ EOF
 **Pre-flight:** Wipe the simulator app or remove `trip-pocket.db` from the simulator sandbox before running the app after this task. The runner skips already-applied migrations, so the in-place edit only takes effect on a fresh DB.
 
 **Files:**
+
 - Modify: `modules/storage/migrations/0001_init.ts` (whole file)
 - Modify: `modules/storage/__tests__/db.test.ts` (add schema-shape assertions)
 - Modify: every storage / app / component file with a `WHERE deleted_at IS NULL` clause (24 occurrences)
@@ -1839,6 +1893,7 @@ export const init: Migration = {
 Use these exact path:line references. For each, delete the `AND deleted_at IS NULL` (or `WHERE deleted_at IS NULL`) clause from the SQL string.
 
 In `modules/storage/places.ts`:
+
 - Line 131 (`getPlace`): `WHERE id = ? AND deleted_at IS NULL` → `WHERE id = ?`.
 - Line 148 (`findSoleMatchByNormalizedKey`): drop `AND deleted_at IS NULL`.
 - Line 164 (`listPlaces` filter branch): drop `WHERE deleted_at IS NULL AND` (keep the parenthesised tripId clause).
@@ -1849,6 +1904,7 @@ In `modules/storage/places.ts`:
 - Line 315 (`countPlacesByTrip`): drop `AND deleted_at IS NULL` (keep the rest).
 
 In `modules/storage/sources.ts`:
+
 - Line 100 (`getSource`): drop `AND deleted_at IS NULL`.
 - Line 113 (`listSources`): drop `WHERE deleted_at IS NULL AND` (keep the tripId predicate).
 - Line 124 (`listAllSources`): drop `WHERE deleted_at IS NULL ` (keep the ORDER BY).
@@ -1857,10 +1913,12 @@ In `modules/storage/sources.ts`:
 - Line 262 (`countSourcesByTrip`): drop `WHERE deleted_at IS NULL AND` (keep `trip_id IS NOT NULL`).
 
 In `modules/storage/trips.ts`:
+
 - Line 65 (`listTrips`): drop `WHERE deleted_at IS NULL` (keep `ORDER BY`).
 - Line 75 (`getTrip`): drop `AND deleted_at IS NULL`.
 
 In `modules/storage/place_sources.ts`:
+
 - Line 98 (`listSourcesForPlace`): drop `AND deleted_at IS NULL`.
 - Line 112 (`listPlacesForSource`): drop `AND deleted_at IS NULL`.
 - Line 136 (`transferJunctions` SELECT — already removed in Task 2). Verify.
@@ -1870,6 +1928,7 @@ In `modules/storage/place_sources.ts`:
 - [ ] **Step 8.3: Drop `WHERE deleted_at IS NULL` from app/ and components/**
 
 Run:
+
 ```bash
 grep -rn "deleted_at IS NULL" app components --include="*.ts" --include="*.tsx"
 ```
@@ -1936,7 +1995,9 @@ describe('schema shape — post-soft-delete-removal', () => {
                            enrichment_status, owner_id, created_at, updated_at)
        VALUES ('p1', NULL, 'Sushi Bar', 'Tokyo', 'sushi-bar|tokyo',
                'pending', ?, ?, ?)`,
-      ownerId, '2026-05-10T10:00:00Z', '2026-05-10T10:00:00Z',
+      ownerId,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
     );
     let row = await db.getFirstAsync<{ content: string }>(
       `SELECT content FROM places_fts WHERE place_id = 'p1'`,
@@ -2005,6 +2066,7 @@ EOF
 **Goal:** Add a destructive Delete row to the triage CTA tray, beneath "Skip for now". Confirms with orphan-prune-aware copy and calls `deleteSource`. Advances to next source on success.
 
 **Files:**
+
 - Modify: `app/triage.tsx` (CtaTray component + Triage screen)
 
 - [ ] **Step 9.1: Read `app/triage.tsx` to locate the CtaTray component**
@@ -2031,9 +2093,7 @@ After the "Skip for now" Pressable inside the LinearGradient, add:
   style={{ paddingVertical: 10 }}
   hitSlop={8}
 >
-  <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>
-    Delete
-  </Text>
+  <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>Delete</Text>
 </Pressable>
 ```
 
@@ -2049,32 +2109,28 @@ const onDelete = useCallback(() => {
     placesCount === 0
       ? "This can't be undone."
       : `${placesCount} place${placesCount === 1 ? '' : 's'} extracted from it will also be deleted. This can't be undone.`;
-  Alert.alert(
-    'Delete this screenshot?',
-    body,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          if (!db) return;
-          if (process.env.EXPO_OS === 'ios') {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-          }
-          await deleteSource(db, current.id);
-          // Same advance behaviour as Skip — next source, or close if last.
-          setItems((prev) => prev?.filter((s) => s.id !== current.id) ?? prev);
-          const remaining = (items?.length ?? 0) - 1;
-          if (index >= remaining) {
-            router.back();
-          } else {
-            listRef.current?.scrollToIndex({ index, animated: true });
-          }
-        },
+  Alert.alert('Delete this screenshot?', body, [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Delete',
+      style: 'destructive',
+      onPress: async () => {
+        if (!db) return;
+        if (process.env.EXPO_OS === 'ios') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        }
+        await deleteSource(db, current.id);
+        // Same advance behaviour as Skip — next source, or close if last.
+        setItems((prev) => prev?.filter((s) => s.id !== current.id) ?? prev);
+        const remaining = (items?.length ?? 0) - 1;
+        if (index >= remaining) {
+          router.back();
+        } else {
+          listRef.current?.scrollToIndex({ index, animated: true });
+        }
       },
-    ],
-  );
+    },
+  ]);
 }, [db, current, currentPlaces, index, items, router]);
 ```
 
@@ -2137,6 +2193,7 @@ EOF
 **Goal:** Update the existing source-detail Delete dialog to mention orphan-pruned places when applicable. The wiring (menu → confirm → deleteSource) already exists from Task 5.
 
 **Files:**
+
 - Modify: `app/sources/[id].tsx` (the `confirmDelete` function and the place-count query)
 
 - [ ] **Step 10.1: Read `app/sources/[id].tsx` confirmDelete to locate the existing Alert**
@@ -2160,7 +2217,8 @@ const confirmDelete = async () => {
                WHERE ps2.place_id = ps1.place_id
                  AND ps2.source_id != ?
             )`,
-    source.id, source.id,
+    source.id,
+    source.id,
   );
   const orphanCount = countRow?.n ?? 0;
   const body =
@@ -2223,6 +2281,7 @@ EOF
 **Goal:** Mirror Task 10 in the other direction. The dialog body mentions the count of sources that will be orphan-pruned.
 
 **Files:**
+
 - Modify: `app/places/[id].tsx` (the `confirmDelete` or equivalent — find via grep)
 
 - [ ] **Step 11.1: Locate the existing delete handler**
@@ -2250,7 +2309,8 @@ const confirmDelete = async () => {
                WHERE ps2.source_id = ps1.source_id
                  AND ps2.place_id != ?
             )`,
-    place.id, place.id,
+    place.id,
+    place.id,
   );
   const orphanCount = countRow?.n ?? 0;
   const body =
@@ -2306,11 +2366,13 @@ EOF
 **Goal:** Replace the single Delete button on the trip edit screen with two distinct rows: a primary "Delete trip" (gentle untriage) and a destructive secondary "Delete trip and everything in it" (cascade). Each has its own confirm dialog with accurate counts.
 
 **Files:**
+
 - Modify: `app/trips/[id]/edit.tsx`
 
 - [ ] **Step 12.1: Add count queries when the screen loads**
 
 In the existing `useEffect` (lines 25-41), the load fetches the trip name + place count. Extend it to also fetch:
+
 - `sourceCount` — sources in this trip.
 - `cascadeDeletedPlaces` — places that will actually be deleted by cascade (every junction to a source in this trip).
 - `cascadeSurvivingShared` — places that survive cascade because they have other-trip junctions.
@@ -2346,7 +2408,8 @@ useEffect(() => {
              WHERE ps.place_id = p.id
                AND ps.source_id NOT IN (SELECT id FROM sources WHERE trip_id = ?)
           )`,
-      id, id,
+      id,
+      id,
     );
     const cascadeSharedRow = await db.getFirstAsync<{ n: number }>(
       `SELECT COUNT(*) AS n FROM places p
@@ -2358,7 +2421,9 @@ useEffect(() => {
              WHERE ps.place_id = p.id
                AND ps.source_id NOT IN (SELECT id FROM sources WHERE trip_id = ?)
           )`,
-      id, id, id,
+      id,
+      id,
+      id,
     );
     if (cancelled) return;
     setLoad({
@@ -2413,33 +2478,29 @@ Find the existing single delete button (lines 187-205). Replace with:
     backgroundColor: 'rgba(254,242,242,0.6)',
   }}
 >
-  <Text
-    className="text-center"
-    style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}
-  >
+  <Text className="text-center" style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>
     Delete trip
   </Text>
-</Pressable>
+</Pressable>;
 
-{counts && (counts.sources > 0 || counts.cascadeDeletedPlaces > 0) ? (
-  <>
-    <View style={{ height: 8 }} />
-    <Pressable
-      onPress={onDeleteCascade}
-      accessibilityRole="button"
-      accessibilityLabel="Delete trip and everything in it"
-      style={{ paddingVertical: 10 }}
-      hitSlop={8}
-    >
-      <Text
-        className="text-center"
-        style={{ fontSize: 13, fontWeight: '500', color: '#dc2626' }}
+{
+  counts && (counts.sources > 0 || counts.cascadeDeletedPlaces > 0) ? (
+    <>
+      <View style={{ height: 8 }} />
+      <Pressable
+        onPress={onDeleteCascade}
+        accessibilityRole="button"
+        accessibilityLabel="Delete trip and everything in it"
+        style={{ paddingVertical: 10 }}
+        hitSlop={8}
       >
-        Delete trip and everything in it
-      </Text>
-    </Pressable>
-  </>
-) : null}
+        <Text className="text-center" style={{ fontSize: 13, fontWeight: '500', color: '#dc2626' }}>
+          Delete trip and everything in it
+        </Text>
+      </Pressable>
+    </>
+  ) : null;
+}
 ```
 
 `counts` is `load.counts` once loaded; pass it down or read from local state. The destructive cascade row is hidden when there's nothing to cascade (matches the spec's §4.3 rule).
@@ -2456,62 +2517,58 @@ const onDeleteUntriage = () => {
     n === 0 && m === 0
       ? "This can't be undone."
       : `${n} screenshot${n === 1 ? '' : 's'} and ${m} place${m === 1 ? '' : 's'} will move back to your Inbox.`;
-  Alert.alert(
-    `Delete '${trip.name}'?`,
-    body,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (process.env.EXPO_OS === 'ios') {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-            }
-            await deleteTrip(db, id, 'untriage');
-            router.back();
-            setTimeout(() => router.back(), 0);
-          } catch (err) {
-            Alert.alert('Could not delete trip', String(err));
+  Alert.alert(`Delete '${trip.name}'?`, body, [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Delete',
+      style: 'destructive',
+      onPress: async () => {
+        try {
+          if (process.env.EXPO_OS === 'ios') {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
           }
-        },
+          await deleteTrip(db, id, 'untriage');
+          router.back();
+          setTimeout(() => router.back(), 0);
+        } catch (err) {
+          Alert.alert('Could not delete trip', String(err));
+        }
       },
-    ],
-  );
+    },
+  ]);
 };
 
 const onDeleteCascade = () => {
   if (!db || !id || !counts) return;
   const { sources: n, cascadeDeletedPlaces: m, cascadeSurvivingShared: s } = counts;
-  const lines = [`Delete '${trip.name}' and ${n} screenshot${n === 1 ? '' : 's'}, ${m} place${m === 1 ? '' : 's'}?`];
+  const lines = [
+    `Delete '${trip.name}' and ${n} screenshot${n === 1 ? '' : 's'}, ${m} place${m === 1 ? '' : 's'}?`,
+  ];
   if (s > 0) {
-    lines.push(`${s} place${s === 1 ? '' : 's'} shared with other trips will be moved to your Inbox.`);
+    lines.push(
+      `${s} place${s === 1 ? '' : 's'} shared with other trips will be moved to your Inbox.`,
+    );
   }
   lines.push("This can't be undone.");
-  Alert.alert(
-    lines[0]!,
-    lines.slice(1).join('\n\n'),
-    [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete everything',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (process.env.EXPO_OS === 'ios') {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-            }
-            await deleteTrip(db, id, 'cascade');
-            router.back();
-            setTimeout(() => router.back(), 0);
-          } catch (err) {
-            Alert.alert('Could not delete trip', String(err));
+  Alert.alert(lines[0]!, lines.slice(1).join('\n\n'), [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Delete everything',
+      style: 'destructive',
+      onPress: async () => {
+        try {
+          if (process.env.EXPO_OS === 'ios') {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
           }
-        },
+          await deleteTrip(db, id, 'cascade');
+          router.back();
+          setTimeout(() => router.back(), 0);
+        } catch (err) {
+          Alert.alert('Could not delete trip', String(err));
+        }
       },
-    ],
-  );
+    },
+  ]);
 };
 ```
 
@@ -2557,6 +2614,7 @@ EOF
 **Goal:** Add four FTS tests that exercise the cascade paths against the rebuilt triggers.
 
 **Files:**
+
 - Create: `modules/search/__tests__/fts-cascade.test.ts`
 
 - [ ] **Step 13.1: Create `modules/search/__tests__/fts-cascade.test.ts`**
@@ -2591,7 +2649,13 @@ async function seedPlace(
     `INSERT INTO places (id, trip_id, name, city, normalized_key,
                          enrichment_status, owner_id, created_at, updated_at)
      VALUES (?, ?, ?, 'Tokyo', ?, 'pending', ?, ?, ?)`,
-    id, tripId, name, `${name.toLowerCase()}|tokyo`, ownerId, now, now,
+    id,
+    tripId,
+    name,
+    `${name.toLowerCase()}|tokyo`,
+    ownerId,
+    now,
+    now,
   );
 }
 
@@ -2602,21 +2666,29 @@ async function seedSource(
   tripId: string | null = null,
 ): Promise<void> {
   await insertSource(db, {
-    id, tripId, filePath: `/x/${id}.jpg`,
-    contentHash: `h-${id}`, origin: 'manual',
-    capturedAt: '2026-05-10T10:00:00Z', ownerId,
+    id,
+    tripId,
+    filePath: `/x/${id}.jpg`,
+    contentHash: `h-${id}`,
+    origin: 'manual',
+    capturedAt: '2026-05-10T10:00:00Z',
+    ownerId,
   });
-  await db.runAsync(
-    `UPDATE sources SET ocr_text = ? WHERE id = ?`,
-    ocrText, id,
-  );
+  await db.runAsync(`UPDATE sources SET ocr_text = ? WHERE id = ?`, ocrText, id);
 }
 
-const link = async (db: Database, placeId: string, sourceId: string, rawText?: string): Promise<void> => {
+const link = async (
+  db: Database,
+  placeId: string,
+  sourceId: string,
+  rawText?: string,
+): Promise<void> => {
   await linkPlaceSource(db, {
-    placeId, sourceId,
+    placeId,
+    sourceId,
     rawText: rawText ?? null,
-    extractionModel: 'gemini', ownerId,
+    extractionModel: 'gemini',
+    ownerId,
   });
 };
 
@@ -2729,6 +2801,7 @@ EOF
 **Goal:** Document the dev-DB-wipe requirement and mark the roadmap item shipped.
 
 **Files:**
+
 - Modify: `docs/ARCHITECTURE.md` (or `README.md` if the user prefers)
 - Modify: `docs/ROADMAP.md`
 

@@ -16,10 +16,10 @@ export function StatusPill({ label, testID }: StatusPillProps) {
       accessibilityRole="text"
       accessibilityLabel={label}
       testID={testID ?? 'status-pill'}
-      className="flex-row items-center gap-2 self-start rounded-full bg-info-bg px-3 py-1.5"
+      className="bg-info-bg flex-row items-center gap-2 self-start rounded-full px-3 py-1.5"
     >
       <ActivityIndicator size="small" color={colors.infoText} />
-      <Text className="text-[12px] font-semibold text-info-text">{label}</Text>
+      <Text className="text-info-text text-[12px] font-semibold">{label}</Text>
     </View>
   );
 }

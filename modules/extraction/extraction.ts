@@ -344,7 +344,13 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     }
   }
 
-  return { enqueueExtraction, runExtractionSweep, runStartupRecovery, resumeEntitlementPaused, _awaitIdle };
+  return {
+    enqueueExtraction,
+    runExtractionSweep,
+    runStartupRecovery,
+    resumeEntitlementPaused,
+    _awaitIdle,
+  };
 }
 
 function defaultUuid(): string {

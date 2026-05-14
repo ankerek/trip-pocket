@@ -48,8 +48,7 @@ const EXTRACTED_SQL = `SELECT ps.source_id, p.id AS place_id, p.name, p.city, p.
 
 // Status for every untriaged source — the FlatList window can mount cards
 // adjacent to the visible one, so we need per-id lookup, not just current.
-const INBOX_STATUS_SQL =
-  `SELECT id, ocr_status, extraction_status FROM sources WHERE trip_id IS NULL`;
+const INBOX_STATUS_SQL = `SELECT id, ocr_status, extraction_status FROM sources WHERE trip_id IS NULL`;
 type SourceStatusRow = {
   id: string;
   ocr_status: ProcessingStatus;
@@ -96,18 +95,15 @@ export default function Triage() {
   const HERO_HEIGHT = Math.min(Math.round(height * 0.55), 540);
 
   // Live query so AI extraction surfacing mid-triage updates the bottom card.
-  const extractedRows = useLiveQuery<ExtractedPlace>(EXTRACTED_SQL, [], [
-    'place_sources',
-    'places',
-  ]);
+  const extractedRows = useLiveQuery<ExtractedPlace>(
+    EXTRACTED_SQL,
+    [],
+    ['place_sources', 'places'],
+  );
 
   // OCR/extraction status for every untriaged source. Cheap (< ~50 rows in
   // practice) and avoids a per-card query that'd race with FlatList paging.
-  const statusRows = useLiveQuery<SourceStatusRow>(
-    INBOX_STATUS_SQL,
-    [],
-    ['sources'],
-  );
+  const statusRows = useLiveQuery<SourceStatusRow>(INBOX_STATUS_SQL, [], ['sources']);
 
   const cardStatusById = useMemo(() => {
     const out = new Map<string, CardStatus>();
@@ -168,7 +164,7 @@ export default function Triage() {
       const next = new Map(prev);
       const innerPrev = prev.get(sourceId);
       const inner = new Map(innerPrev ?? new Map());
-      const current = innerPrev ? innerPrev.get(placeId) ?? true : true;
+      const current = innerPrev ? (innerPrev.get(placeId) ?? true) : true;
       inner.set(placeId, !current);
       next.set(sourceId, inner);
       return next;
@@ -225,9 +221,7 @@ export default function Triage() {
           onPress: async () => {
             if (!db) return;
             if (process.env.EXPO_OS === 'ios') {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(
-                () => {},
-              );
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
             await deleteSource(db, source.id);
             // Same advance behaviour as the TripPicker save: drop this source
@@ -250,7 +244,7 @@ export default function Triage() {
 
   if (!items || !current) {
     return (
-      <View className="flex-1 bg-bg">
+      <View className="bg-bg flex-1">
         <Stack.Screen options={{ headerShown: false }} />
       </View>
     );
@@ -270,11 +264,7 @@ export default function Triage() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View
-        className="flex-1 bg-bg"
-        accessibilityViewIsModal
-        importantForAccessibility="yes"
-      >
+      <View className="bg-bg flex-1" accessibilityViewIsModal importantForAccessibility="yes">
         <RNFlatList
           ref={listRef}
           data={items}
@@ -306,7 +296,7 @@ export default function Triage() {
 
         {/* Top: close on the left, count chip pinned to the right. */}
         <View
-          className="absolute left-0 right-0 flex-row items-center justify-between px-4"
+          className="absolute right-0 left-0 flex-row items-center justify-between px-4"
           style={{ top: insets.top + 8 }}
           pointerEvents="box-none"
         >
@@ -337,9 +327,7 @@ export default function Triage() {
             tap. */}
         {totalCount > 0 ? (
           <Pressable
-            onPress={() =>
-              setAllForSource(current.id, currentPlaces, allSelected ? false : true)
-            }
+            onPress={() => setAllForSource(current.id, currentPlaces, allSelected ? false : true)}
             accessibilityRole="button"
             accessibilityLabel={allSelected ? 'Deselect all places' : 'Select all places'}
             hitSlop={8}
@@ -360,16 +348,12 @@ export default function Triage() {
           entityId={current.id}
           entityKind="source"
           mode="assign"
-          assignOptions={
-            excludePlaceIds.length > 0 ? { excludePlaceIds } : undefined
-          }
+          assignOptions={excludePlaceIds.length > 0 ? { excludePlaceIds } : undefined}
           onClose={async (result) => {
             setPickerVisible(false);
             if (!result) return;
             if (process.env.EXPO_OS === 'ios') {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
-                () => {},
-              );
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             }
             setSelections((prev) => {
               if (!prev.has(current.id)) return prev;
@@ -388,11 +372,7 @@ export default function Triage() {
         />
       </View>
 
-      <FullscreenPreview
-        source={preview}
-        topInset={insets.top}
-        onClose={() => setPreview(null)}
-      />
+      <FullscreenPreview source={preview} topInset={insets.top} onClose={() => setPreview(null)} />
     </>
   );
 }
@@ -430,10 +410,7 @@ function FullscreenPreview({
             />
           ) : null}
         </Pressable>
-        <View
-          className="absolute"
-          style={{ top: topInset + 8, left: 16 }}
-        >
+        <View className="absolute" style={{ top: topInset + 8, left: 16 }}>
           <Pressable
             onPress={onClose}
             accessibilityRole="button"
@@ -454,7 +431,7 @@ function CountChip({ index, total }: { index: number; total: number }) {
   return (
     <View
       accessibilityLabel={`Source ${index + 1} of ${total}`}
-      className="rounded-full items-center justify-center"
+      className="items-center justify-center rounded-full"
       style={{
         height: 30,
         paddingHorizontal: 12,
@@ -513,10 +490,7 @@ function TriageCard({
         accessibilityLabel={hasImage ? 'View full image' : undefined}
         accessibilityHint={hasImage ? 'Opens the source image fullscreen' : undefined}
       >
-        <View
-          className="bg-surface"
-          style={{ height: heroHeight, overflow: 'hidden' }}
-        >
+        <View className="bg-surface" style={{ height: heroHeight, overflow: 'hidden' }}>
           {source.filePath ? (
             <ExpoImage
               source={source.filePath}
@@ -525,7 +499,7 @@ function TriageCard({
               cachePolicy="memory-disk"
             />
           ) : source.kind === 'url' && source.caption ? (
-            <View className="flex-1 items-center justify-center px-6 bg-surface">
+            <View className="bg-surface flex-1 items-center justify-center px-6">
               <Icon name="link" size={28} tintColor={colors.textMuted} />
               <Text
                 className="text-text mt-3 text-center"
@@ -537,15 +511,15 @@ function TriageCard({
             </View>
           ) : (
             <View className="flex-1 items-center justify-center">
-              <Icon name={source.kind === 'url' ? 'link' : 'photo'} size={36} tintColor={colors.textMuted} />
+              <Icon
+                name={source.kind === 'url' ? 'link' : 'photo'}
+                size={36}
+                tintColor={colors.textMuted}
+              />
             </View>
           )}
           {hasImage ? (
-            <View
-              className="absolute"
-              style={{ bottom: 10, right: 10 }}
-              pointerEvents="none"
-            >
+            <View className="absolute" style={{ bottom: 10, right: 10 }} pointerEvents="none">
               <View
                 className="items-center justify-center rounded-full"
                 style={{
@@ -554,19 +528,12 @@ function TriageCard({
                   backgroundColor: 'rgba(0,0,0,0.55)',
                 }}
               >
-                <Icon
-                  name="arrow.up.left.and.arrow.down.right"
-                  size={13}
-                  tintColor="#ffffff"
-                />
+                <Icon name="arrow.up.left.and.arrow.down.right" size={13} tintColor="#ffffff" />
               </View>
             </View>
           ) : null}
           {source.kind === 'url' && source.platform && source.url ? (
-            <View
-              className="absolute"
-              style={{ top: topInset + 46, right: 10 }}
-            >
+            <View className="absolute" style={{ top: topInset + 46, right: 10 }}>
               <Pressable
                 onPress={() => {
                   if (process.env.EXPO_OS === 'ios') {
@@ -590,11 +557,7 @@ function TriageCard({
                   gap: 5,
                 }}
               >
-                <Icon
-                  name="arrow.up.right.square.fill"
-                  size={12}
-                  tintColor="#ffffff"
-                />
+                <Icon name="arrow.up.right.square.fill" size={12} tintColor="#ffffff" />
                 <Text
                   style={{
                     fontSize: 11,
@@ -611,7 +574,7 @@ function TriageCard({
         </View>
       </Pressable>
 
-      <View className="flex-1 bg-bg">
+      <View className="bg-bg flex-1">
         <RNScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: bottomInset }}
@@ -701,12 +664,8 @@ function PlaceSelectRow({
   onToggle: () => void;
 }) {
   const colors = useThemeColors();
-  const photoUrl = buildPhotoUrl(
-    place.enrichment_status === 'enriched' ? place.photo_name : null,
-  );
-  const subtitle = [place.city, prettyCategory(place.category)]
-    .filter(Boolean)
-    .join(' · ');
+  const photoUrl = buildPhotoUrl(place.enrichment_status === 'enriched' ? place.photo_name : null);
+  const subtitle = [place.city, prettyCategory(place.category)].filter(Boolean).join(' · ');
   const categoryIcon = CATEGORY_ICON[place.category ?? 'null'];
 
   return (
@@ -716,7 +675,7 @@ function PlaceSelectRow({
       accessibilityState={{ checked }}
       accessibilityLabel={place.city ? `${place.name}, ${place.city}` : place.name}
       style={{ opacity: checked ? 1 : 0.45, borderBottomWidth: 1 }}
-      className="flex-row items-center gap-3 border-hairline px-4 py-3"
+      className="border-hairline flex-row items-center gap-3 px-4 py-3"
     >
       {photoUrl ? (
         <ExpoImage
@@ -726,7 +685,7 @@ function PlaceSelectRow({
           transition={150}
         />
       ) : (
-        <View className="h-11 w-11 items-center justify-center rounded-[10px] bg-surface">
+        <View className="bg-surface h-11 w-11 items-center justify-center rounded-[10px]">
           <Icon name={categoryIcon} size={20} tintColor={colors.text} />
         </View>
       )}
@@ -744,7 +703,7 @@ function PlaceSelectRow({
           {place.name}
         </Text>
         {subtitle ? (
-          <Text className="mt-0.5 text-text-muted" style={{ fontSize: 12 }} numberOfLines={1}>
+          <Text className="text-text-muted mt-0.5" style={{ fontSize: 12 }} numberOfLines={1}>
             {subtitle}
           </Text>
         ) : null}
@@ -789,11 +748,9 @@ function CtaTray({
   // the system theme.
   const colors = useThemeColors();
   const bgRgba = (alpha: number) =>
-    colors.bg === '#020617'
-      ? `rgba(2,6,23,${alpha})`
-      : `rgba(255,255,255,${alpha})`;
+    colors.bg === '#020617' ? `rgba(2,6,23,${alpha})` : `rgba(255,255,255,${alpha})`;
   return (
-    <View className="absolute left-0 right-0 bottom-0" pointerEvents="box-none">
+    <View className="absolute right-0 bottom-0 left-0" pointerEvents="box-none">
       <LinearGradient
         colors={[bgRgba(0), bgRgba(0.96)]}
         locations={[0, 0.55]}
@@ -808,14 +765,12 @@ function CtaTray({
           accessibilityRole="button"
           accessibilityLabel="Choose a trip"
           accessibilityHint="Picks a trip and saves the selected places"
-          className="flex-row items-center justify-between rounded-2xl bg-accent px-4"
+          className="bg-accent flex-row items-center justify-between rounded-2xl px-4"
           style={{ paddingVertical: 14 }}
         >
           <View className="flex-row items-center gap-2">
             <Icon name="folder.fill" size={16} tintColor="#ffffff" />
-            <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }}>
-              Choose a trip
-            </Text>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }}>Choose a trip</Text>
           </View>
           <View className="flex-row items-center gap-1">
             {totalCount > 0 ? (
@@ -835,7 +790,7 @@ function CtaTray({
 
         {/* Secondary actions share a row, separated by a hairline — iOS
             alert-style. Saves vertical space vs. stacked pill buttons. */}
-        <View className="flex-row items-center mt-1">
+        <View className="mt-1 flex-row items-center">
           <Pressable
             onPress={onSkip}
             accessibilityRole="button"
@@ -865,9 +820,7 @@ function CtaTray({
             style={{ paddingVertical: 10 }}
             hitSlop={8}
           >
-            <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>
-              Delete
-            </Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#dc2626' }}>Delete</Text>
           </Pressable>
         </View>
       </LinearGradient>

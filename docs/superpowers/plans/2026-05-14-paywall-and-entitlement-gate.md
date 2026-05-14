@@ -31,59 +31,55 @@ Behavior is identical to the spec's intent: sweep filters skip rows with a non-n
 Spec ref: §"Manual bootstrap" (lines 426–445).
 
 - [ ] **Step 0.1: App Store Connect — create the three subscriptions**
-
-   1. Sign in to App Store Connect for the Trip Pocket app record (Apple Team `WL5ALL46C4`, ASC App ID `6768290313`).
-   2. Apps → Trip Pocket → Subscriptions → "+" → create one **subscription group** named `Trip Pocket Pro`.
-   3. In that group, create three auto-renewing subscription products:
+  1.  Sign in to App Store Connect for the Trip Pocket app record (Apple Team `WL5ALL46C4`, ASC App ID `6768290313`).
+  2.  Apps → Trip Pocket → Subscriptions → "+" → create one **subscription group** named `Trip Pocket Pro`.
+  3.  In that group, create three auto-renewing subscription products:
       - Product ID `trip_pocket_pro_weekly`, duration 1 week
       - Product ID `trip_pocket_pro_monthly`, duration 1 month
       - Product ID `trip_pocket_pro_yearly`, duration 1 year
-   4. For each product, add a free **introductory offer** of length **7 days**.
-   5. Set placeholder prices (any value; revisable before submission).
+  4.  For each product, add a free **introductory offer** of length **7 days**.
+  5.  Set placeholder prices (any value; revisable before submission).
 
-   **Done when:** all three products show in App Store Connect with status "Ready to Submit" and each shows a 7-day intro offer attached.
+  **Done when:** all three products show in App Store Connect with status "Ready to Submit" and each shows a 7-day intro offer attached.
 
 - [ ] **Step 0.2: App Store Connect — sandbox tester**
+  1.  Users and Access → Sandbox Testers → "+".
+  2.  Create one account with a fresh email (use a `+test` alias on a real Apple ID inbox you control).
+  3.  On the dev iPhone: Settings → Developer → Sandbox Apple Account → sign in with this account.
 
-   1. Users and Access → Sandbox Testers → "+".
-   2. Create one account with a fresh email (use a `+test` alias on a real Apple ID inbox you control).
-   3. On the dev iPhone: Settings → Developer → Sandbox Apple Account → sign in with this account.
-
-   **Done when:** Settings → Developer → Sandbox Apple Account shows the tester email.
+  **Done when:** Settings → Developer → Sandbox Apple Account shows the tester email.
 
 - [ ] **Step 0.3: RevenueCat — project + entitlement + offering**
+  1.  Sign up at https://app.revenuecat.com (or sign in if an org exists).
+  2.  Create a new project named `Trip Pocket`. Add one app → iOS → bundle ID `com.trippocket.app`. Add a second app entry for `com.trippocket.app.dev` so dev builds use the same RC project.
+  3.  Account → Apple App Store Shared Secret → paste the shared secret from App Store Connect (Apps → Trip Pocket → App Information → App-Specific Shared Secret).
+  4.  Entitlements → "+" → create entitlement with identifier `pro`.
+  5.  Products → "+" → attach all three App Store products to the entitlement `pro`.
+  6.  Offerings → create one offering named `default` containing the three products as **packages** (`$rc_weekly`, `$rc_monthly`, `$rc_annual`). Mark the offering as Current.
 
-   1. Sign up at https://app.revenuecat.com (or sign in if an org exists).
-   2. Create a new project named `Trip Pocket`. Add one app → iOS → bundle ID `com.trippocket.app`. Add a second app entry for `com.trippocket.app.dev` so dev builds use the same RC project.
-   3. Account → Apple App Store Shared Secret → paste the shared secret from App Store Connect (Apps → Trip Pocket → App Information → App-Specific Shared Secret).
-   4. Entitlements → "+" → create entitlement with identifier `pro`.
-   5. Products → "+" → attach all three App Store products to the entitlement `pro`.
-   6. Offerings → create one offering named `default` containing the three products as **packages** (`$rc_weekly`, `$rc_monthly`, `$rc_annual`). Mark the offering as Current.
-
-   **Done when:** RC dashboard shows entitlement `pro` with three products attached, and offering `default` (Current) with three packages.
+  **Done when:** RC dashboard shows entitlement `pro` with three products attached, and offering `default` (Current) with three packages.
 
 - [ ] **Step 0.4: RevenueCat — keys**
+  1.  Project settings → API keys → copy the **iOS Public SDK Key**.
+  2.  Project settings → API keys → copy the **Secret API key (v1)**.
 
-   1. Project settings → API keys → copy the **iOS Public SDK Key**.
-   2. Project settings → API keys → copy the **Secret API key (v1)**.
+  No code change yet — just save both values somewhere safe. They get installed in Task 1 (worker secret) and Task 4 (EAS Secret).
 
-   No code change yet — just save both values somewhere safe. They get installed in Task 1 (worker secret) and Task 4 (EAS Secret).
-
-   **Done when:** both keys are copied and saved.
+  **Done when:** both keys are copied and saved.
 
 - [ ] **Step 0.5: Smoke check**
 
-   No commit. This is a manual sanity check. Confirm you can hit the RC REST API from your terminal:
+  No commit. This is a manual sanity check. Confirm you can hit the RC REST API from your terminal:
 
-   ```bash
-   curl -s -H "Authorization: Bearer $RC_REST_KEY" \
-     "https://api.revenuecat.com/v1/subscribers/\$RCAnonymousID:0123456789abcdef0123456789abcdef" \
-     | head -c 200
-   ```
+  ```bash
+  curl -s -H "Authorization: Bearer $RC_REST_KEY" \
+    "https://api.revenuecat.com/v1/subscribers/\$RCAnonymousID:0123456789abcdef0123456789abcdef" \
+    | head -c 200
+  ```
 
-   Expected: a JSON response with a `subscriber` field (the user won't exist, but RC returns a valid empty-state subscriber object). If you get `401 Unauthorized`, the REST key is wrong.
+  Expected: a JSON response with a `subscriber` field (the user won't exist, but RC returns a valid empty-state subscriber object). If you get `401 Unauthorized`, the REST key is wrong.
 
-   **Done when:** you've seen a JSON `subscriber` payload back from RC REST.
+  **Done when:** you've seen a JSON `subscriber` payload back from RC REST.
 
 ---
 
@@ -94,6 +90,7 @@ Spec ref: §"Manual bootstrap" (lines 426–445).
 Spec ref: §`workers/extract-proxy/src/entitlement.ts` (new) lines 345–408.
 
 **Files:**
+
 - Create: `workers/extract-proxy/src/entitlement.ts`
 - Create: `workers/extract-proxy/__tests__/entitlement.test.ts`
 - Modify: `workers/extract-proxy/src/index.ts:15-26` (add `RC_REST_API_KEY` to `Env`)
@@ -178,10 +175,7 @@ describe('requireEntitlement', () => {
 
   test('400 when header shape is invalid', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': 'not-an-rc-id' }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': 'not-an-rc-id' }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(400);
@@ -192,10 +186,7 @@ describe('requireEntitlement', () => {
   test('200 when RC reports active pro entitlement', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(rcResponse(activeBody()));
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.userId).toBe(VALID_ID);
   });
@@ -203,10 +194,7 @@ describe('requireEntitlement', () => {
   test('401 entitlement-required when RC reports expired pro', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(rcResponse(expiredBody()));
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(401);
@@ -216,7 +204,9 @@ describe('requireEntitlement', () => {
 
   test('cache hit on second call within TTL — single fetch to RC', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(rcResponse(activeBody()));
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(rcResponse(activeBody()));
     await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -225,10 +215,7 @@ describe('requireEntitlement', () => {
   test('503 entitlement-check-failed when RC returns 5xx', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('boom', { status: 502 }));
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(503);
@@ -238,10 +225,7 @@ describe('requireEntitlement', () => {
 
   test('500 server-misconfigured when RC_REST_API_KEY is empty', async () => {
     const env = { RC_REST_API_KEY: '' };
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(500);
@@ -290,9 +274,7 @@ function jsonError(error: string, status: number): Response {
   });
 }
 
-export type EntitlementResult =
-  | { ok: true; userId: string }
-  | { ok: false; response: Response };
+export type EntitlementResult = { ok: true; userId: string } | { ok: false; response: Response };
 
 export async function requireEntitlement(
   request: Request,
@@ -370,7 +352,7 @@ export interface Env {
   RATE_LIMIT: RateLimitBinding;
   APIFY_TOKEN?: string;
   APIFY_ACTOR_ID?: string;
-  RC_REST_API_KEY: string;            // <-- new
+  RC_REST_API_KEY: string; // <-- new
 }
 ```
 
@@ -400,6 +382,7 @@ git commit -m "feat(worker): requireEntitlement middleware with RC REST + 60s ed
 Spec ref: §`workers/extract-proxy/src/index.ts` changes (lines 410–420).
 
 **Files:**
+
 - Modify: `workers/extract-proxy/src/index.ts` (top of `handleExtract`)
 - Modify: `workers/extract-proxy/src/enrich.ts` (top of `handleEnrich`)
 - Modify: `workers/extract-proxy/src/fetch-post.ts` (top of `handleFetchPost`)
@@ -423,7 +406,7 @@ function postJson(body: unknown, ip = '1.2.3.4'): Request {
     headers: {
       'content-type': 'application/json',
       'CF-Connecting-IP': ip,
-      'X-RC-User-Id': VALID_ID,          // <-- new
+      'X-RC-User-Id': VALID_ID, // <-- new
     },
     body: JSON.stringify(body),
   });
@@ -526,6 +509,7 @@ git commit -m "feat(worker): gate /extract, /enrich, /fetch-post on pro entitlem
 **Goal:** Push the `RC_REST_API_KEY` secret to Cloudflare and confirm the gate works against the live RC API. No code changes.
 
 **Files:**
+
 - Modify: `workers/extract-proxy/wrangler.toml` (documentation comment only)
 
 - [ ] **Step 3.1: Push the worker secret**
@@ -620,6 +604,7 @@ git commit -m "docs(worker): document RC_REST_API_KEY secret"
 Spec ref: §"File map" rows for `app.config.ts`, `.env.example`, `eas.json`, `package.json`.
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `app.config.ts`
 - Modify: `.env.example` (create if missing)
@@ -690,6 +675,7 @@ git commit -m "feat(app): install react-native-purchases SDK and config"
 Spec ref: §`lib/entitlement/status.ts` lines 138–152.
 
 **Files:**
+
 - Create: `lib/entitlement/status.ts`
 - Create: `lib/entitlement/__tests__/status.test.ts`
 
@@ -704,9 +690,7 @@ import { entitlementStatus, ENTITLEMENT_KEY } from '../status';
 function customer(activeEntitlements: string[]): CustomerInfo {
   return {
     entitlements: {
-      active: Object.fromEntries(
-        activeEntitlements.map((k) => [k, { identifier: k } as never]),
-      ),
+      active: Object.fromEntries(activeEntitlements.map((k) => [k, { identifier: k } as never])),
       all: {},
     },
   } as unknown as CustomerInfo;
@@ -783,6 +767,7 @@ git commit -m "feat(entitlement): pure status mapper from RC CustomerInfo"
 Spec ref: §`lib/entitlement/plans.ts` lines 154–177.
 
 **Files:**
+
 - Create: `lib/entitlement/plans.ts`
 
 - [ ] **Step 6.1: Create `plans.ts`**
@@ -832,12 +817,14 @@ git commit -m "feat(entitlement): plans config array (yearly/monthly/weekly)"
 Spec ref: §`lib/entitlement/storage.ts` lines 179–186.
 
 **Files:**
+
 - Create: `lib/entitlement/storage.ts`
 - Create: `lib/entitlement/__tests__/storage.test.ts`
 
 - [ ] **Step 7.1: Read the existing pattern first**
 
 Quick sanity step. Read `lib/onboarding/storage.ts` start-to-finish — we mirror its shape. Pay attention to:
+
 - How it imports `Paths` from `expo-file-system`.
 - How it reads/writes via the `File` class.
 - How `isOnboardingComplete()` is synchronous (uses `File.exists()`).
@@ -983,6 +970,7 @@ git commit -m "feat(entitlement): cache last-known status to file for cold launc
 Spec ref: §`lib/entitlement/userId.ts` lines 188–194.
 
 **Files:**
+
 - Create: `lib/entitlement/userId.ts`
 
 - [ ] **Step 8.1: Implement `userId.ts`**
@@ -1029,6 +1017,7 @@ git commit -m "feat(entitlement): cached app-user-id helper for proxy header"
 Spec ref: §`lib/entitlement/provider.tsx` lines 196–222.
 
 **Files:**
+
 - Create: `lib/entitlement/provider.tsx`
 
 - [ ] **Step 9.1: Implement `provider.tsx`**
@@ -1045,21 +1034,14 @@ import {
   type ReactNode,
 } from 'react';
 import { Platform } from 'react-native';
-import Purchases, {
-  type CustomerInfo,
-  type PurchasesOfferings,
-} from 'react-native-purchases';
+import Purchases, { type CustomerInfo, type PurchasesOfferings } from 'react-native-purchases';
 import { entitlementStatus, type EntitlementStatus } from './status';
 import { readCachedStatus, writeCachedStatus } from './storage';
 import { PLANS, type PlanId } from './plans';
 
-type PurchaseResult =
-  | { ok: true }
-  | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' };
+type PurchaseResult = { ok: true } | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' };
 
-type RestoreResult =
-  | { ok: true; entitled: boolean }
-  | { ok: false };
+type RestoreResult = { ok: true; entitled: boolean } | { ok: false };
 
 interface EntitlementContextValue {
   status: 'loading' | EntitlementStatus;
@@ -1100,7 +1082,9 @@ export function EntitlementProvider({ children }: { children: ReactNode }): JSX.
     previousStatus.current = next;
     if (next === 'active' && prev !== 'active') {
       resumeHandlers.current.forEach((h) => {
-        Promise.resolve(h()).catch((err) => console.warn('[entitlement] resume handler failed', err));
+        Promise.resolve(h()).catch((err) =>
+          console.warn('[entitlement] resume handler failed', err),
+        );
       });
     }
   }, []);
@@ -1238,6 +1222,7 @@ git commit -m "feat(entitlement): EntitlementProvider with RC init and resume ho
 Spec divergence note: see top of plan.
 
 **Files:**
+
 - Create: `modules/storage/migrations/0007_entitlement_paused_reason.ts`
 - Modify: `modules/storage/migrations/index.ts`
 
@@ -1259,15 +1244,9 @@ import type { Migration } from '../db';
 export const entitlementPausedReason: Migration = {
   version: 7,
   up: async (db) => {
-    await db.execAsync(
-      `ALTER TABLE sources ADD COLUMN extraction_paused_reason TEXT`,
-    );
-    await db.execAsync(
-      `ALTER TABLE sources ADD COLUMN url_fetch_paused_reason TEXT`,
-    );
-    await db.execAsync(
-      `ALTER TABLE places ADD COLUMN enrichment_paused_reason TEXT`,
-    );
+    await db.execAsync(`ALTER TABLE sources ADD COLUMN extraction_paused_reason TEXT`);
+    await db.execAsync(`ALTER TABLE sources ADD COLUMN url_fetch_paused_reason TEXT`);
+    await db.execAsync(`ALTER TABLE places ADD COLUMN enrichment_paused_reason TEXT`);
   },
 };
 ```
@@ -1309,6 +1288,7 @@ git commit -m "feat(db): migration 0007 — paused_reason columns for entitlemen
 Spec ref: §"Pipeline error-kind: `entitlement-required`" lines 313–343.
 
 **Files:**
+
 - Modify: `modules/extraction/extraction.ts`
 - Modify: `modules/extraction/proxy.ts`
 - Modify: `modules/extraction/__tests__/proxy.test.ts` (or equivalent)
@@ -1328,11 +1308,12 @@ In `modules/extraction/__tests__/proxy.test.ts` (or the file you identified), ad
 
 ```ts
 test('401 from the worker classifies as entitlement-required', async () => {
-  const fetchImpl = jest.fn(async () =>
-    new Response(JSON.stringify({ error: 'entitlement-required' }), {
-      status: 401,
-      headers: { 'content-type': 'application/json' },
-    }),
+  const fetchImpl = jest.fn(
+    async () =>
+      new Response(JSON.stringify({ error: 'entitlement-required' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      }),
   );
   await expect(
     extractFromProxy('some ocr text', { fetch: fetchImpl, baseUrl: 'https://proxy.example.com' }),
@@ -1371,7 +1352,7 @@ export type ExtractionErrorKind =
   | { kind: 'permanent' }
   | { kind: 'retryable' }
   | { kind: 'deferred'; retryAfterMs: number }
-  | { kind: 'entitlement-required' };   // 401 — pause, do NOT count toward budget
+  | { kind: 'entitlement-required' }; // 401 — pause, do NOT count toward budget
 ```
 
 - [ ] **Step 11.5: Route 401 in `modules/extraction/proxy.ts`**
@@ -1508,6 +1489,7 @@ git commit -m "feat(extraction): entitlement-required error kind + paused-state 
 Spec ref: §"Client header attachment" lines 422–424.
 
 **Files:**
+
 - Modify: `modules/extraction/proxy.ts`
 
 - [ ] **Step 12.1: Add the header**
@@ -1574,6 +1556,7 @@ git commit -m "feat(extraction): attach X-RC-User-Id header on /extract"
 **Goal:** Same shape as Tasks 11 and 12 applied to the enrichment pipeline.
 
 **Files:**
+
 - Modify: `modules/enrichment/enrichment.ts`
 - Modify: `modules/enrichment/proxy.ts`
 - Modify: `modules/enrichment/__tests__/enrichment.test.ts` (only test file in that folder)
@@ -1685,6 +1668,7 @@ git commit -m "feat(enrichment): entitlement-required + paused state + header"
 **Goal:** Same shape applied to the `/fetch-post` caller used during share-sheet URL ingest. By the time URL-fetch work runs, `pending_imports` rows have already been DELETEd by `ingestPendingImports` (`modules/capture/ingest.ts:81-82`); the URL-fetch state machine lives on `sources` rows in `modules/processing/processing.ts` (`processUrlFetch`, around lines 182–249). The paused column therefore lives on **`sources.url_fetch_paused_reason`** and the resume hook re-enqueues at the processing layer, not the capture layer.
 
 **Files:**
+
 - Modify: `modules/capture/fetchPostFromProxy.ts` (header + 401 sentinel)
 - Modify: `modules/processing/processing.ts` (pause/resume logic, sweep filter)
 - Modify: `modules/capture/__tests__/fetchPostFromProxy.test.ts`
@@ -1693,6 +1677,7 @@ git commit -m "feat(enrichment): entitlement-required + paused state + header"
 - [ ] **Step 14.1: Re-read the URL-fetch state machine**
 
 Skim `modules/processing/processing.ts` start-to-finish (~250 lines). Identify:
+
 - The function that enqueues / drives `processUrlFetch` (the equivalent of the extractor sweep — there will be a select-and-loop somewhere that picks up sources where url-fetch hasn't run).
 - Where `processUrlFetch` is called from after a foreground refresh.
 - The catch block(s) around the `await opts.fetchPost(row.url)` call.
@@ -1784,7 +1769,7 @@ async function resumeUrlFetchEntitlementPaused(): Promise<void> {
      WHERE url_fetch_paused_reason = 'entitlement'`,
     [now()],
   );
-  for (const r of rows) enqueueUrlFetch(r.id);    // existing enqueue function
+  for (const r of rows) enqueueUrlFetch(r.id); // existing enqueue function
 }
 ```
 
@@ -1816,6 +1801,7 @@ git commit -m "feat(processing): entitlement-required pause + resume for /fetch-
 **Goal:** The three pipeline modules now expose resume functions. Register them with the provider once the app is mounted, so an `inactive → active` transition fans out to all three.
 
 **Files:**
+
 - Modify: `app/_layout.tsx`
 
 > **Sequencing:** This task depends on Tasks 11, 13, 14 (which define the three resume exports) **and** Task 21 (which creates `RootLayoutInner`). Execute **after** Task 24, before Task 25. The numbering here matches dependency order — don't actually do Task 15 between Tasks 14 and 16.
@@ -1829,15 +1815,21 @@ const { registerResumeHandler } = useEntitlement();
 useEffect(() => {
   if (!ctx) return;
   const unsubs: Array<() => void> = [];
-  unsubs.push(registerResumeHandler(async () => {
-    await extractor.resumeEntitlementPaused();
-  }));
-  unsubs.push(registerResumeHandler(async () => {
-    await enricher.resumeEntitlementPaused();
-  }));
-  unsubs.push(registerResumeHandler(async () => {
-    await processing.resumeUrlFetchEntitlementPaused();
-  }));
+  unsubs.push(
+    registerResumeHandler(async () => {
+      await extractor.resumeEntitlementPaused();
+    }),
+  );
+  unsubs.push(
+    registerResumeHandler(async () => {
+      await enricher.resumeEntitlementPaused();
+    }),
+  );
+  unsubs.push(
+    registerResumeHandler(async () => {
+      await processing.resumeUrlFetchEntitlementPaused();
+    }),
+  );
   return () => unsubs.forEach((u) => u());
 }, [registerResumeHandler, ctx, extractor, enricher, processing]);
 ```
@@ -1858,6 +1850,7 @@ git commit -m "feat(app): fan resume across extraction/enrichment/processing on 
 **Goal:** Replace the local `PLANS` const in `app/onboarding/paywall.tsx` with the imported config. Plan tile prices read from `useEntitlement().offerings` once available.
 
 **Files:**
+
 - Modify: `app/onboarding/paywall.tsx`
 
 - [ ] **Step 16.1: Remove the local `PLANS` const**
@@ -1922,11 +1915,16 @@ function trialDaysFromPackage(pkg: PurchasesPackage | undefined): number | null 
   const unit = pkg?.product.introPrice?.periodUnit;
   if (period == null || unit == null) return null;
   switch (unit) {
-    case 'DAY':   return period;
-    case 'WEEK':  return period * 7;
-    case 'MONTH': return period * 30;
-    case 'YEAR':  return period * 365;
-    default:      return null;
+    case 'DAY':
+      return period;
+    case 'WEEK':
+      return period * 7;
+    case 'MONTH':
+      return period * 30;
+    case 'YEAR':
+      return period * 365;
+    default:
+      return null;
   }
 }
 ```
@@ -1970,6 +1968,7 @@ git commit -m "feat(paywall): render tiles + trial copy from RC offerings"
 **Goal:** Replace the `markOnboardingComplete()` stub in `handleStartTrial` with a real `purchasePlan()` call.
 
 **Files:**
+
 - Modify: `app/onboarding/paywall.tsx`
 
 - [ ] **Step 17.1: Rewrite `handleStartTrial`**
@@ -1993,7 +1992,7 @@ async function handleStartTrial() {
     exitOnboarding();
     return;
   }
-  if (result.reason === 'user-cancelled') return;       // silent
+  if (result.reason === 'user-cancelled') return; // silent
   showToast({ kind: 'error', message: "Couldn't start your trial. Try again." });
 }
 ```
@@ -2014,6 +2013,7 @@ git commit -m "feat(paywall): wire Start trial CTA to RevenueCat purchase"
 ## Task 18: Paywall — wire `handleRestore`
 
 **Files:**
+
 - Modify: `app/onboarding/paywall.tsx`
 
 - [ ] **Step 18.1: Rewrite `handleRestore`**
@@ -2056,6 +2056,7 @@ git commit -m "feat(paywall): wire Restore link to RevenueCat restorePurchases"
 Spec ref: §`app/onboarding/paywall.tsx` changes lines 224–257.
 
 **Files:**
+
 - Modify: `app/onboarding/paywall.tsx`
 
 - [ ] **Step 19.1: Read the route param**
@@ -2076,7 +2077,9 @@ Replace the headline derivation (around line 51) with:
 ```tsx
 const headline = isLapseMode
   ? 'Welcome back to Trip Pocket'
-  : (answers.destination ? PAYWALL_HEADLINE[answers.destination] : FALLBACK_HEADLINE);
+  : answers.destination
+    ? PAYWALL_HEADLINE[answers.destination]
+    : FALLBACK_HEADLINE;
 ```
 
 - [ ] **Step 19.3: Make the `x` dev-only**
@@ -2084,20 +2087,22 @@ const headline = isLapseMode
 Wrap the close `Pressable` block (around lines 103–114) in `{__DEV__ && (...)}`:
 
 ```tsx
-{__DEV__ && (
-  <Pressable
-    onPress={() => {
-      markOnboardingComplete();
-      exitOnboarding();
-    }}
-    accessibilityRole="button"
-    accessibilityLabel="Close paywall"
-    hitSlop={12}
-    className="h-9 w-9 items-center justify-center"
-  >
-    <Icon name="xmark" size={18} tintColor={colors.textMuted} />
-  </Pressable>
-)}
+{
+  __DEV__ && (
+    <Pressable
+      onPress={() => {
+        markOnboardingComplete();
+        exitOnboarding();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel="Close paywall"
+      hitSlop={12}
+      className="h-9 w-9 items-center justify-center"
+    >
+      <Icon name="xmark" size={18} tintColor={colors.textMuted} />
+    </Pressable>
+  );
+}
 ```
 
 - [ ] **Step 19.4: Run typecheck + lint**
@@ -2149,6 +2154,7 @@ Tap "Start your 7-day free trial". Apple's purchase sheet should appear. Cancel 
 Tap the `x` in the top-right (visible in dev). The app should drop into `(tabs)`. (The lapse gate isn't wired yet — Task 21–23 — so there's no bounce-back at this point.)
 
 If any of these don't work, fix before moving to Task 21. Common issues:
+
 - Offerings empty → check that App Store Connect product status is "Ready to Submit" or "Approved" and the bundle ID matches.
 - Purchase sheet errors → confirm sandbox tester is signed in (Settings → Developer → Sandbox Apple Account).
 
@@ -2163,6 +2169,7 @@ No commit — this is a manual checkpoint.
 Spec ref: §`app/_layout.tsx` changes lines 259–311.
 
 **Files:**
+
 - Modify: `app/_layout.tsx`
 
 - [ ] **Step 21.1: Extract `RootLayoutInner`**
@@ -2218,6 +2225,7 @@ git commit -m "refactor(layout): split RootLayout to mount EntitlementProvider a
 **Goal:** A lapsed user opening the app cold should see splash → paywall, not splash → (tabs) → paywall. The splash-hide effect now waits for `status` to leave `'loading'`.
 
 **Files:**
+
 - Modify: `app/_layout.tsx`
 
 - [ ] **Step 22.1: Read `useEntitlement()` inside `RootLayoutInner`**
@@ -2272,6 +2280,7 @@ git commit -m "feat(layout): hold splash until entitlement status resolves"
 Spec ref: §`app/_layout.tsx` changes lines 284–299.
 
 **Files:**
+
 - Modify: `app/_layout.tsx`
 
 - [ ] **Step 23.1: Add the gate effect**
@@ -2308,6 +2317,7 @@ git commit -m "feat(layout): lapse-gate paywall on inactive entitlement"
 **Goal:** When the app returns from the background, re-check entitlement so a canceled-in-Settings subscription gates the user immediately on the next foreground.
 
 **Files:**
+
 - Modify: `app/_layout.tsx`
 
 - [ ] **Step 24.1: Extend the existing AppState effect**
@@ -2343,6 +2353,7 @@ git commit -m "feat(layout): refresh entitlement on foreground"
 Spec ref: §"Testing strategy" → "Device manual" lines 454–460.
 
 **Files:**
+
 - None (manual)
 
 - [ ] **Step 25.1: Build a production-config TestFlight build**
@@ -2397,6 +2408,7 @@ No commit — manual checkpoint. Note results in your test journal.
 Spec ref: §"Testing strategy" device scenario 5 line 459.
 
 **Files:**
+
 - None (manual)
 
 - [ ] **Step 26.1: Set up the un-entitled state**

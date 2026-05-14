@@ -1,9 +1,4 @@
-import {
-  openDatabase,
-  runMigrations,
-  insertSource,
-  type Database,
-} from '@/modules/storage';
+import { openDatabase, runMigrations, insertSource, type Database } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
 import * as liveQuery from '@/modules/storage/live-query';
 import {
@@ -53,10 +48,7 @@ async function seedSource(
   );
 }
 
-async function getStatus(
-  db: Database,
-  id: string,
-): Promise<{ status: string }> {
+async function getStatus(db: Database, id: string): Promise<{ status: string }> {
   const row = await db.getFirstAsync<{ extraction_status: string }>(
     `SELECT extraction_status FROM sources WHERE id = ?`,
     id,
@@ -79,10 +71,7 @@ type PlaceJoin = {
   confidence: number | null;
 };
 
-async function getPlacesForSource(
-  db: Database,
-  sourceId: string,
-): Promise<PlaceJoin[]> {
+async function getPlacesForSource(db: Database, sourceId: string): Promise<PlaceJoin[]> {
   return db.getAllAsync<PlaceJoin>(
     `SELECT p.id AS place_id, p.name, p.city, p.country_code, p.category, p.normalized_key,
             p.trip_id, p.enrichment_status,
@@ -215,7 +204,9 @@ describe('createExtractor', () => {
         latitude: number | null;
         external_place_id: string | null;
         formatted_address: string | null;
-      }>(`SELECT latitude, external_place_id, formatted_address FROM places ORDER BY created_at ASC`);
+      }>(
+        `SELECT latitude, external_place_id, formatted_address FROM places ORDER BY created_at ASC`,
+      );
       expect(enrichment[0]?.latitude).toBeNull();
       expect(enrichment[0]?.external_place_id).toBeNull();
       expect(enrichment[0]?.formatted_address).toBeNull();
@@ -298,9 +289,7 @@ describe('createExtractor', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]?.place_id).toBe('p-existing');
 
-      const placeCount = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM places`,
-      );
+      const placeCount = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM places`);
       expect(placeCount?.n).toBe(1);
     });
 
@@ -311,7 +300,10 @@ describe('createExtractor', () => {
                              enrichment_status, owner_id, created_at, updated_at)
          VALUES ('p1', NULL, 'Starbucks', 'Tokyo', 'food', 'starbucks|tokyo', 'pending', 'owner-1', ?, ?),
                 ('p2', NULL, 'Starbucks', 'Tokyo', 'food', 'starbucks|tokyo', 'pending', 'owner-1', ?, ?)`,
-        NOW, NOW, NOW, NOW,
+        NOW,
+        NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 
@@ -330,9 +322,7 @@ describe('createExtractor', () => {
       // Distinct from the two existing rows.
       expect(['p1', 'p2'].includes(rows[0]!.place_id)).toBe(false);
 
-      const placeCount = await db.getFirstAsync<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM places`,
-      );
+      const placeCount = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM places`);
       expect(placeCount?.n).toBe(3);
     });
 
@@ -343,7 +333,8 @@ describe('createExtractor', () => {
                              enrichment_status, owner_id, created_at, updated_at)
          VALUES ('p-other', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
                  'pending', 'someone-else', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 
@@ -374,7 +365,9 @@ describe('createExtractor', () => {
                              created_at, updated_at)
          VALUES ('p-nf', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
                  'not-found', ?, 'owner-1', ?, ?)`,
-        NOW, NOW, NOW,
+        NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 
@@ -401,7 +394,8 @@ describe('createExtractor', () => {
                              country_code, enrichment_status, owner_id, created_at, updated_at)
          VALUES ('p-nullcc', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
                  NULL, 'pending', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 
@@ -430,7 +424,8 @@ describe('createExtractor', () => {
                              country_code, enrichment_status, owner_id, created_at, updated_at)
          VALUES ('p-jp', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
                  'JP', 'pending', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 
@@ -460,15 +455,14 @@ describe('createExtractor', () => {
                              country_code, enrichment_status, owner_id, created_at, updated_at)
          VALUES ('p-nullcc', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
                  NULL, 'pending', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 
       const e = createExtractor({
         db,
-        extract: okExtract([
-          { name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: '' },
-        ]),
+        extract: okExtract([{ name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: '' }]),
         ownerId: 'owner-1',
         uuid: seqUuid,
         now: () => NOW,
@@ -490,7 +484,9 @@ describe('createExtractor', () => {
                              owner_id, created_at, updated_at)
          VALUES ('p-en', NULL, 'Kosoan', 'Tokyo', 'food', 'kosoan|tokyo',
                  'enriched', ?, 'gp-123', 'owner-1', ?, ?)`,
-        NOW, NOW, NOW,
+        NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's1');
 

@@ -111,27 +111,27 @@ Mode is controlled by a route param (`first-run` vs. `lapse`) for headline copy 
 
 ## File map
 
-| Path | Action | Purpose |
-|---|---|---|
-| `lib/entitlement/provider.tsx` | new | `<EntitlementProvider>` + `useEntitlement()` hook; wraps RC SDK init |
-| `lib/entitlement/status.ts` | new | Pure `entitlementStatus(customerInfo) → 'active' \| 'inactive'` |
-| `lib/entitlement/plans.ts` | new | Single config array — which product IDs render as tiles, in which order |
-| `lib/entitlement/storage.ts` | new | Last-known-status snapshot file (mirrors `lib/onboarding/storage.ts` pattern) |
-| `lib/entitlement/userId.ts` | new | Read RC anonymous ID for the Worker header |
-| `app/onboarding/paywall.tsx` | edit | Wire `handleStartTrial` + `handleRestore`; render tiles from offerings; honor `mode=lapse`; extract `PLANS` map out (it moves to `plans.ts`) |
-| `app/_layout.tsx` | edit | Wrap in `<EntitlementProvider>`; add lapse-gate + AppState foreground refresh |
-| `modules/extraction/proxy.ts` | edit | Attach `X-RC-User-Id` header; on 401 throw `entitlement-required` |
-| `modules/extraction/extraction.ts` | edit | Add `entitlement-required` to `ExtractionErrorKind`; persist as paused (not failed); expose `resumeEntitlementPaused()` |
-| `modules/enrichment/proxy.ts` | edit | Same header attachment + 401 handling |
-| `modules/enrichment/enrichment.ts` | edit | Same paused-state classification |
-| `modules/capture/fetchPostFromProxy.ts` | edit | Same header attachment + 401 handling |
-| `modules/processing/processing.ts` | edit | Route `fetch-post` 401 into the same paused-state pipeline path |
-| `workers/extract-proxy/src/entitlement.ts` | new | `requireEntitlement(request, env)` middleware + RC REST + 60s edge cache |
-| `workers/extract-proxy/src/index.ts` | edit | Wrap `handleExtract`, `handleEnrich`, and `handleFetchPost` in `requireEntitlement` |
-| `workers/extract-proxy/wrangler.toml` | edit | Document `RC_REST_API_KEY` secret |
-| `app.config.ts` | edit | `react-native-purchases` plugin registration |
-| `.env.example`, `eas.json` | edit | `EXPO_PUBLIC_RC_IOS_API_KEY` |
-| `package.json` | edit | Add `react-native-purchases` |
+| Path                                       | Action | Purpose                                                                                                                                      |
+| ------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/entitlement/provider.tsx`             | new    | `<EntitlementProvider>` + `useEntitlement()` hook; wraps RC SDK init                                                                         |
+| `lib/entitlement/status.ts`                | new    | Pure `entitlementStatus(customerInfo) → 'active' \| 'inactive'`                                                                              |
+| `lib/entitlement/plans.ts`                 | new    | Single config array — which product IDs render as tiles, in which order                                                                      |
+| `lib/entitlement/storage.ts`               | new    | Last-known-status snapshot file (mirrors `lib/onboarding/storage.ts` pattern)                                                                |
+| `lib/entitlement/userId.ts`                | new    | Read RC anonymous ID for the Worker header                                                                                                   |
+| `app/onboarding/paywall.tsx`               | edit   | Wire `handleStartTrial` + `handleRestore`; render tiles from offerings; honor `mode=lapse`; extract `PLANS` map out (it moves to `plans.ts`) |
+| `app/_layout.tsx`                          | edit   | Wrap in `<EntitlementProvider>`; add lapse-gate + AppState foreground refresh                                                                |
+| `modules/extraction/proxy.ts`              | edit   | Attach `X-RC-User-Id` header; on 401 throw `entitlement-required`                                                                            |
+| `modules/extraction/extraction.ts`         | edit   | Add `entitlement-required` to `ExtractionErrorKind`; persist as paused (not failed); expose `resumeEntitlementPaused()`                      |
+| `modules/enrichment/proxy.ts`              | edit   | Same header attachment + 401 handling                                                                                                        |
+| `modules/enrichment/enrichment.ts`         | edit   | Same paused-state classification                                                                                                             |
+| `modules/capture/fetchPostFromProxy.ts`    | edit   | Same header attachment + 401 handling                                                                                                        |
+| `modules/processing/processing.ts`         | edit   | Route `fetch-post` 401 into the same paused-state pipeline path                                                                              |
+| `workers/extract-proxy/src/entitlement.ts` | new    | `requireEntitlement(request, env)` middleware + RC REST + 60s edge cache                                                                     |
+| `workers/extract-proxy/src/index.ts`       | edit   | Wrap `handleExtract`, `handleEnrich`, and `handleFetchPost` in `requireEntitlement`                                                          |
+| `workers/extract-proxy/wrangler.toml`      | edit   | Document `RC_REST_API_KEY` secret                                                                                                            |
+| `app.config.ts`                            | edit   | `react-native-purchases` plugin registration                                                                                                 |
+| `.env.example`, `eas.json`                 | edit   | `EXPO_PUBLIC_RC_IOS_API_KEY`                                                                                                                 |
+| `package.json`                             | edit   | Add `react-native-purchases`                                                                                                                 |
 
 ## Module specs
 
@@ -160,17 +160,17 @@ export type PlanId = 'weekly' | 'monthly' | 'yearly';
 
 export interface PlanConfig {
   id: PlanId;
-  productId: string;     // App Store Connect product ID
-  label: string;         // 'Weekly' | 'Monthly' | 'Yearly'
-  badge?: string;        // e.g. 'BEST VALUE'
+  productId: string; // App Store Connect product ID
+  label: string; // 'Weekly' | 'Monthly' | 'Yearly'
+  badge?: string; // e.g. 'BEST VALUE'
 }
 
 // Edit this array (and only this array) when launch plans are finalized.
 // The first entry is the default-selected tile.
 export const PLANS: PlanConfig[] = [
-  { id: 'yearly',  productId: 'trip_pocket_pro_yearly',  label: 'Yearly',  badge: 'BEST VALUE' },
+  { id: 'yearly', productId: 'trip_pocket_pro_yearly', label: 'Yearly', badge: 'BEST VALUE' },
   { id: 'monthly', productId: 'trip_pocket_pro_monthly', label: 'Monthly' },
-  { id: 'weekly',  productId: 'trip_pocket_pro_weekly',  label: 'Weekly' },
+  { id: 'weekly', productId: 'trip_pocket_pro_weekly', label: 'Weekly' },
 ];
 
 export const DEFAULT_SELECTED_PLAN: PlanId = PLANS[0].id;
@@ -203,7 +203,9 @@ interface EntitlementContextValue {
   customerInfo: CustomerInfo | null;
   offerings: PurchasesOfferings | null;
   refresh(): Promise<void>;
-  purchasePlan(planId: PlanId): Promise<{ ok: true } | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' }>;
+  purchasePlan(
+    planId: PlanId,
+  ): Promise<{ ok: true } | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' }>;
   restore(): Promise<{ ok: true; entitled: boolean } | { ok: false }>;
 }
 
@@ -258,7 +260,7 @@ Init sequence in the provider's first effect:
 
 ### `app/_layout.tsx` changes
 
-The current root returns `null` until `ready` flips (the DB boot pipeline). If we put `<EntitlementProvider>` *inside* that return, it won't mount or start initializing RC until after `ready` — which defeats the cached-status-before-splash-hide goal. Split the component:
+The current root returns `null` until `ready` flips (the DB boot pipeline). If we put `<EntitlementProvider>` _inside_ that return, it won't mount or start initializing RC until after `ready` — which defeats the cached-status-before-splash-hide goal. Split the component:
 
 ```
 function RootLayout() {
@@ -299,6 +301,7 @@ In `RootLayoutInner`:
   `replace` (not `push`) so a re-fire of the effect can't stack modals. The path-prefix guard is a belt to the suspenders — `replace` is idempotent on the same route, but the guard also catches the `?mode=lapse` re-mount case.
 
 - AppState foreground refresh:
+
   ```
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
@@ -321,7 +324,7 @@ export type ExtractionErrorKind =
   | { kind: 'permanent' }
   | { kind: 'retryable' }
   | { kind: 'deferred'; retryAfterMs: number }
-  | { kind: 'entitlement-required' };   // 401 — pause, do NOT count toward budget
+  | { kind: 'entitlement-required' }; // 401 — pause, do NOT count toward budget
 ```
 
 In `modules/extraction/proxy.ts`, route 401 explicitly before the generic 4xx mapping:
@@ -330,7 +333,9 @@ In `modules/extraction/proxy.ts`, route 401 explicitly before the generic 4xx ma
 if (response.status === 401) {
   throw new ExtractionError('extract-entitlement-required', { kind: 'entitlement-required' });
 }
-if (response.status >= 400) { /* … existing permanent path … */ }
+if (response.status >= 400) {
+  /* … existing permanent path … */
+}
 ```
 
 In the extractor's error-classification switch (the dispatcher that maps `ExtractionError` to DB state), persist `entitlement-required` rows in a paused state — concretely, set `status = 'paused-entitlement'` (new value alongside `pending`/`failed`) and do not consume a retry-budget slot. The resume sweep called from `EntitlementProvider` (see above) re-enqueues all `paused-entitlement` rows by flipping them back to `pending` and ticking the in-memory queue.
@@ -438,11 +443,11 @@ These are dashboard actions, not code. The implementation plan repeats them with
 
 3. **Keys**:
    - Get the **iOS Public SDK Key** from RC (Project settings → API keys). Store as `EXPO_PUBLIC_RC_IOS_API_KEY` in `.env`, `.env.example`, and EAS Secrets.
-   - Get the **REST API key** (server-side, *secret*) from RC. Store as a Cloudflare Worker secret: `wrangler secret put RC_REST_API_KEY` in `workers/extract-proxy/`.
+   - Get the **REST API key** (server-side, _secret_) from RC. Store as a Cloudflare Worker secret: `wrangler secret put RC_REST_API_KEY` in `workers/extract-proxy/`.
 
    **Done when:** EAS Secrets shows the public key; `wrangler secret list` shows `RC_REST_API_KEY`.
 
-4. **Sandbox tester** in App Store Connect (Users and Access → Sandbox Testers). One tester account is enough for TestFlight *and* for daily dev work — the Worker gate runs in dev too, so the dev build needs a sandbox subscription to exercise extraction / enrichment / fetch-post. The same account can repeat purchases as long as the StoreKit subscription speed is set to accelerated. **Done when:** signed into Settings → Developer → Sandbox Apple Account on the test device, and a sandbox subscription has been taken at least once.
+4. **Sandbox tester** in App Store Connect (Users and Access → Sandbox Testers). One tester account is enough for TestFlight _and_ for daily dev work — the Worker gate runs in dev too, so the dev build needs a sandbox subscription to exercise extraction / enrichment / fetch-post. The same account can repeat purchases as long as the StoreKit subscription speed is set to accelerated. **Done when:** signed into Settings → Developer → Sandbox Apple Account on the test device, and a sandbox subscription has been taken at least once.
 
 ## Testing strategy
 

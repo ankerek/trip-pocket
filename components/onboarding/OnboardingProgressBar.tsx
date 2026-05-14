@@ -21,9 +21,7 @@ export function OnboardingProgressBar({ step, total = 10 }: Props) {
       accessibilityRole="progressbar"
       accessibilityValue={{ min: 0, max: total, now: step }}
     >
-      <View
-        style={{ width: `${pct * 100}%`, height: '100%', backgroundColor: colors.accent }}
-      />
+      <View style={{ width: `${pct * 100}%`, height: '100%', backgroundColor: colors.accent }} />
     </View>
   );
 }

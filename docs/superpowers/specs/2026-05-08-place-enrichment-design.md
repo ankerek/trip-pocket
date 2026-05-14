@@ -6,23 +6,23 @@
 
 ## Context
 
-Today an extracted place is just a name, a city, an address (when present), and a category. To recognize a café you screenshotted three months ago, you have to re-open the original screenshot and read it. That defeats the wedge — *save it before it's lost* — because the saved-state is barely better than the camera roll it replaced.
+Today an extracted place is just a name, a city, an address (when present), and a category. To recognize a café you screenshotted three months ago, you have to re-open the original screenshot and read it. That defeats the wedge — _save it before it's lost_ — because the saved-state is barely better than the camera roll it replaced.
 
 Enrichment closes that gap: each place gets a real photo of the venue, a 1-2 sentence narrative, and structured metadata (rating, hours, price level). The place becomes a glanceable card.
 
 ## Decisions
 
-| Decision | Choice | Reasoning |
-|---|---|---|
-| **Interim geocoding (extraction shipped, enrichment not yet)** | Skipped — `apple_maps_url` is a search-URL deep link with the full address | Apple's `CLGeocoder` / `MKLocalSearch` APIs are unreliable for non-English-script countries (Japanese addresses fail routinely). Investing in a server-side geocoder would be wasted work; enrichment provides geocoding as a free side-effect. The search-URL fallback is the bridge state during v0.2 between AI extraction landing and enrichment landing. |
-| **Enrichment trigger** | On-demand, when the user opens a place card that hasn't been enriched | Travel-screenshot apps have heavy-save / light-browse usage. Most saved places are never viewed. On-demand pays only for engagement. ~500ms first-view loading state is acceptable; cached forever after. |
-| **Premium gate** | None — enrichment is free for all users | Enrichment IS the value-prop "magic moment." Gating it would hurt the demo and word-of-mouth. Premium gates other things (cloud sync, unlimited trips). |
-| **Data source — facts** | Google Places API (New) | Best worldwide coverage for the long tail of small/trendy venues that dominate Instagram travel content. Foursquare is ~70% of the cost but noticeably weaker in Asia. |
-| **Data source — narrative** | Gemini (already wired through Cloudflare AI Gateway) | Google Places' `editorial_summary` field is sparse. Gemini synthesizes a 1-2 sentence blurb from Places' structured fields + the OCR caption. Costs ~$0.0005/place via flash-lite. |
-| **Photo handling** | Worker-proxied: store the durable `photo_name` (the Places New resource ID), serve via `/photo/<name>` on our worker which fetches Google with the server-side key and pipes back. Edge-cached. | (a) The Places media URL embeds `?key=…`; returning it to clients leaks the server credential. (b) Only `photo.name` is durable — Google rotates the signed media URL, so persisting the URL means broken images on rotation. (c) Edge caching the proxy response amortizes Google's per-display photo billing to first-fetch-per-PoP. |
-| **Schema** | Two tables: `extracted_places` gains a few per-row columns (`external_place_id`, `enrichment_status`, `enriched_at`); a new `place_enrichments` table holds the venue-level data keyed by `external_place_id`. | One-to-one on `extracted_places` would charge for enrichment N times when the same venue is saved across N screenshots — a real case in this app. Venue-keyed dedup makes "saved Kosoan three times" cost one enrichment. The grouped trip-Places UI also queries by venue; a shared row means siblings render enriched together. |
-| **Map app preference** | Build the deep link at render time from stored data (`name`, `latitude`, `longitude`, `external_place_id`, `address`). Prefer Google Maps when installed; fall back to Apple Maps. No persisted `*_maps_url` column. | iOS has no system-level "default map app" setting an app can query, but `Linking.canOpenURL('comgooglemaps://')` is a reliable proxy — users who installed Google Maps overwhelmingly prefer it for navigation. Storing a hardcoded `apple_maps_url` was the wrong primitive: the right thing to persist is the place's identity, and the URL is a presentation concern. Also future-proofs us for an in-app setting / Android. |
-| **Google Places API key** | Dedicated `GOOGLE_PLACES_API_KEY`, separate from `GOOGLE_GENAI_API_KEY` (Gemini). Restricted to the Places APIs and to the worker's outbound IP set (Cloudflare egress). | Two reasons to separate: (a) blast radius — the photo-proxy route embeds the key in its outbound fetch; if it ever leaks, only Places is exposed, not the Gemini account. (b) Different rotation cadence and billing isolation. The extra config cost is one extra Worker secret, which is free. |
+| Decision                                                       | Choice                                                                                                                                                                                                               | Reasoning                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Interim geocoding (extraction shipped, enrichment not yet)** | Skipped — `apple_maps_url` is a search-URL deep link with the full address                                                                                                                                           | Apple's `CLGeocoder` / `MKLocalSearch` APIs are unreliable for non-English-script countries (Japanese addresses fail routinely). Investing in a server-side geocoder would be wasted work; enrichment provides geocoding as a free side-effect. The search-URL fallback is the bridge state during v0.2 between AI extraction landing and enrichment landing.                                                                   |
+| **Enrichment trigger**                                         | On-demand, when the user opens a place card that hasn't been enriched                                                                                                                                                | Travel-screenshot apps have heavy-save / light-browse usage. Most saved places are never viewed. On-demand pays only for engagement. ~500ms first-view loading state is acceptable; cached forever after.                                                                                                                                                                                                                       |
+| **Premium gate**                                               | None — enrichment is free for all users                                                                                                                                                                              | Enrichment IS the value-prop "magic moment." Gating it would hurt the demo and word-of-mouth. Premium gates other things (cloud sync, unlimited trips).                                                                                                                                                                                                                                                                         |
+| **Data source — facts**                                        | Google Places API (New)                                                                                                                                                                                              | Best worldwide coverage for the long tail of small/trendy venues that dominate Instagram travel content. Foursquare is ~70% of the cost but noticeably weaker in Asia.                                                                                                                                                                                                                                                          |
+| **Data source — narrative**                                    | Gemini (already wired through Cloudflare AI Gateway)                                                                                                                                                                 | Google Places' `editorial_summary` field is sparse. Gemini synthesizes a 1-2 sentence blurb from Places' structured fields + the OCR caption. Costs ~$0.0005/place via flash-lite.                                                                                                                                                                                                                                              |
+| **Photo handling**                                             | Worker-proxied: store the durable `photo_name` (the Places New resource ID), serve via `/photo/<name>` on our worker which fetches Google with the server-side key and pipes back. Edge-cached.                      | (a) The Places media URL embeds `?key=…`; returning it to clients leaks the server credential. (b) Only `photo.name` is durable — Google rotates the signed media URL, so persisting the URL means broken images on rotation. (c) Edge caching the proxy response amortizes Google's per-display photo billing to first-fetch-per-PoP.                                                                                          |
+| **Schema**                                                     | Two tables: `extracted_places` gains a few per-row columns (`external_place_id`, `enrichment_status`, `enriched_at`); a new `place_enrichments` table holds the venue-level data keyed by `external_place_id`.       | One-to-one on `extracted_places` would charge for enrichment N times when the same venue is saved across N screenshots — a real case in this app. Venue-keyed dedup makes "saved Kosoan three times" cost one enrichment. The grouped trip-Places UI also queries by venue; a shared row means siblings render enriched together.                                                                                               |
+| **Map app preference**                                         | Build the deep link at render time from stored data (`name`, `latitude`, `longitude`, `external_place_id`, `address`). Prefer Google Maps when installed; fall back to Apple Maps. No persisted `*_maps_url` column. | iOS has no system-level "default map app" setting an app can query, but `Linking.canOpenURL('comgooglemaps://')` is a reliable proxy — users who installed Google Maps overwhelmingly prefer it for navigation. Storing a hardcoded `apple_maps_url` was the wrong primitive: the right thing to persist is the place's identity, and the URL is a presentation concern. Also future-proofs us for an in-app setting / Android. |
+| **Google Places API key**                                      | Dedicated `GOOGLE_PLACES_API_KEY`, separate from `GOOGLE_GENAI_API_KEY` (Gemini). Restricted to the Places APIs and to the worker's outbound IP set (Cloudflare egress).                                             | Two reasons to separate: (a) blast radius — the photo-proxy route embeds the key in its outbound fetch; if it ever leaks, only Places is exposed, not the Gemini account. (b) Different rotation cadence and billing isolation. The extra config cost is one extra Worker secret, which is free.                                                                                                                                |
 
 ## Architecture
 
@@ -41,7 +41,7 @@ Body: {
 GET  https://trip-pocket-extract-proxy.<subdomain>.workers.dev/photo/<photo_name>?w=<maxW>&h=<maxH>
 ```
 
-`ocr_caption` is required. The worker is stateless; without the caption being in the request, the Gemini blurb step has no way to anchor the narrative to *what the user actually saw*. Capped at ~2 KB on the client; longer OCR is truncated.
+`ocr_caption` is required. The worker is stateless; without the caption being in the request, the Gemini blurb step has no way to anchor the narrative to _what the user actually saw_. Capped at ~2 KB on the client; longer OCR is truncated.
 
 Flow inside `/enrich`:
 
@@ -54,7 +54,7 @@ Flow inside `/enrich`:
    {
      "external_place_id": "ChIJ…",
      "latitude": 35.6076,
-     "longitude": 139.6680,
+     "longitude": 139.668,
      "formatted_address": "1 Chome-24-23 Jiyugaoka, Meguro City, Tokyo 152-0035, Japan",
      "photo_name": "places/ChIJ…/photos/AeJbb3…",
      "description": "Cozy 1950s tea house in residential Jiyugaoka, known for matcha and traditional sweets.",
@@ -77,6 +77,7 @@ Flow inside `/photo/<photo_name>`:
 4. Errors: `404` from Google → `404`; anything else → `502`. No retries (the client will re-request on next render anyway).
 
 Error classification on `/enrich` mirrors `/extract`:
+
 - 200 — success (or `"not-found"` body when Find Place returned zero matches).
 - 4xx — permanent (bad input, no retry).
 - 429 — rate-limited (worker rate limit binding).
@@ -101,6 +102,7 @@ The same helper applies pre- and post-enrichment — it just gets richer inputs 
 This is also a small, non-blocking pre-enrichment improvement: today's hardcoded `https://maps.apple.com/?q=...` in `PlaceRow.tsx` should be replaced with this helper now, so users with Google Maps installed get their preferred app even before enrichment ships. (Implementation step 0 in the order below.)
 
 Deferred (not in v0.2):
+
 - An in-app setting to override the heuristic. Add when the heuristic produces complaints.
 - A long-press chooser sheet ("Open in… Apple Maps / Google Maps / Copy address"). Worth doing in v0.3 polish if the heuristic surprises any users.
 - Android (Google Maps native intent / `geo:` URI).
@@ -146,10 +148,11 @@ CREATE INDEX idx_extracted_places_external_place_id
 The split serves two needs:
 
 - **Venue dedup.** When a user has saved Kosoan in three screenshots, all three `extracted_places` rows resolve to the same `external_place_id` and share one `place_enrichments` row. The first enrichment costs $0.045; the next two are free. The grouped trip-Places UI also benefits — it queries one row per venue, not one per screenshot.
-- **Per-row attempt tracking.** `enrichment_status = 'not-found'` and `'failed'` are properties of *the OCR row's attempt*, not of any venue, so they live on `extracted_places`. A row that's `'not-found'` for one user might be `'enriched'` for another whose OCR string was sharper.
+- **Per-row attempt tracking.** `enrichment_status = 'not-found'` and `'failed'` are properties of _the OCR row's attempt_, not of any venue, so they live on `extracted_places`. A row that's `'not-found'` for one user might be `'enriched'` for another whose OCR string was sharper.
 
 Existing `extracted_places` columns:
-- `latitude`, `longitude`, `formatted_address`, `apple_maps_url` — added by migration 0003 before this design committed to the venue-keyed split. Going forward they stay NULL on `extracted_places`; the venue-level lat/lng/formatted_address are read from `place_enrichments` via JOIN, and `apple_maps_url` is dead in two ways (wrong table *and* wrong primitive — replaced by `lib/openInMaps.ts`). Cleanup migration is deferred (SQLite `DROP COLUMN` is supported but unnecessary churn pre-launch).
+
+- `latitude`, `longitude`, `formatted_address`, `apple_maps_url` — added by migration 0003 before this design committed to the venue-keyed split. Going forward they stay NULL on `extracted_places`; the venue-level lat/lng/formatted_address are read from `place_enrichments` via JOIN, and `apple_maps_url` is dead in two ways (wrong table _and_ wrong primitive — replaced by `lib/openInMaps.ts`). Cleanup migration is deferred (SQLite `DROP COLUMN` is supported but unnecessary churn pre-launch).
 - `address` — populated by Gemini at extraction time. Stays as the input to enrichment and as a `lib/openInMaps.ts` input.
 
 ## Client-side flow
@@ -193,6 +196,7 @@ GROUP BY
 The result: resolved siblings collapse into one row per venue; unresolved siblings continue to use the OCR-key fallback (so newly captured screenshots still show in the Places tab before their first open triggers enrichment). The `MAX(...)` representative-picking inside the SELECT keeps working unchanged because the columns are within-group constants for resolved rows and arbitrary-pick for unresolved rows (same as today).
 
 Other forward moves:
+
 - The Apple geocoder native module (`modules/apple-geocoder`) becomes dead code once enrichment ships. Delete it then.
 - The `latitude`, `longitude`, `formatted_address`, `apple_maps_url` columns on `extracted_places` (added by migration 0003) become dead. Leave them; cleanup migration is post-v0.2 churn we don't need.
 
@@ -201,6 +205,7 @@ Other forward moves:
 ## Cost model
 
 Google Places (New) pricing as of 2026-05:
+
 - Find Place from Text: $0.017 per request
 - Place Details (Essentials + Pro mix): ~$0.020 per request
 - Place Photos: $0.007 **per media request** (per display, not per enrichment — Google bills every photo fetch that misses cache)
@@ -209,16 +214,20 @@ Google Places (New) pricing as of 2026-05:
 Gemini flash-lite: ~$0.0005 per blurb.
 
 ### Per-venue first-enrichment cost
+
 ~$0.045 (Find Place + Details + first photo fetch + Gemini blurb). Charged once per venue per device — sibling screenshots of the same venue resolve via the pre-flight venue check and pay nothing.
 
 ### Recurring photo cost
+
 The worker's `/photo/<name>` route sets `Cache-Control: public, max-age=2592000, immutable`. Cloudflare's edge cache absorbs repeats at each PoP. So:
+
 - **Cache hit:** $0 to us, $0 to Google.
 - **Cache miss** (first display per PoP, or after 30-day TTL): $0.007 to Google.
 
 A power user opens a place ~3-5 times over its lifetime. Most reopens are within a single PoP and within the TTL — assume ~80% cache hit. Effective photo cost per place: ~$0.007 × 1.6 ≈ $0.011 (one initial fetch + ~0.6 expected misses across reopens), versus the naive ~$0.035 if every reopen billed.
 
 ### Power-user month
+
 - Saves: ~200 places/month, of which ~30 are unique venues opened (rest are noise / never opened / dupes of saved venues).
 - Opens: ~30 first-time opens × $0.045 = $1.35.
 - Reopens: ~30 venues × ~3 reopens × $0.011 = $0.99.
@@ -227,9 +236,11 @@ A power user opens a place ~3-5 times over its lifetime. Most reopens are within
 (Pre-fix this analysis claimed $1.35/month by ignoring reopen photo billing entirely — corrected after Codex review.)
 
 ### Scale check
+
 10k MAU at the same engagement = ~$23.5k/month. Comfortably covered by premium revenue at any reasonable conversion + price point.
 
 ### Sensitivity
+
 - **Photo cache hit rate matters most.** If the 30-day TTL turns out to be too aggressive (Google's `photo_name` gets invalidated and our cached body 404s on render), the recurring cost rises toward ~$0.035/venue. Keep an eye on it; shorten TTL only if we see broken-image reports.
 - **Venue dedup matters second.** If the OCR-key pre-flight check misses common variants (e.g., "Kosoan" vs. "Ko-Sōan"), users pay multiple first-enrichment costs for one venue. The match is `LOWER(TRIM(...))`-only; consider Unicode-normalize before launch if real OCR data shows churn.
 - **Pre-enriching at extraction time is still the wrong default.** Costs would scale with capture volume — ~7× higher (200 saves vs. 30 unique opens) — and we'd be paying for venues the user never looks at. Stay on-demand.

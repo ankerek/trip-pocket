@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-07
 **Status:** approved, ready for implementation plan
-**Roadmap:** closes the last outstanding item from Phase 2 ("trip picker UI in *both* the share extension and the app"). After this, v0.1 "Now + Next" is fully done.
+**Roadmap:** closes the last outstanding item from Phase 2 ("trip picker UI in _both_ the share extension and the app"). After this, v0.1 "Now + Next" is fully done.
 
 ## Goal
 
@@ -52,16 +52,19 @@ ingestPendingImports                   ── existing, no changes; already hono
 ### File changes
 
 **New:**
+
 - `native/ShareExtension/TripReader.swift` — reads non-deleted rows from `trips`, returns `[Trip]` (id + name only). Read-only (see "TripReader read-only contract" below).
 - `native/ShareExtension/TripPickerView.swift` — SwiftUI list view. Replaces `SaveButtonView`.
 
 **Modified:**
+
 - `native/ShareExtension/PendingImportWriter.swift` — `write(imageAt:)` becomes `write(imageAt:suggestedTripId:)`. Binds the id when non-nil, `NULL` otherwise.
 - `native/ShareExtension/ShareViewController.swift` — hosts `TripPickerView`; `handleSave` accepts `tripId: String?` and passes it to the writer.
 - `plugins/with-share-extension.js` — the `PBXSourcesBuildPhase` source list is hard-coded (currently lists `ShareViewController.swift`, `SaveButtonView.swift`, `PendingImportWriter.swift`). Update to: `ShareViewController.swift`, `TripPickerView.swift`, `PendingImportWriter.swift`, `TripReader.swift`. Without this, a fresh prebuild keeps compiling the deleted file and omits the new ones from the target.
 - `modules/capture/ingest.ts` — small guard: if a pending row's `suggested_trip_id` no longer points at an active (non-soft-deleted, existing) trip at drain time, fall back to `null` (Inbox). See "Stale trip selection" below.
 
 **Deleted:**
+
 - `native/ShareExtension/SaveButtonView.swift`.
 
 ### Inbox row
@@ -76,11 +79,11 @@ Alphabetical (`name COLLATE NOCASE ASC`) — matches the in-app `TripPicker` so 
 
 `TripReader.listTrips()` returns `[]` and the picker shows Inbox-only in all of these:
 
-| Case | Why |
-|---|---|
-| DB file doesn't exist yet | Extension ran before the app's first launch ever. `trips` table can't exist; we explicitly do not create it defensively (main app owns the schema). |
-| `trips` table doesn't exist | Older build / pre-v0001 schema. Treat any `sqlite3_prepare_v2` error as "no trips". |
-| DB locked / read fails mid-query | Picker still shows Inbox; user can save. |
+| Case                             | Why                                                                                                                                                 |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DB file doesn't exist yet        | Extension ran before the app's first launch ever. `trips` table can't exist; we explicitly do not create it defensively (main app owns the schema). |
+| `trips` table doesn't exist      | Older build / pre-v0001 schema. Treat any `sqlite3_prepare_v2` error as "no trips".                                                                 |
+| DB locked / read fails mid-query | Picker still shows Inbox; user can save.                                                                                                            |
 
 A fresh install (no trips yet) and any error path look identical to the user — they always have at least the Inbox row. No error UI is shown.
 
@@ -128,7 +131,7 @@ Manual smoke test on a real iPhone after a fresh EAS dev build. Setting up Swift
 3. **Inbox path** — tap "Inbox" row → open app → screenshot in Inbox.
 4. **Cancel path** — tap Cancel → no row written, no image copied. Open app → no new screenshot.
 5. **Repeatability** — repeat #2 three times in a row → same trip every time, no flakiness.
-6. **Stale trip (one-off, optional but worth doing once)** — share a screenshot to trip "X". *Before* opening the app, delete trip "X" via in-app trip delete… well, the app must be open to delete. Practical version: jest-test the ingest guard directly. The unit test creates a pending row with a `suggested_trip_id` pointing at a soft-deleted trip and asserts the resulting screenshot has `trip_id = null`.
+6. **Stale trip (one-off, optional but worth doing once)** — share a screenshot to trip "X". _Before_ opening the app, delete trip "X" via in-app trip delete… well, the app must be open to delete. Practical version: jest-test the ingest guard directly. The unit test creates a pending row with a `suggested_trip_id` pointing at a soft-deleted trip and asserts the resulting screenshot has `trip_id = null`.
 
 **Three JS tests added** (`modules/capture/__tests__/ingest.test.ts`), one per branch of the new guard: stale (soft-deleted) trip falls back to Inbox, missing-id trip falls back to Inbox, live-trip id passes through unchanged. The live-trip case is a regression guard against accidentally falling back when the trip is healthy.
 

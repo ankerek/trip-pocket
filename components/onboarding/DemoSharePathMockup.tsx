@@ -161,8 +161,7 @@ export function DemoSharePathMockup({
   const scanStyle = useAnimatedStyle(() => ({
     transform: [
       {
-        translateY:
-          -SCAN_BAND_HEIGHT / 2 + scan.value * Math.max(cardHeight, 1),
+        translateY: -SCAN_BAND_HEIGHT / 2 + scan.value * Math.max(cardHeight, 1),
       },
     ],
   }));
@@ -178,12 +177,10 @@ export function DemoSharePathMockup({
   const japanPillStyle = useAnimatedStyle(() => ({ opacity: japanPulse.value }));
 
   return (
-    <View
-      style={{ width: '100%', maxWidth: 360, alignSelf: 'center', position: 'relative' }}
-    >
+    <View style={{ width: '100%', maxWidth: 360, alignSelf: 'center', position: 'relative' }}>
       <Animated.View style={cardStyle}>
         <View
-          className="overflow-hidden bg-bg"
+          className="bg-bg overflow-hidden"
           style={{ borderRadius: 18, borderWidth: 1, borderColor: colors.hairline }}
           onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         >
@@ -199,7 +196,7 @@ export function DemoSharePathMockup({
               <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>K</Text>
             </View>
             <Text
-              className="flex-1 text-text"
+              className="text-text flex-1"
               style={{ fontSize: 13, fontWeight: '600' }}
               numberOfLines={1}
             >
@@ -339,7 +336,7 @@ export function DemoSharePathMockup({
             >
               SHARE TO
             </Text>
-            <View className="flex-row mt-3" style={{ gap: 18 }}>
+            <View className="mt-3 flex-row" style={{ gap: 18 }}>
               <ShareSheetIconStatic symbol="square.grid.2x2" label="Messages" />
               <ShareSheetIconTripPocket
                 pressable={phase === 'sheet'}
@@ -349,10 +346,7 @@ export function DemoSharePathMockup({
               <ShareSheetIconStatic symbol="envelope" label="Mail" />
             </View>
             {phase === 'sheet' ? (
-              <Text
-                className="mt-3 text-text-muted"
-                style={{ fontSize: 11, lineHeight: 16 }}
-              >
+              <Text className="text-text-muted mt-3" style={{ fontSize: 11, lineHeight: 16 }}>
                 Tap Trip Pocket to save this post.
               </Text>
             ) : null}
@@ -407,7 +401,7 @@ export function DemoSharePathMockup({
                   accessibilityRole="button"
                   accessibilityLabel={`Save to ${fixture.tripPickerLabel}`}
                   accessibilityHint={`Saves the place to your ${fixture.tripPickerLabel} trip.`}
-                  className="rounded-full px-4 py-2 flex-row items-center"
+                  className="flex-row items-center rounded-full px-4 py-2"
                   style={{
                     backgroundColor: colors.accent,
                     borderWidth: 2,
@@ -433,7 +427,7 @@ export function DemoSharePathMockup({
                 accessibilityLabel="New trip"
                 accessibilityHint="Only used inside the app after the trial starts."
                 onPress={undefined}
-                className="rounded-full px-4 py-2 flex-row items-center"
+                className="flex-row items-center rounded-full px-4 py-2"
                 style={{
                   borderWidth: 1.5,
                   borderColor: colors.hairline,
@@ -442,19 +436,13 @@ export function DemoSharePathMockup({
                 }}
               >
                 <Icon name="plus" size={14} tintColor={colors.textMuted} />
-                <Text
-                  className="text-text-muted"
-                  style={{ fontSize: 14, fontWeight: '600' }}
-                >
+                <Text className="text-text-muted" style={{ fontSize: 14, fontWeight: '600' }}>
                   New trip
                 </Text>
               </Pressable>
             </View>
             {phase === 'picker' ? (
-              <Text
-                className="mt-3 text-text-muted"
-                style={{ fontSize: 11, lineHeight: 16 }}
-              >
+              <Text className="text-text-muted mt-3" style={{ fontSize: 11, lineHeight: 16 }}>
                 Tap {fixture.tripPickerLabel} to save.
               </Text>
             ) : null}

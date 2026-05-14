@@ -40,9 +40,9 @@ export default function PlaceDetail() {
   const colors = useThemeColors();
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerMode, setPickerMode] = useState<TripPickerMode>('assign');
-  const [state, setState] = useState<
-    { kind: 'loading' } | { kind: 'loaded'; place: Place | null }
-  >({ kind: 'loading' });
+  const [state, setState] = useState<{ kind: 'loading' } | { kind: 'loaded'; place: Place | null }>(
+    { kind: 'loading' },
+  );
 
   const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['places']);
 
@@ -94,7 +94,7 @@ export default function PlaceDetail() {
 
   if (state.kind === 'loading') {
     return (
-      <View className="flex-1 bg-bg">
+      <View className="bg-bg flex-1">
         <DetailHeaderOverlay />
       </View>
     );
@@ -102,9 +102,9 @@ export default function PlaceDetail() {
 
   if (state.place === null) {
     return (
-      <View className="flex-1 items-center justify-center bg-bg">
+      <View className="bg-bg flex-1 items-center justify-center">
         <DetailHeaderOverlay />
-        <Text className="text-base text-text-muted">Place not found.</Text>
+        <Text className="text-text-muted text-base">Place not found.</Text>
       </View>
     );
   }
@@ -146,7 +146,8 @@ export default function PlaceDetail() {
                  WHERE ps2.source_id = ps1.source_id
                    AND ps2.place_id != ?
               )`,
-      place.id, place.id,
+      place.id,
+      place.id,
     );
     const orphanCount = countRow?.n ?? 0;
     const body =
@@ -186,7 +187,7 @@ export default function PlaceDetail() {
   return (
     <>
       <ScrollView
-        className="flex-1 bg-bg"
+        className="bg-bg flex-1"
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={{ paddingBottom: 32 }}
       >
@@ -270,11 +271,7 @@ export default function PlaceDetail() {
             >
               {place.name}
             </Text>
-            <HeroMetaRow
-              city={place.city}
-              rating={place.rating}
-              priceLevel={place.priceLevel}
-            />
+            <HeroMetaRow city={place.city} rating={place.rating} priceLevel={place.priceLevel} />
           </View>
         </View>
 
@@ -309,11 +306,7 @@ export default function PlaceDetail() {
             }}
           >
             <Icon name="map.fill" size={16} tintColor="#ffffff" />
-            <Text
-              style={{ fontSize: 14, fontWeight: '600', color: '#ffffff' }}
-            >
-              Maps
-            </Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#ffffff' }}>Maps</Text>
           </Pressable>
           <Pressable
             onPress={() => onAssignTrip(inTrip ? 'move' : 'assign')}
@@ -339,11 +332,11 @@ export default function PlaceDetail() {
         </View>
 
         {place.description ? (
-          <View className="px-4 pb-4 pt-4">
-            <Text className="text-[15px] leading-5 text-text">{place.description}</Text>
+          <View className="px-4 pt-4 pb-4">
+            <Text className="text-text text-[15px] leading-5">{place.description}</Text>
           </View>
         ) : isEnriching ? (
-          <View className="px-4 pb-4 pt-4">
+          <View className="px-4 pt-4 pb-4">
             <SkeletonLines count={3} />
           </View>
         ) : null}
@@ -352,7 +345,7 @@ export default function PlaceDetail() {
             status row are not yet populated; render skeleton rows so the
             card has shape and the layout doesn't jump when data arrives. */}
         <View
-          className="mx-4 mt-4 overflow-hidden rounded-2xl bg-surface border-hairline"
+          className="bg-surface border-hairline mx-4 mt-4 overflow-hidden rounded-2xl"
           style={{ borderWidth: 1 }}
         >
           {isEnriching ? (
@@ -365,20 +358,21 @@ export default function PlaceDetail() {
               {place.formattedAddress ? (
                 <MetaRow icon="mappin" text={place.formattedAddress} />
               ) : null}
-              <MetaRow
-                icon="info.circle"
-                text={enrichmentLabel(place.enrichmentStatus)}
-                muted
-              />
+              <MetaRow icon="info.circle" text={enrichmentLabel(place.enrichmentStatus)} muted />
             </>
           )}
         </View>
 
         {/* Sources strip. */}
-        <View className="px-4 pb-2 pt-6">
+        <View className="px-4 pt-6 pb-2">
           <Text
             className="text-text-muted"
-            style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.6, textTransform: 'uppercase' }}
+            style={{
+              fontSize: 11,
+              fontWeight: '600',
+              letterSpacing: 0.6,
+              textTransform: 'uppercase',
+            }}
           >
             Found in {sources?.length ?? 0} source{(sources?.length ?? 0) === 1 ? '' : 's'}
           </Text>
@@ -392,7 +386,7 @@ export default function PlaceDetail() {
             <Pressable
               key={src.source_id}
               onPress={() => router.push(`/sources/${src.source_id}`)}
-              className="overflow-hidden rounded-xl bg-surface"
+              className="bg-surface overflow-hidden rounded-xl"
               style={{ width: 88, height: 110 }}
               accessibilityRole="button"
               accessibilityLabel="Open source"
@@ -426,7 +420,6 @@ export default function PlaceDetail() {
             </Pressable>
           ))}
         </ScrollView>
-
       </ScrollView>
       <DetailHeaderOverlay
         right={
@@ -454,11 +447,13 @@ export default function PlaceDetail() {
               }}
               actions={[
                 ...(inTrip
-                  ? [{
-                      id: 'remove',
-                      title: 'Remove from trip',
-                      image: Platform.OS === 'ios' ? 'tray.and.arrow.up' : undefined,
-                    }]
+                  ? [
+                      {
+                        id: 'remove',
+                        title: 'Remove from trip',
+                        image: Platform.OS === 'ios' ? 'tray.and.arrow.up' : undefined,
+                      },
+                    ]
                   : []),
                 {
                   id: 'delete',
@@ -570,28 +565,16 @@ function HeroMetaRow({
   );
 }
 
-function MetaRow({
-  icon,
-  text,
-  muted,
-}: {
-  icon: string;
-  text: string;
-  muted?: boolean;
-}) {
+function MetaRow({ icon, text, muted }: { icon: string; text: string; muted?: boolean }) {
   const colors = useThemeColors();
   const fg = muted ? colors.textMuted : colors.text;
   return (
     <View
-      className="flex-row items-center gap-3 border-hairline px-4 py-3"
+      className="border-hairline flex-row items-center gap-3 px-4 py-3"
       style={{ borderBottomWidth: 1 }}
     >
       <Icon name={icon} size={16} tintColor={fg} />
-      <Text
-        className="flex-1"
-        numberOfLines={2}
-        style={{ fontSize: 14, color: fg }}
-      >
+      <Text className="flex-1" numberOfLines={2} style={{ fontSize: 14, color: fg }}>
         {text}
       </Text>
     </View>
@@ -605,7 +588,7 @@ function MetaSkeletonRow() {
   const colors = useThemeColors();
   return (
     <View
-      className="flex-row items-center gap-3 border-hairline px-4 py-3"
+      className="border-hairline flex-row items-center gap-3 px-4 py-3"
       style={{ borderBottomWidth: 1, borderColor: colors.hairline }}
     >
       <SkeletonLine widthPercent={5} height={16} style={{ borderRadius: 8 }} />

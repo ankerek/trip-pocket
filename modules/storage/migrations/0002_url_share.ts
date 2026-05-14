@@ -15,9 +15,19 @@ import type { Migration } from '../db';
 export const urlShare: Migration = {
   version: 2,
   up: async (db) => {
-    await addColumnIfMissing(db, 'sources', 'platform', `TEXT CHECK (platform IS NULL OR platform IN ('instagram','tiktok'))`);
+    await addColumnIfMissing(
+      db,
+      'sources',
+      'platform',
+      `TEXT CHECK (platform IS NULL OR platform IN ('instagram','tiktok'))`,
+    );
     await addColumnIfMissing(db, 'sources', 'caption', `TEXT`);
-    await addColumnIfMissing(db, 'pending_imports', 'kind', `TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image','url'))`);
+    await addColumnIfMissing(
+      db,
+      'pending_imports',
+      'kind',
+      `TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image','url'))`,
+    );
     await addColumnIfMissing(db, 'pending_imports', 'url', `TEXT`);
   },
 };
@@ -28,9 +38,7 @@ async function addColumnIfMissing(
   column: string,
   ddl: string,
 ): Promise<void> {
-  const cols = await db.getAllAsync<{ name: string }>(
-    `PRAGMA table_info(${table})`,
-  );
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
   if (cols.some((c) => c.name === column)) return;
   await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl};`);
 }

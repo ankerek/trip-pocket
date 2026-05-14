@@ -1,9 +1,5 @@
 import { getEntitlementUserId } from '@/lib/entitlement/userId';
-import {
-  FetchPostError,
-  fetchPostFromProxy,
-  workerErrorCodeFor,
-} from '../fetchPostFromProxy';
+import { FetchPostError, fetchPostFromProxy, workerErrorCodeFor } from '../fetchPostFromProxy';
 
 jest.mock('@/lib/entitlement/userId', () => ({
   getEntitlementUserId: jest.fn(async () => '$RCAnonymousID:testuser'),
@@ -41,15 +37,15 @@ describe('fetchPostFromProxy — entitlement', () => {
       jsonResp(401, { error: 'entitlement-required' }),
     ) as unknown as typeof fetch;
 
-    await expect(fetchPostFromProxy('https://instagram.com/p/ABC/', PROXY_URL)).rejects.toMatchObject({
+    await expect(
+      fetchPostFromProxy('https://instagram.com/p/ABC/', PROXY_URL),
+    ).rejects.toMatchObject({
       classification: { kind: 'entitlement-required' },
     });
   });
 
   it('attaches X-RC-User-Id header on every fetch call', async () => {
-    globalThis.fetch = jest.fn(async () =>
-      jsonResp(200, VALID_BODY),
-    ) as unknown as typeof fetch;
+    globalThis.fetch = jest.fn(async () => jsonResp(200, VALID_BODY)) as unknown as typeof fetch;
 
     await fetchPostFromProxy('https://instagram.com/p/ABC/', PROXY_URL);
 
@@ -67,7 +63,9 @@ describe('fetchPostFromProxy — entitlement', () => {
     (getEntitlementUserId as jest.Mock).mockRejectedValueOnce(new Error('rc-not-ready'));
     globalThis.fetch = jest.fn() as unknown as typeof fetch;
 
-    await expect(fetchPostFromProxy('https://instagram.com/p/ABC/', PROXY_URL)).rejects.toMatchObject({
+    await expect(
+      fetchPostFromProxy('https://instagram.com/p/ABC/', PROXY_URL),
+    ).rejects.toMatchObject({
       classification: { kind: 'entitlement-required' },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -83,48 +81,34 @@ describe('workerErrorCodeFor', () => {
 
   it('returns the permanent code for not-found / private / unsupported-url', () => {
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('x', { kind: 'permanent', code: 'not-found' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('x', { kind: 'permanent', code: 'not-found' })),
     ).toBe('not-found');
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('x', { kind: 'permanent', code: 'private' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('x', { kind: 'permanent', code: 'private' })),
     ).toBe('private');
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('x', { kind: 'permanent', code: 'unsupported-url' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('x', { kind: 'permanent', code: 'unsupported-url' })),
     ).toBe('unsupported-url');
   });
 
   it('collapses invalid-response into fetch-failed', () => {
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('x', { kind: 'permanent', code: 'invalid-response' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('x', { kind: 'permanent', code: 'invalid-response' })),
     ).toBe('fetch-failed');
   });
 
   it('detects rate-limited from a 429 retryable message', () => {
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('fetch-post-upstream-429', { kind: 'retryable' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('fetch-post-upstream-429', { kind: 'retryable' })),
     ).toBe('rate-limited');
   });
 
   it('returns fetch-failed for other retryable cases', () => {
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('fetch-post-network: ...', { kind: 'retryable' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('fetch-post-network: ...', { kind: 'retryable' })),
     ).toBe('fetch-failed');
     expect(
-      workerErrorCodeFor(
-        new FetchPostError('fetch-post-upstream-500', { kind: 'retryable' }),
-      ),
+      workerErrorCodeFor(new FetchPostError('fetch-post-upstream-500', { kind: 'retryable' })),
     ).toBe('fetch-failed');
   });
 });

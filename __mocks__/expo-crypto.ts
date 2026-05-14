@@ -10,9 +10,10 @@ export async function digest(
 ): Promise<ArrayBuffer> {
   // Expo uses 'SHA-256'; Node uses 'sha256'.
   const nodeAlg = algorithm.toLowerCase().replace(/-/g, '');
-  const buf = data instanceof Uint8Array
-    ? data
-    : new Uint8Array(data instanceof ArrayBuffer ? data : data.buffer);
+  const buf =
+    data instanceof Uint8Array
+      ? data
+      : new Uint8Array(data instanceof ArrayBuffer ? data : data.buffer);
   const h = createHash(nodeAlg);
   h.update(Buffer.from(buf));
   const out = h.digest();

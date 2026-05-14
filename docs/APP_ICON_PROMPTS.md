@@ -6,11 +6,12 @@ Paste-ready prompts for generating the Trip Pocket app icon with ChatGPT (or any
 
 ## Primary — Pocket with a location pin peeking out
 
-> Generate an iOS app icon for a product called **Trip Pocket** — a mobile app that acts as a dedicated inbox for travel screenshots people save from Instagram, TikTok, and YouTube. Tagline: *"Your pocket for travel ideas."*
+> Generate an iOS app icon for a product called **Trip Pocket** — a mobile app that acts as a dedicated inbox for travel screenshots people save from Instagram, TikTok, and YouTube. Tagline: _"Your pocket for travel ideas."_
 >
 > **Primary concept:** A small, friendly **pocket** (like a shirt or denim pocket) viewed head-on, with a **map location pin** peeking out of the top — as if the user just tucked a place into their pocket to revisit later. The pin should be the focal point, slightly tilted, clearly recognizable at small sizes.
 >
 > **Style requirements:**
+>
 > - Modern iOS app icon aesthetic — flat with subtle depth, soft shadows, rounded forms
 > - Bold, simple silhouette that reads clearly at 60×60px (Home Screen size) and 1024×1024px (App Store)
 > - Warm, inviting color palette suggesting travel and discovery — think sunset orange, coral, or teal-to-coral gradient on a cream or off-white background. Avoid generic "travel blue."
@@ -26,11 +27,12 @@ Paste-ready prompts for generating the Trip Pocket app icon with ChatGPT (or any
 
 ## Concept A — Folded map peeking out of a pocket
 
-> Generate an iOS app icon for **Trip Pocket**, a mobile app that's a dedicated inbox for travel screenshots people save from Instagram, TikTok, and YouTube. Tagline: *"Your pocket for travel ideas."*
+> Generate an iOS app icon for **Trip Pocket**, a mobile app that's a dedicated inbox for travel screenshots people save from Instagram, TikTok, and YouTube. Tagline: _"Your pocket for travel ideas."_
 >
 > **Concept:** A small, friendly **pocket** viewed head-on, with a **folded paper travel map** peeking out the top — one corner unfurled just enough to hint at roads, a coastline, or a tiny location dot. The map should feel tactile and a little worn, like something a traveler actually carries. The pocket suggests "personal stash"; the map suggests "places to go."
 >
 > **Style requirements:**
+>
 > - Modern iOS app icon aesthetic — flat with subtle depth, soft shadows, rounded forms
 > - Bold silhouette that reads clearly at 60×60px and 1024×1024px
 > - Warm, inviting palette: sunset orange or coral accents on cream/off-white, with the map in a slightly desaturated cartographic green-and-cream so it doesn't fight the pocket
@@ -46,11 +48,12 @@ Paste-ready prompts for generating the Trip Pocket app icon with ChatGPT (or any
 
 ## Concept B — Pocket with a fanned stack of polaroid-style screenshots
 
-> Generate an iOS app icon for **Trip Pocket**, a mobile app that's a dedicated inbox for travel screenshots saved from Instagram, TikTok, and YouTube. Tagline: *"Your pocket for travel ideas."*
+> Generate an iOS app icon for **Trip Pocket**, a mobile app that's a dedicated inbox for travel screenshots saved from Instagram, TikTok, and YouTube. Tagline: _"Your pocket for travel ideas."_
 >
 > **Concept:** A small, friendly **pocket** viewed head-on, with a **small fan of 2–3 polaroid-style cards** peeking out the top, slightly overlapping and rotated at playful angles. Each polaroid hints at a travel scene — one with a tiny mountain silhouette, one with a palm or beach horizon, one with a food/cafe vibe — rendered as simple, iconic shapes (not photorealistic). This directly visualizes the app's core action: saving travel screenshots into a personal inbox.
 >
 > **Style requirements:**
+>
 > - Modern iOS app icon aesthetic — flat with subtle depth and soft shadows
 > - Reads clearly at 60×60px and 1024×1024px; the polaroids must remain distinguishable as separate cards even at small sizes
 > - Warm palette: coral or sunset-orange pocket on cream background; polaroid scenes use a tight, harmonious sub-palette (warm neutrals + one accent) so they read as a set, not a clash
@@ -66,11 +69,12 @@ Paste-ready prompts for generating the Trip Pocket app icon with ChatGPT (or any
 
 ## Concept C — Single mark: a location pin shaped like a pocket
 
-> Generate an iOS app icon for **Trip Pocket**, a mobile app that's a dedicated inbox for travel screenshots from Instagram, TikTok, and YouTube. Tagline: *"Your pocket for travel ideas."*
+> Generate an iOS app icon for **Trip Pocket**, a mobile app that's a dedicated inbox for travel screenshots from Instagram, TikTok, and YouTube. Tagline: _"Your pocket for travel ideas."_
 >
 > **Concept:** A **single, unified symbol** — a classic teardrop **map location pin**, but the pin's rounded body is subtly shaped like a **shirt pocket**: a soft horizontal seam line across the upper third, and a small "opening" suggesting something could be tucked inside. The shape should still read as "pin" at first glance, with the pocket detail revealing itself on closer look. This is a brand-mark approach: one strong silhouette, memorable and ownable.
 >
 > **Style requirements:**
+>
 > - Modern iOS app icon aesthetic — flat with subtle depth, soft inner shadows around the seam
 > - Strong, simple silhouette that reads at 60×60px (the pin shape must be unmistakable even when the pocket detail is barely visible)
 > - Warm palette: a coral-to-sunset-orange gradient on the pin, sitting on a cream or soft-peach background. Optional: a tiny dot or highlight at the pin's traditional "circle" location, reinterpreted as a button or stitch detail

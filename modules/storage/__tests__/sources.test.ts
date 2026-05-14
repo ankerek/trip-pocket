@@ -281,9 +281,13 @@ describe('sources additions', () => {
     const db = await freshDb();
     const deletedFiles: string[] = [];
     await insertSource(db, {
-      id: 'a', tripId: null, filePath: '/x/a.jpg',
-      contentHash: 'h-a', origin: 'manual',
-      capturedAt: '2026-05-04T10:00:00Z', ownerId,
+      id: 'a',
+      tripId: null,
+      filePath: '/x/a.jpg',
+      contentHash: 'h-a',
+      origin: 'manual',
+      capturedAt: '2026-05-04T10:00:00Z',
+      ownerId,
     });
     await deleteSource(db, 'a', {
       unlinkFile: (p) => deletedFiles.push(p),
@@ -484,9 +488,7 @@ describe('sources additions', () => {
         `SELECT source_id FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
       );
       expect(link).toBeNull();
-      const place = await db.getFirstAsync(
-        `SELECT id FROM places WHERE id = 'p1'`,
-      );
+      const place = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'p1'`);
       expect(place).toBeNull(); // place was orphan-pruned
       const source = await getSource(db, 's1');
       expect(source?.tripId).toBe('t1');
@@ -549,9 +551,7 @@ describe('sources additions', () => {
         `SELECT source_id FROM place_sources WHERE source_id = 's1' AND place_id = 'p1'`,
       );
       expect(link).toBeTruthy();
-      const place = await db.getFirstAsync(
-        `SELECT id FROM places WHERE id = 'p1'`,
-      );
+      const place = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'p1'`);
       expect(place).toBeTruthy();
     });
 
@@ -565,11 +565,7 @@ describe('sources additions', () => {
       await seedSourceWithPlaces(db, 's1', [{ id: 'p1' }, { id: 'p2' }]);
 
       const placesHook = renderHook(() =>
-        useLiveQuery<{ n: number }>(
-          'SELECT COUNT(*) AS n FROM places',
-          [],
-          ['places'],
-        ),
+        useLiveQuery<{ n: number }>('SELECT COUNT(*) AS n FROM places', [], ['places']),
       );
       await waitFor(() => expect(placesHook.result.current?.[0]?.n).toBe(2));
 
@@ -632,26 +628,34 @@ describe('sources additions', () => {
         `INSERT INTO places (id, trip_id, name, city, normalized_key,
                              enrichment_status, owner_id, created_at, updated_at)
          VALUES (?, ?, 'Place ' || ?, 'Tokyo', 'p-' || ?, 'pending', ?, ?, ?)`,
-        placeId, tripId, placeId, placeId, ownerId, now, now,
+        placeId,
+        tripId,
+        placeId,
+        placeId,
+        ownerId,
+        now,
+        now,
       );
     };
-    const link = async (
-      db: Database,
-      placeId: string,
-      sourceId: string,
-    ): Promise<void> => {
+    const link = async (db: Database, placeId: string, sourceId: string): Promise<void> => {
       await linkPlaceSource(db, {
-        placeId, sourceId,
-        extractionModel: 'gemini', ownerId,
+        placeId,
+        sourceId,
+        extractionModel: 'gemini',
+        ownerId,
       });
     };
 
     it('orphan-prunes a place whose only source was this one', async () => {
       const db = await freshDb();
       await insertSource(db, {
-        id: 's1', tripId: null, filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: null,
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await seedPlace(db, 'pOnlyHere', null);
       await link(db, 'pOnlyHere', 's1');
@@ -665,14 +669,22 @@ describe('sources additions', () => {
     it('preserves a place that has another live source', async () => {
       const db = await freshDb();
       await insertSource(db, {
-        id: 's1', tripId: null, filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: null,
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await insertSource(db, {
-        id: 's2', tripId: null, filePath: '/x/s2.jpg',
-        contentHash: 'h-s2', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:01Z', ownerId,
+        id: 's2',
+        tripId: null,
+        filePath: '/x/s2.jpg',
+        contentHash: 'h-s2',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:01Z',
+        ownerId,
       });
       await seedPlace(db, 'pShared', null);
       await link(db, 'pShared', 's1');
@@ -687,14 +699,20 @@ describe('sources additions', () => {
     it('removes tags attached to the deleted source', async () => {
       const db = await freshDb();
       await insertSource(db, {
-        id: 's1', tripId: null, filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: null,
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await db.runAsync(
         `INSERT INTO tags (id, source_id, kind, value, owner_id, created_at, updated_at)
          VALUES ('tag1', 's1', 'food', 'sushi', ?, ?, ?)`,
-        ownerId, '2026-05-10T10:00:00Z', '2026-05-10T10:00:00Z',
+        ownerId,
+        '2026-05-10T10:00:00Z',
+        '2026-05-10T10:00:00Z',
       );
 
       await deleteSource(db, 's1', { unlinkFile: () => {} });

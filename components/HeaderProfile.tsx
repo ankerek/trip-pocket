@@ -17,10 +17,10 @@ export function HeaderProfile() {
       className="mr-1"
     >
       <View
-        className="h-8 w-8 items-center justify-center rounded-full bg-surface border-hairline"
+        className="bg-surface border-hairline h-8 w-8 items-center justify-center rounded-full"
         style={{ borderWidth: 1 }}
       >
-        <Text className="text-sm font-semibold text-text">TP</Text>
+        <Text className="text-text text-sm font-semibold">TP</Text>
       </View>
     </Pressable>
   );

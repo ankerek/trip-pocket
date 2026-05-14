@@ -65,60 +65,55 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
           place_count: item.place_count ?? 0,
         });
         return (
-        <Link key={item.id} href={`/sources/${item.id}`} asChild>
-          <Link.Trigger>
-            <Pressable
-              className="w-1/2 p-1"
-              accessibilityRole="button"
-              accessibilityLabel="Source"
-            >
-              <View className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-surface">
-                <Image
-                  source={item.file_path}
-                  className="h-full w-full"
-                  contentFit="cover"
-                  onError={(error) =>
-                    console.warn(
-                      '[PlaceGrid] image load failed',
-                      item.id,
-                      item.file_path,
-                      error,
-                    )
-                  }
-                />
-                {badge === 'shimmer' ? (
-                  // The background color goes through `style`, not className.
-                  // Tailwind v4's default palette compiles to `oklch()`, which
-                  // react-native-css can't interpolate during animate-pulse —
-                  // it produced "#NaNNaNNaN1a" (NaN RGB, valid alpha 1a/10%)
-                  // and Reanimated bailed. Inline rgba sidesteps the whole
-                  // color pipeline; only opacity animates.
-                  <View
-                    pointerEvents="none"
-                    style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)' }}
-                    className="absolute inset-0 animate-pulse"
+          <Link key={item.id} href={`/sources/${item.id}`} asChild>
+            <Link.Trigger>
+              <Pressable
+                className="w-1/2 p-1"
+                accessibilityRole="button"
+                accessibilityLabel="Source"
+              >
+                <View className="bg-surface relative aspect-[3/4] w-full overflow-hidden rounded-lg">
+                  <Image
+                    source={item.file_path}
+                    className="h-full w-full"
+                    contentFit="cover"
+                    onError={(error) =>
+                      console.warn('[PlaceGrid] image load failed', item.id, item.file_path, error)
+                    }
                   />
-                ) : null}
-                {badge === 'pin' ? <PinBadge /> : null}
-                {badge === 'no-places' ? <NoPlacesBadge /> : null}
-              </View>
-            </Pressable>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction
-              title="Show OCR text"
-              icon="info.circle"
-              onPress={() => router.push(`/sources/${item.id}/ocr-debug`)}
-            />
-            <Link.MenuAction
-              title="Delete"
-              icon="trash"
-              destructive
-              onPress={() => confirmDelete(item.id)}
-            />
-          </Link.Menu>
-        </Link>
+                  {badge === 'shimmer' ? (
+                    // The background color goes through `style`, not className.
+                    // Tailwind v4's default palette compiles to `oklch()`, which
+                    // react-native-css can't interpolate during animate-pulse —
+                    // it produced "#NaNNaNNaN1a" (NaN RGB, valid alpha 1a/10%)
+                    // and Reanimated bailed. Inline rgba sidesteps the whole
+                    // color pipeline; only opacity animates.
+                    <View
+                      pointerEvents="none"
+                      style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)' }}
+                      className="absolute inset-0 animate-pulse"
+                    />
+                  ) : null}
+                  {badge === 'pin' ? <PinBadge /> : null}
+                  {badge === 'no-places' ? <NoPlacesBadge /> : null}
+                </View>
+              </Pressable>
+            </Link.Trigger>
+            <Link.Preview />
+            <Link.Menu>
+              <Link.MenuAction
+                title="Show OCR text"
+                icon="info.circle"
+                onPress={() => router.push(`/sources/${item.id}/ocr-debug`)}
+              />
+              <Link.MenuAction
+                title="Delete"
+                icon="trash"
+                destructive
+                onPress={() => confirmDelete(item.id)}
+              />
+            </Link.Menu>
+          </Link>
         );
       })}
     </View>

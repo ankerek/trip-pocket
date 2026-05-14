@@ -249,15 +249,21 @@ describe('deletePlace — hard delete + symmetric orphan prune', () => {
   const seedSourceLocal = async (db: Database, id: string): Promise<void> => {
     const now = '2026-05-10T10:00:00Z';
     await insertSource(db, {
-      id, tripId: null, filePath: `/x/${id}.jpg`,
-      contentHash: `h-${id}`, origin: 'manual',
-      capturedAt: now, ownerId,
+      id,
+      tripId: null,
+      filePath: `/x/${id}.jpg`,
+      contentHash: `h-${id}`,
+      origin: 'manual',
+      capturedAt: now,
+      ownerId,
     });
   };
   const link = async (db: Database, placeId: string, sourceId: string): Promise<void> => {
     await linkPlaceSource(db, {
-      placeId, sourceId,
-      extractionModel: 'gemini', ownerId,
+      placeId,
+      sourceId,
+      extractionModel: 'gemini',
+      ownerId,
     });
   };
 

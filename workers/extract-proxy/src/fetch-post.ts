@@ -91,7 +91,11 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function errorResponse(error: string, status: number, extra: Record<string, string> = {}): Response {
+function errorResponse(
+  error: string,
+  status: number,
+  extra: Record<string, string> = {},
+): Response {
   // Spec: error responses must never be cached. A transient Apify outage
   // (or rate-limited og: response) should not poison a URL for the full
   // success TTL. Callers that genuinely want caching set a different header
@@ -188,7 +192,6 @@ function ogOutcomeFromError(err: UpstreamError): FetchPostDebug['ogOutcome'] {
       return 'upstream_5xx';
   }
 }
-
 
 // --- Platform detection / URL canonicalisation ---------------------------
 
@@ -417,9 +420,7 @@ export function parseInstagramUrlShape(url: URL): 'p' | 'reel' | 'tv' | null {
  * to cheaply classify a post as single vs carousel vs reel without paying
  * Apify. Returns null on any decode failure (treated as 'unknown' upstream).
  */
-export function decodeEfgFromImageUrl(
-  imageUrl: string,
-): 'single' | 'carousel' | 'clips' | null {
+export function decodeEfgFromImageUrl(imageUrl: string): 'single' | 'carousel' | 'clips' | null {
   if (!imageUrl) return null;
   let efg: string | null = null;
   try {
@@ -503,10 +504,7 @@ async function fetchTikTok(
   } catch (err) {
     if (err instanceof UpstreamError) {
       primaryError = err;
-      console.log(
-        'extract-proxy/tiktok-rehyd: fallback',
-        `reason=${rehydReasonForLog(err)}`,
-      );
+      console.log('extract-proxy/tiktok-rehyd: fallback', `reason=${rehydReasonForLog(err)}`);
     } else {
       throw err;
     }
@@ -548,9 +546,7 @@ function rehydReasonForLog(err: UpstreamError): string {
   return err.code;
 }
 
-function ogOutcomeFromRehydError(
-  err: UpstreamError | null,
-): FetchPostDebug['ogOutcome'] {
+function ogOutcomeFromRehydError(err: UpstreamError | null): FetchPostDebug['ogOutcome'] {
   if (!err) return 'empty';
   // Parser-level failures (blob missing / malformed / item missing) all map
   // to "primary returned nothing usable" — closed-vocab `empty`.
@@ -635,9 +631,7 @@ async function fetchTikTokOEmbed(canonical: URL): Promise<FetchPostResponse> {
     permalink: canonical.toString(),
     caption: typeof b.title === 'string' ? b.title : '',
     imageUrls:
-      typeof b.thumbnail_url === 'string' && b.thumbnail_url.length > 0
-        ? [b.thumbnail_url]
-        : [],
+      typeof b.thumbnail_url === 'string' && b.thumbnail_url.length > 0 ? [b.thumbnail_url] : [],
     author:
       typeof b.author_name === 'string' && b.author_name.length > 0
         ? `@${b.author_name}`
@@ -686,10 +680,7 @@ export type MappedTikTokItem = FetchPostResponse & {
   _route: 'photo' | 'video';
 };
 
-export function mapTikTokRehydrationItem(
-  raw: unknown,
-  canonical: string,
-): MappedTikTokItem {
+export function mapTikTokRehydrationItem(raw: unknown, canonical: string): MappedTikTokItem {
   // Field path:
   //   __DEFAULT_SCOPE__
   //     .webapp.reflow.video.detail

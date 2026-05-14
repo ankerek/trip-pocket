@@ -1,6 +1,6 @@
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/preflight.css" layer(base);
-@import "tailwindcss/utilities.css";
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css';
 
 /* Platform-specific font families */
 @media android {
@@ -46,7 +46,7 @@
   --radius-sheet: 20px;
   --radius-pill: 9999px;
 
-  --shadow-elevated: 0 6px 16px rgba(15, 23, 42, 0.10);
+  --shadow-elevated: 0 6px 16px rgba(15, 23, 42, 0.1);
 }
 
 @media (prefers-color-scheme: dark) {

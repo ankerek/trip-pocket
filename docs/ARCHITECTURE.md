@@ -1,6 +1,6 @@
 # Trip Pocket — Architecture
 
-Solo working document. Companion to PRODUCT.md (what) and ROADMAP.md (when). This is the *how*, scoped through v1.0 with light forward-notes for v1.x.
+Solo working document. Companion to PRODUCT.md (what) and ROADMAP.md (when). This is the _how_, scoped through v1.0 with light forward-notes for v1.x.
 
 ## Scope
 
@@ -48,7 +48,7 @@ Tables:
 App code (TypeScript / React):
 
 - `app/` — screens, navigation, components. UI layer only, no business logic.
-- `modules/storage/` — SQLite schema, migrations, repositories. The *only* place that touches SQL.
+- `modules/storage/` — SQLite schema, migrations, repositories. The _only_ place that touches SQL.
 - `modules/capture/` — share-extension hand-off, manual import, auto-detect observer client.
 - `modules/processing/` — OCR pipeline, content hashing, dedup, indexing.
 - `modules/extraction/` — AI extraction client: takes OCR text, calls the proxy, persists `extracted_places` rows. The only module that talks to the proxy.
@@ -67,10 +67,10 @@ Native iOS code (Swift, via Expo Modules):
 Boundaries:
 
 - `storage` is the only module that knows SQL exists. Everyone else asks `storage` for typed objects.
-- `capture`, `processing`, `extraction`, `search` are *workflow* modules — they orchestrate but don't own data.
-- `places`, `trips`, `monetize`, `telemetry` are *capability* modules — they expose typed APIs for the UI to call.
+- `capture`, `processing`, `extraction`, `search` are _workflow_ modules — they orchestrate but don't own data.
+- `places`, `trips`, `monetize`, `telemetry` are _capability_ modules — they expose typed APIs for the UI to call.
 - `app/` has zero business logic. Screens call modules and render.
-- No "service" or "repository" layer above `storage`. Storage *is* the repository. One layer of abstraction, not two.
+- No "service" or "repository" layer above `storage`. Storage _is_ the repository. One layer of abstraction, not two.
 - No global `models/` or `types/` folder. Types live with the module that owns them.
 
 ## Key flows
@@ -83,13 +83,13 @@ Boundaries:
 4. Extension copies the image into the App Group container and writes a `pending_imports` row carrying the chosen `trip_id`.
 5. Extension dismisses; user is back in Photos. Total time should feel like one extra tap.
 6. On the main app's next foreground, `modules/capture`:
-    - Reads `pending_imports`.
-    - Moves the image to the main app sandbox.
-    - Computes a content hash, dedupes against `screenshots`.
-    - Writes a `screenshots` row with `ocr_status: pending`, the chosen `trip_id` (or `NULL`), `source: share`.
-    - Deletes the `pending_imports` row.
+   - Reads `pending_imports`.
+   - Moves the image to the main app sandbox.
+   - Computes a content hash, dedupes against `screenshots`.
+   - Writes a `screenshots` row with `ocr_status: pending`, the chosen `trip_id` (or `NULL`), `source: share`.
+   - Deletes the `pending_imports` row.
 
-The share extension is a *dumb mailbox*. It never runs OCR or anything memory-heavy — iOS extensions have ~120 MB and a few seconds of runtime, both easy to blow past.
+The share extension is a _dumb mailbox_. It never runs OCR or anything memory-heavy — iOS extensions have ~120 MB and a few seconds of runtime, both easy to blow past.
 
 ### Ingestion: auto-detect
 
@@ -125,8 +125,8 @@ The share extension is a *dumb mailbox*. It never runs OCR or anything memory-he
 
 - **Inbox:** `screenshots` with `trip_id IS NULL` and `deleted_at IS NULL`, ordered by `captured_at desc`.
 - **Trip detail:** two tabs.
-    - **Screenshots:** the existing image grid for that trip.
-    - **Places:** distinct rows from `extracted_places` joined through that trip's screenshots, deduped by case-insensitive `(name, city)`. Each row has a "Open in Maps" affordance — `places.openInMaps(name, city)` builds either `comgooglemaps://` (if installed) or `https://www.google.com/maps/search/?api=1&query=…` and hands off via `Linking.openURL`. Tapping the row anywhere else navigates to the source screenshot.
+  - **Screenshots:** the existing image grid for that trip.
+  - **Places:** distinct rows from `extracted_places` joined through that trip's screenshots, deduped by case-insensitive `(name, city)`. Each row has a "Open in Maps" affordance — `places.openInMaps(name, city)` builds either `comgooglemaps://` (if installed) or `https://www.google.com/maps/search/?api=1&query=…` and hands off via `Linking.openURL`. Tapping the row anywhere else navigates to the source screenshot.
 - **Search:** FTS5 query against `screenshots_fts`, joined back to `screenshots`. Extracted place names are part of the indexed document, so searching "tonkatsu" finds screenshots whose extracted place is "Maru Tonkatsu" even if "tonkatsu" never appeared verbatim in the OCR text.
 - All list views use `useLiveQuery`, so they re-render automatically as ingestion / OCR / extraction / tagging completes.
 
@@ -183,7 +183,7 @@ The app is paid from day one. There is no free tier.
 
 - **RevenueCat** wraps StoreKit. Receipt validation server-side (RevenueCat's), entitlements + dashboard, no babysitting StoreKit edge cases (refunds, family sharing, sub-state changes, intro-offer eligibility).
 - Products: `pocket_monthly` and `pocket_yearly` (pricing decided at v1.0 launch). Both have a 7-day introductory offer (free trial), configured in App Store Connect.
-- Single entitlement: `pocket_full`, granted while the user is in trial *or* has an active paid subscription. RevenueCat treats both states identically, which is what we want.
+- Single entitlement: `pocket_full`, granted while the user is in trial _or_ has an active paid subscription. RevenueCat treats both states identically, which is what we want.
 - `monetize.isEntitled()` is synchronous from cached state, refreshed on foreground and on RevenueCat webhooks (via the SDK).
 - **First-launch gate:** new users land on onboarding → paywall. The paywall cannot be dismissed without (a) starting the trial / subscribing or (b) restoring a previous purchase. There's no "skip" — that's the point of paid-from-day-one.
 - **Lapse handling:** when entitlement flips to false (trial ended without conversion, sub canceled, billing failed), the next foreground routes the user back to the paywall. Local data is preserved; resubscribing restores access without data loss.
@@ -195,7 +195,7 @@ The app is paid from day one. There is no free tier.
 - **PostHog** for product analytics, wrapped by `modules/telemetry`. Events are defined as a typed vocabulary in one file — no ad-hoc `track("button_clicked")` calls strewn around.
 - **Sentry** for crash + non-fatal error reporting. Initialized in app entry. `telemetry.captureError(err, ctx?)` is the handled-error helper.
 - **Privacy:** telemetry never sees content — image bytes, OCR text, and trip names do not flow to PostHog or Sentry. Telemetry is structural (which screens, which features, which conversions) only.
-- **Privacy (AI):** AI extraction explicitly *does* send OCR text off-device to the proxy and onward to the LLM. Image bytes still don't leave. This is disclosed during onboarding (before the paywall) and in the privacy policy. Because every entitled user has access to AI extraction, the disclosure runs once during onboarding rather than per-trigger.
+- **Privacy (AI):** AI extraction explicitly _does_ send OCR text off-device to the proxy and onward to the LLM. Image bytes still don't leave. This is disclosed during onboarding (before the paywall) and in the privacy policy. Because every entitled user has access to AI extraction, the disclosure runs once during onboarding rather than per-trigger.
 
 ### Error handling
 
@@ -254,16 +254,16 @@ All of these reuse the existing proxy and the existing `extracted_places` table,
 ### Android
 
 - Not in v1.0 scope. Adding it forces:
-    - Replace `VisionOCR` with ML Kit Text Recognition.
-    - Replace `ScreenshotObserver` with a `MediaStore` / `ContentObserver` equivalent.
-    - Replace `ShareExtension` with an Android intent filter activity.
-    - CloudKit can't go cross-platform; sync would need PowerSync, Electric, or own backend.
+  - Replace `VisionOCR` with ML Kit Text Recognition.
+  - Replace `ScreenshotObserver` with a `MediaStore` / `ContentObserver` equivalent.
+  - Replace `ShareExtension` with an Android intent filter activity.
+  - CloudKit can't go cross-platform; sync would need PowerSync, Electric, or own backend.
 - The TypeScript app code (including `extraction`, `places`, the proxy client) is platform-agnostic, so the rebuild is concentrated in `native/` and the sync layer.
 
 ## Open questions
 
 - Subscription pricing tiers (monthly + yearly amounts, decide at v1.0 launch).
-- Paywall placement: before vs after onboarding. Default is *after* — show value, then ask. Revisit if beta data argues otherwise.
+- Paywall placement: before vs after onboarding. Default is _after_ — show value, then ask. Revisit if beta data argues otherwise.
 - LLM provider for the extraction proxy (Anthropic vs OpenAI vs hosted open-weights). Pick at v0.2 by accuracy on real screenshots.
 - Proxy runtime (Cloudflare Workers vs Vercel Functions). Either is fine; pick whichever is faster to ship.
 - Image storage location: `Documents/` (iCloud-backed-up) vs `Library/Application Support/`. Default to `Application Support/screenshots/` unless we explicitly want OS-managed iCloud Drive backup.
@@ -274,7 +274,7 @@ All of these reuse the existing proxy and the existing `extracted_places` table,
 
 Restated from PRODUCT.md so they remain loud:
 
-- Itinerary planner. (Place extraction is *not* the same thing as itinerary building.)
+- Itinerary planner. (Place extraction is _not_ the same thing as itinerary building.)
 - Server-side product logic. The proxy is a stateless LLM passthrough; product features live on the device.
 - Social or sharing features.
 - Booking integrations.

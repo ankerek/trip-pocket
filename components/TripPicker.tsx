@@ -1,11 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  StyleSheet,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet } from 'react-native';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -212,7 +206,7 @@ export function TripPicker(props: {
             ]}
           >
             <View
-              className="self-center bg-hairline"
+              className="bg-hairline self-center"
               style={{
                 width: 40,
                 height: 5,
@@ -221,7 +215,7 @@ export function TripPicker(props: {
                 marginBottom: 12,
               }}
             />
-            <Text className="text-center text-[15px] font-bold text-text">{title}</Text>
+            <Text className="text-text text-center text-[15px] font-bold">{title}</Text>
 
             <View className="mt-2">
               {creatingNew ? (
@@ -271,21 +265,19 @@ function TripRow(props: {
       accessibilityLabel={trip.name}
       accessibilityHint={hint}
       accessibilityState={{ selected }}
-      className="flex-row items-center border-hairline"
+      className="border-hairline flex-row items-center"
       style={{ paddingVertical: 15, paddingHorizontal: 20, borderTopWidth: 1, gap: 10 }}
     >
       <Text
-        className={`flex-1 text-[15px] ${selected ? 'font-semibold text-accent' : 'font-medium text-text'}`}
+        className={`flex-1 text-[15px] ${selected ? 'text-accent font-semibold' : 'text-text font-medium'}`}
         numberOfLines={1}
       >
         {trip.name}
       </Text>
-      <Text className="text-[13px] font-medium text-text-muted">
+      <Text className="text-text-muted text-[13px] font-medium">
         {formatCount(trip.placeCount)}
       </Text>
-      {selected ? (
-        <Icon name="checkmark" size={16} tintColor={colors.accent} />
-      ) : null}
+      {selected ? <Icon name="checkmark" size={16} tintColor={colors.accent} /> : null}
     </Pressable>
   );
 }
@@ -300,12 +292,12 @@ function CreateRow(props: { onPress: () => void }) {
       style={{ paddingVertical: 15, paddingHorizontal: 20, gap: 10 }}
     >
       <View
-        className="items-center justify-center bg-info-bg"
+        className="bg-info-bg items-center justify-center"
         style={{ width: 22, height: 22, borderRadius: 999 }}
       >
-        <Text className="text-[15px] font-bold leading-none text-info-text">+</Text>
+        <Text className="text-info-text text-[15px] leading-none font-bold">+</Text>
       </View>
-      <Text className="text-[15px] font-semibold text-info-text">New trip</Text>
+      <Text className="text-info-text text-[15px] font-semibold">New trip</Text>
     </Pressable>
   );
 }
@@ -320,7 +312,7 @@ function CreateForm(props: {
   const colors = useThemeColors();
   return (
     <View
-      className="flex-row items-center bg-surface border-hairline"
+      className="bg-surface border-hairline flex-row items-center"
       style={{
         paddingVertical: 12,
         paddingHorizontal: 20,
@@ -338,7 +330,7 @@ function CreateForm(props: {
         returnKeyType="done"
         onSubmitEditing={onSave}
         accessibilityLabel="New trip name"
-        className="flex-1 bg-bg border-hairline text-[15px] text-text"
+        className="bg-bg border-hairline text-text flex-1 text-[15px]"
         style={{
           borderWidth: 1,
           borderRadius: 10,

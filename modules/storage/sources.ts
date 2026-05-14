@@ -105,10 +105,7 @@ function rowToSource(r: Row): Source {
 }
 
 export async function getSource(db: Database, id: string): Promise<Source | null> {
-  const row = await db.getFirstAsync<Row>(
-    `SELECT ${ALL_COLUMNS} FROM sources WHERE id = ?`,
-    id,
-  );
+  const row = await db.getFirstAsync<Row>(`SELECT ${ALL_COLUMNS} FROM sources WHERE id = ?`, id);
   return row ? rowToSource(row) : null;
 }
 
@@ -191,7 +188,7 @@ export async function assignSourceTrip(
   const now = new Date().toISOString();
   let movedPlaces = false;
   let deletedPlaces = false;
-  const excludeIds = tripId !== null ? opts?.excludePlaceIds ?? [] : [];
+  const excludeIds = tripId !== null ? (opts?.excludePlaceIds ?? []) : [];
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `UPDATE sources SET trip_id = ?, updated_at = ? WHERE id = ?`,

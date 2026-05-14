@@ -5,11 +5,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
 import { PressableScale } from '@/components/PressableScale';
-import {
-  listTrips,
-  useLiveQuery,
-  type Trip,
-} from '@/modules/storage';
+import { listTrips, useLiveQuery, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 
 type TripPreviewPlace = {
@@ -98,7 +94,7 @@ export default function Trips() {
       <Stack.Screen options={{ headerRight: () => <HeaderPlusButton /> }} />
       <FlatList
         contentInsetAdjustmentBehavior="automatic"
-        className="flex-1 bg-bg"
+        className="bg-bg flex-1"
         data={rows}
         keyExtractor={(r) => r.trip.id}
         contentContainerStyle={{ padding: 14, paddingBottom: 96 }}
@@ -106,14 +102,14 @@ export default function Trips() {
         renderItem={({ item }) => (
           <PressableScale
             onPress={() => router.push(`/trips/${item.trip.id}`)}
-            className="mb-3 overflow-hidden rounded-2xl border border-hairline bg-surface"
+            className="border-hairline bg-surface mb-3 overflow-hidden rounded-2xl border"
             haptic={false}
             accessibilityRole="button"
             accessibilityLabel={`${item.trip.name}, ${item.count} place${item.count === 1 ? '' : 's'}`}
           >
-            <View className="px-4 pt-3 pb-2 flex-row items-baseline justify-between">
+            <View className="flex-row items-baseline justify-between px-4 pt-3 pb-2">
               <Text
-                className="flex-1 pr-2 text-text"
+                className="text-text flex-1 pr-2"
                 numberOfLines={1}
                 style={{ fontSize: 17, fontWeight: '600' }}
               >
@@ -182,10 +178,7 @@ function PreviewThumb({ place }: { place: TripPreviewPlace }) {
       }}
       className="items-center justify-center"
     >
-      <Text
-        className="text-text-muted"
-        style={{ fontSize: 16, fontWeight: '600' }}
-      >
+      <Text className="text-text-muted" style={{ fontSize: 16, fontWeight: '600' }}>
         {place.name?.charAt(0)?.toUpperCase() ?? '?'}
       </Text>
     </View>

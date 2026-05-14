@@ -14,10 +14,7 @@ export type Migration = {
   disableForeignKeys?: boolean;
 };
 
-export async function openDatabase(
-  name = 'trip-pocket.db',
-  directory?: string,
-): Promise<Database> {
+export async function openDatabase(name = 'trip-pocket.db', directory?: string): Promise<Database> {
   const db = await SQLite.openDatabaseAsync(name, undefined, directory);
   await db.execAsync('PRAGMA journal_mode = WAL;');
   await db.execAsync('PRAGMA foreign_keys = ON;');

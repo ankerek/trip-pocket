@@ -24,7 +24,7 @@ After this ships, tapping the magnifier from Pocket home or trip detail opens a 
 What's in the codebase today:
 
 - `app/search.tsx` — predates the restructure and the redesign. Queries `sources_fts`, opens `/sources/[id]` on tap. Uses hardcoded slate/white classes (`bg-white`, `text-slate-900`, `bg-slate-100`) instead of the redesign's semantic tokens (`bg-bg`, `text-text-muted`, `bg-surface`, etc., per `app/(tabs)/(places)/index.tsx:116`).
-- `modules/search/buildFtsMatch.ts` — generic FTS5 escaper that already documents itself as usable against `sources_fts` *or* `places_fts`. Reuse as-is.
+- `modules/search/buildFtsMatch.ts` — generic FTS5 escaper that already documents itself as usable against `sources_fts` _or_ `places_fts`. Reuse as-is.
 - `modules/storage/migrations/0001_init.ts` — declares `places_fts` with `tokenize='trigram'` and triggers that keep its content as `name + city + description + GROUP_CONCAT(place_sources.raw_text, 2KB-capped) + GROUP_CONCAT(place_sources.extracted_address)`. Triggers fire on places insert/update, place_sources insert/update/delete, and places delete.
 - `components/SearchButton.tsx` — magnifier button used in Pocket home (`app/(tabs)/(places)/index.tsx:98`) and trip detail (`app/trips/[id].tsx:100`). Always pushes `/search` with no params.
 - `components/PlaceTile.tsx` and the styling tokens it uses — the visual model the result row should match.
@@ -94,13 +94,13 @@ The chip row stays: "All trips" + each non-deleted trip alphabetically. Selected
 
 ### States
 
-| Condition | UI |
-|---|---|
-| `input.trim() === ''` | Centered hint "Search your places" (was "Search your screenshots"). |
-| `match === null && trim.length > 0` | Centered "Type at least 3 characters". (Trigram minimum, unchanged.) |
+| Condition                             | UI                                                                                                                                |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `input.trim() === ''`                 | Centered hint "Search your places" (was "Search your screenshots").                                                               |
+| `match === null && trim.length > 0`   | Centered "Type at least 3 characters". (Trigram minimum, unchanged.)                                                              |
 | `rows === null` (loading first frame) | Render nothing — `useLiveQuery` resolves quickly enough that a spinner is more distracting than helpful for a 50-row LIMIT query. |
-| `rows.length === 0` | Centered "No places match '<query>'". Uses `text-text-muted`. |
-| `rows.length > 0` | `FlatList` of result rows, ranked, capped at 50. |
+| `rows.length === 0`                   | Centered "No places match '<query>'". Uses `text-text-muted`.                                                                     |
+| `rows.length > 0`                     | `FlatList` of result rows, ranked, capped at 50.                                                                                  |
 
 All copy uses redesign typography tokens (`text-base text-text-muted` for hints) and lands inside a `bg-bg` flex container so dark mode falls out for free.
 
@@ -114,6 +114,7 @@ Before merging, verify in a dev build (Sim or device) that `places_fts` actually
    - `SELECT substr(content, 1, 80) FROM places_fts LIMIT 5;` — expect place name and OCR fragment in each sampled row.
 
    Run as two queries — combining them as `SELECT count(*), substr(content, 1, 80) FROM places_fts LIMIT 5` returns a single aggregate row with an undefined `content` value, not five samples.
+
 3. If empty, the bug is upstream — extraction isn't reaching the `place_sources` insert (which is what fires the rebuild trigger that adds `raw_text` to the FTS doc). That would be a separate spec/fix; flag it in the implementation plan rather than swallowing it here.
 
 If `places_fts` is populated but the screen still returns nothing, the bug is in the query or in `useLiveQuery`'s change-deps. The new query above plus the new deps (`['places', 'trips', 'place_sources']`) should resolve it; if not, add a temporary direct `db.getAllAsync` log path to compare.
@@ -192,6 +193,7 @@ Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Rend
 ## File-change inventory
 
 **Modified:**
+
 - `app/search.tsx` — rewritten per Components above. Drops its local `Chip` in favor of `<TripChip variant="inline">`.
 - `components/SearchButton.tsx` — accept `tripId` prop, push with param.
 - `components/PlaceTile.tsx` — replace inlined trip chip (lines 79–92) with `<TripChip variant="overlay" name={place.trip_name} />`.
@@ -199,14 +201,17 @@ Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Rend
 - `app/trips/[id].tsx` — pass `tripId` to `<SearchButton>`.
 
 **New:**
+
 - `components/TripChip.tsx` — extracted from `PlaceTile` and `search.tsx`, with `variant: 'overlay' | 'inline'`.
 - `components/CategoryChip.tsx` — extracted from the private function in `app/places/[id].tsx`.
 - `components/SearchResultRow.tsx` — pulled-out row component.
 
 **Deleted:**
+
 - `components/SearchSnippet.tsx` — only if no other caller exists at implementation time.
 
 **Untouched (verified during exploration, listed so we don't accidentally re-spec them):**
+
 - `modules/search/buildFtsMatch.ts` — keep as-is.
 - `modules/storage/migrations/0001_init.ts` — `places_fts` triggers already produce the right document.
 - `app/(tabs)/(places)/index.tsx` — `<SearchButton />` call is correct (no `tripId`).
@@ -233,7 +238,7 @@ Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Rend
 **Manual on device:**
 
 - Type a place name from a recently-captured screenshot — appears as the top result.
-- Type an OCR fragment that's *not* a place name but appears in the screenshot's text — appears (because `place_sources.raw_text` includes the matching span).
+- Type an OCR fragment that's _not_ a place name but appears in the screenshot's text — appears (because `place_sources.raw_text` includes the matching span).
 - Type something that isn't anywhere in places_fts — "No places match …".
 - Launch search from a trip detail — the trip chip is preselected; all results are from that trip.
 - Launch search from Pocket home — "All trips" chip selected.
@@ -241,18 +246,18 @@ Pulled out of `app/search.tsx` so the screen stays focused on layout/state. Rend
 
 ## Open questions / decisions made
 
-| Question | Decision |
-|---|---|
-| Result model post-restructure | Places only. Orphan sources hidden. (User chose this.) |
-| Result row layout | Option A — compact (photo + name + chips, no snippet). (User chose this.) |
-| Trip filter chips | Keep, with smart default. (User chose this.) |
-| Snippet highlighting | Removed — option A doesn't show a snippet. |
-| Empty/zero/short copy | "Search your places" / "Type at least 3 characters" / "No places match '…'". |
-| Search header pattern | Keep `TextInput` in `headerTitle`. |
-| Tap target | `/places/[id]`. |
-| Index source | `places_fts`. `sources_fts` is no longer queried by the search screen. |
-| Min query length | 3 codepoints — unchanged (trigram floor). |
-| Result cap | 50, no pagination — unchanged. |
+| Question                      | Decision                                                                     |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| Result model post-restructure | Places only. Orphan sources hidden. (User chose this.)                       |
+| Result row layout             | Option A — compact (photo + name + chips, no snippet). (User chose this.)    |
+| Trip filter chips             | Keep, with smart default. (User chose this.)                                 |
+| Snippet highlighting          | Removed — option A doesn't show a snippet.                                   |
+| Empty/zero/short copy         | "Search your places" / "Type at least 3 characters" / "No places match '…'". |
+| Search header pattern         | Keep `TextInput` in `headerTitle`.                                           |
+| Tap target                    | `/places/[id]`.                                                              |
+| Index source                  | `places_fts`. `sources_fts` is no longer queried by the search screen.       |
+| Min query length              | 3 codepoints — unchanged (trigram floor).                                    |
+| Result cap                    | 50, no pagination — unchanged.                                               |
 
 Deferred:
 

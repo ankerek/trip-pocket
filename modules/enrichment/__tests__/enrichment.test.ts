@@ -1,9 +1,4 @@
-import {
-  openDatabase,
-  runMigrations,
-  insertSource,
-  type Database,
-} from '@/modules/storage';
+import { openDatabase, runMigrations, insertSource, type Database } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
 import { linkPlaceSource } from '@/modules/storage/place_sources';
 import {
@@ -226,7 +221,7 @@ describe('createEnricher', () => {
       expect(row.country_code).toBe('JP');
     });
 
-    it("uses the most-recent non-null place_sources.extracted_address as the address hint", async () => {
+    it('uses the most-recent non-null place_sources.extracted_address as the address hint', async () => {
       const db = await freshDb();
       await seedSource(db, 's-old', 'old caption');
       await seedSource(db, 's-new', 'new caption');
@@ -238,14 +233,16 @@ describe('createEnricher', () => {
            place_id, source_id, extracted_at, extracted_address,
            extraction_model, owner_id, created_at, updated_at
          ) VALUES ('p1', 's-old', '2026-05-01T00:00:00Z', NULL, 'gemini', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await db.runAsync(
         `INSERT INTO place_sources (
            place_id, source_id, extracted_at, extracted_address,
            extraction_model, owner_id, created_at, updated_at
          ) VALUES ('p1', 's-new', '2026-05-08T00:00:00Z', '999 New St', 'gemini', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
 
       const enrich: EnrichmentRunner = jest
@@ -499,7 +496,8 @@ describe('createEnricher', () => {
       await db.runAsync(
         `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
          VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       // Existing already enriched, on a trip.
       await seedPlace(db, {
@@ -526,9 +524,7 @@ describe('createEnricher', () => {
       expect(winner.trip_id).toBe('t1');
 
       // Incoming is hard-deleted: row is gone entirely.
-      const loserRow = await db.getFirstAsync(
-        `SELECT id FROM places WHERE id = 'p-incoming'`,
-      );
+      const loserRow = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'p-incoming'`);
       expect(loserRow).toBeNull();
 
       // Junction migrated: the incoming source is now attached to the winner.
@@ -544,7 +540,8 @@ describe('createEnricher', () => {
       await db.runAsync(
         `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
          VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       // Existing already enriched, NO trip.
       await seedPlace(db, {
@@ -571,9 +568,7 @@ describe('createEnricher', () => {
       expect(winner.external_place_id).toBe('ChIJ-test');
 
       // Existing is hard-deleted: row is gone entirely.
-      const loserRow = await db.getFirstAsync(
-        `SELECT id FROM places WHERE id = 'p-existing'`,
-      );
+      const loserRow = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'p-existing'`);
       expect(loserRow).toBeNull();
     });
 
@@ -582,7 +577,10 @@ describe('createEnricher', () => {
       await db.runAsync(
         `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
          VALUES ('t1', 'Japan', 'owner-1', ?, ?), ('t2', 'Spain', 'owner-1', ?, ?)`,
-        NOW, NOW, NOW, NOW,
+        NOW,
+        NOW,
+        NOW,
+        NOW,
       );
       await seedPlace(db, {
         id: 'p-existing',
@@ -613,7 +611,8 @@ describe('createEnricher', () => {
       await db.runAsync(
         `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
          VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await seedSource(db, 's-shared');
       await seedPlace(db, {
@@ -647,7 +646,8 @@ describe('createEnricher', () => {
       await db.runAsync(
         `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
          VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       await seedPlace(db, {
         id: 'p-existing',
@@ -678,7 +678,8 @@ describe('createEnricher', () => {
       await db.runAsync(
         `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
          VALUES ('t1', 'Japan', 'owner-1', ?, ?)`,
-        NOW, NOW,
+        NOW,
+        NOW,
       );
       // Existing has trip but is NOT yet enriched. Incoming will resolve to
       // ChIJ-test, which existing already holds.
@@ -753,12 +754,16 @@ describe('createEnricher', () => {
       await seedSource(db, 's1', 'ocr text 1');
       await seedPlace(db, { id: 'p1', name: 'A', city: 'Tokyo', status: 'pending' });
       await attachSourceToPlace(db, 'p1', 's1', null);
-      await db.runAsync(`UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p1'`);
+      await db.runAsync(
+        `UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p1'`,
+      );
 
       await seedSource(db, 's2', 'ocr text 2');
       await seedPlace(db, { id: 'p2', name: 'B', city: 'Osaka', status: 'pending' });
       await attachSourceToPlace(db, 'p2', 's2', null);
-      await db.runAsync(`UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p2'`);
+      await db.runAsync(
+        `UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p2'`,
+      );
 
       // One non-paused place.
       await seedSource(db, 's3', 'ocr text 3');

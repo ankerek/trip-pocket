@@ -13,6 +13,7 @@ This sub-project produces the smallest end-to-end pipeline that delivers a signe
 ## Scope
 
 In scope:
+
 - New `production` build profile in `eas.json`: `distribution: store`, `autoIncrement: true`, device-only iOS.
 - New `production` submit profile in `eas.json` with `appleTeamId` + placeholder `ascAppId`.
 - Marketing version reset in `app.json`: `expo.version` from `1.0.0` to `0.3.0`. iOS `buildNumber` stays unset (EAS owns it).
@@ -20,6 +21,7 @@ In scope:
 - `docs/RELEASE.md` runbook: one-time ASC bootstrap, per-release recurring checklist, troubleshooting.
 
 Not in scope (each is a separate v0.3 sub-project unless noted):
+
 - Crash reporting / Sentry wiring + sourcemap upload.
 - Onboarding flow.
 - Error-handling pass (failed import, storage full, denied permissions, proxy 4xx/5xx).
@@ -66,29 +68,34 @@ Add `appVersionSource: "remote"` inside the `cli` block, a `production` build pr
 {
   "cli": {
     "version": ">= 12.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "remote",
   },
   "build": {
-    "dev":     { "developmentClient": true, "distribution": "internal", "ios": { "simulator": false } },
-    "dev-sim": { "developmentClient": true, "distribution": "internal", "ios": { "simulator": true  } },
+    "dev": { "developmentClient": true, "distribution": "internal", "ios": { "simulator": false } },
+    "dev-sim": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": { "simulator": true },
+    },
     "production": {
       "distribution": "store",
       "autoIncrement": true,
-      "ios": { "simulator": false }
-    }
+      "ios": { "simulator": false },
+    },
   },
   "submit": {
     "production": {
       "ios": {
         "appleTeamId": "WL5ALL46C4",
-        "ascAppId": "<filled in after ASC bootstrap step 2>"
-      }
-    }
-  }
+        "ascAppId": "<filled in after ASC bootstrap step 2>",
+      },
+    },
+  },
 }
 ```
 
 Notes:
+
 - `distribution: store` is the EAS signal to build a release archive suitable for App Store upload (vs. `internal` ad-hoc).
 - `appVersionSource: "remote"` + `autoIncrement: true` on production means EAS owns `ios.buildNumber` server-side; it never appears in `app.json`. Query with `eas build:version:get --platform ios --profile production`.
 - The ASC API key itself is **not** in `eas.json` — it lives in EAS-managed credentials, encrypted server-side. Wired up via `eas credentials` during bootstrap.
@@ -113,23 +120,26 @@ Updating per release is a one-line edit, documented in the runbook. Directory sh
 New runbook, ~80–120 lines. Three sections:
 
 **1. One-time bootstrap.** Five steps, each with a "done when" marker:
-   - Register App IDs `com.trippocket.app` and `com.trippocket.app.share` in Apple Developer portal, both with App Groups capability (`group.com.trippocket.shared`).
-   - Create the App Store Connect app: name `Trip Pocket`, primary language English (U.S.), bundle ID `com.trippocket.app`, SKU `trip-pocket-001`, user access full.
-   - Note the numeric Apple ID assigned to the app; paste into `eas.json` → `submit.production.ios.ascAppId`.
-   - Create an App Store Connect API key with role `App Manager` (ASC → Users & Access → Integrations). Download the `.p8`, note Key ID + Issuer ID. Attach to EAS via `eas credentials` (one-time).
-   - Add internal testers in ASC → TestFlight → Internal Group.
+
+- Register App IDs `com.trippocket.app` and `com.trippocket.app.share` in Apple Developer portal, both with App Groups capability (`group.com.trippocket.shared`).
+- Create the App Store Connect app: name `Trip Pocket`, primary language English (U.S.), bundle ID `com.trippocket.app`, SKU `trip-pocket-001`, user access full.
+- Note the numeric Apple ID assigned to the app; paste into `eas.json` → `submit.production.ios.ascAppId`.
+- Create an App Store Connect API key with role `App Manager` (ASC → Users & Access → Integrations). Download the `.p8`, note Key ID + Issuer ID. Attach to EAS via `eas credentials` (one-time).
+- Add internal testers in ASC → TestFlight → Internal Group.
 
 **2. Each release.** Five steps:
-   - (If crossing a version milestone) bump `expo.version` in `app.json`.
-   - Edit `whatsnew/en-US.txt` with 1–3 lines describing what changed.
-   - `eas build --profile production --platform ios` and wait for it to finish (or pass `--wait` to block).
-   - `eas submit --platform ios --latest --what-to-test "$(cat whatsnew/en-US.txt)"`.
-   - Confirm in ASC → TestFlight that the build is processed and visible to the internal group.
+
+- (If crossing a version milestone) bump `expo.version` in `app.json`.
+- Edit `whatsnew/en-US.txt` with 1–3 lines describing what changed.
+- `eas build --profile production --platform ios` and wait for it to finish (or pass `--wait` to block).
+- `eas submit --platform ios --latest --what-to-test "$(cat whatsnew/en-US.txt)"`.
+- Confirm in ASC → TestFlight that the build is processed and visible to the internal group.
 
 **3. Troubleshooting.** Three known failure modes:
-   - "Build number already used" → EAS state out of sync; `eas build --clear-cache` and/or bump manually in app.json once.
-   - Share-extension provisioning prompt on first prod build → expected; accept the EAS-generated profile.
-   - ASC API key revoked/expired → re-attach via `eas credentials`; key has a 1-year lifespan by default.
+
+- "Build number already used" → EAS state out of sync; `eas build --clear-cache` and/or bump manually in app.json once.
+- Share-extension provisioning prompt on first prod build → expected; accept the EAS-generated profile.
+- ASC API key revoked/expired → re-attach via `eas credentials`; key has a 1-year lifespan by default.
 
 ## Risks & mitigations
 
@@ -142,6 +152,7 @@ New runbook, ~80–120 lines. Three sections:
 ## Verification
 
 After implementation and bootstrap:
+
 1. `eas build --profile production --platform ios` followed by `eas submit --platform ios --latest` runs end-to-end without manual intervention beyond accepting the share-extension provisioning prompt on the very first build.
 2. The build appears in App Store Connect under TestFlight, with status processing → ready to test within ~30 min.
 3. The contents of `whatsnew/en-US.txt` are pasted into the build's "What to Test" field in ASC after processing finishes.

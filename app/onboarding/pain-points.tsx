@@ -15,7 +15,7 @@ const OPTIONS: { id: string; label: string }[] = [
   { id: 'notion-doc', label: "It's in a Notion doc somewhere… I think" },
   { id: 'ig-saves', label: 'Saved on Instagram, buried under 500 other saves' },
   { id: 'google-airport', label: 'I end up Googling the same place twice at the airport' },
-  { id: 'wrong-city', label: 'I lose track of what\'s in which city' },
+  { id: 'wrong-city', label: "I lose track of what's in which city" },
   { id: 'recs', label: "My friends ask me for recs and I can't find them" },
 ];
 
@@ -33,10 +33,7 @@ export default function PainPointsScreen() {
       headline="Where do your travel ideas go to die?"
       sub="Pick everything that's happened to you."
       footer={
-        <PrimaryButton
-          label="Continue"
-          onPress={() => router.push('/onboarding/solution')}
-        />
+        <PrimaryButton label="Continue" onPress={() => router.push('/onboarding/solution')} />
       }
     >
       <View>

@@ -18,10 +18,7 @@ type PendingRow = {
   created_at: string;
 };
 
-export async function ingestPendingImports(
-  db: Database,
-  opts: IngestOptions,
-): Promise<void> {
+export async function ingestPendingImports(db: Database, opts: IngestOptions): Promise<void> {
   // `kind` and `url` may not exist on tables created by older Swift
   // share-extension binaries (pre-2026-05-12). COALESCE the missing case
   // by guarding on table_info — but in practice the Swift writer's own

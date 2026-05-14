@@ -13,7 +13,7 @@ export function CategoryChip({ category }: { category: string }) {
   const colors = useThemeColors();
   if (!meta) return null;
   return (
-    <View className="flex-row items-center gap-1 rounded-full bg-hairline px-2.5 py-1">
+    <View className="bg-hairline flex-row items-center gap-1 rounded-full px-2.5 py-1">
       <Icon name={meta.icon} size={12} tintColor={colors.textMuted} />
       <Text className="text-text-muted" style={{ fontSize: 12, fontWeight: '500' }}>
         {meta.label}

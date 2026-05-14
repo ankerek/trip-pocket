@@ -143,15 +143,13 @@ If we later need profile-specific overrides (e.g. a staging DSN), we add a per-p
 
 ```ts
 import * as Crypto from 'expo-crypto';
-import { getDb } from '@/lib/db';   // exact import path confirmed at impl time
+import { getDb } from '@/lib/db'; // exact import path confirmed at impl time
 
 const KEY = 'install_id';
 
 export async function getInstallId(): Promise<string> {
   const db = await getDb();
-  const row = await db.getFirstAsync<{ value: string }>(
-    'SELECT value FROM kv WHERE key = ?', KEY
-  );
+  const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM kv WHERE key = ?', KEY);
   if (row) return row.value;
 
   const id = Crypto.randomUUID();
@@ -191,7 +189,9 @@ export function initSentry() {
     debug: false,
   });
 
-  getInstallId().then(id => Sentry.setUser({ id })).catch(() => {});
+  getInstallId()
+    .then((id) => Sentry.setUser({ id }))
+    .catch(() => {});
 }
 ```
 
@@ -231,12 +231,12 @@ import { initSentry } from '@/lib/observability/sentry';
 import * as Sentry from '@sentry/react-native';
 import { ErrorFallback } from '@/components/error-fallback';
 
-try { initSentry(); } catch {}   // top of module
+try {
+  initSentry();
+} catch {} // top of module
 
 // inside root component's return:
-<Sentry.ErrorBoundary fallback={ErrorFallback}>
-  {/* existing tree */}
-</Sentry.ErrorBoundary>
+<Sentry.ErrorBoundary fallback={ErrorFallback}>{/* existing tree */}</Sentry.ErrorBoundary>;
 ```
 
 `Sentry.ErrorBoundary` takes a **component reference** for `fallback`, not a rendered element (confirmed via context7). Sentry calls it as `<FallbackComponent error={…} resetError={…} />` and `ErrorFallback` reads `resetError` from props to wire its "Try again" button. `try/catch` around `initSentry()` ensures a broken Sentry init can never block app launch.

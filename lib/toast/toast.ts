@@ -38,8 +38,7 @@ function emit() {
 
 export function showToast(input: ToastInput): void {
   const durationMs =
-    input.durationMs ??
-    (input.action ? DEFAULT_DURATION_MS_WITH_ACTION : DEFAULT_DURATION_MS);
+    input.durationMs ?? (input.action ? DEFAULT_DURATION_MS_WITH_ACTION : DEFAULT_DURATION_MS);
   current = { ...input, id: nextId++, durationMs };
   emit();
 }

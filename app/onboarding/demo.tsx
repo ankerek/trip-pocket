@@ -36,9 +36,9 @@ type Phase =
   | 'extracting1'
   | 'revealed1'
   | 'idle2'
-  | 'shareSheet2'   // user must tap the Trip Pocket icon in the share sheet
-  | 'waitingPick'   // trip picker visible, user must tap the Japan pill
-  | 'extracting2'   // post-tap: scan-line over the IG card before reveal
+  | 'shareSheet2' // user must tap the Trip Pocket icon in the share sheet
+  | 'waitingPick' // trip picker visible, user must tap the Japan pill
+  | 'extracting2' // post-tap: scan-line over the IG card before reveal
   | 'revealed2';
 
 const TIMINGS = {
@@ -55,17 +55,17 @@ export default function DemoScreen() {
 
   // Cleanup any pending timers when the screen unmounts (back-nav etc).
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const scheduleTimer = useCallback(
-    (fn: () => void, ms: number) => {
-      const id = setTimeout(fn, ms);
-      timersRef.current.push(id);
+  const scheduleTimer = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(fn, ms);
+    timersRef.current.push(id);
+  }, []);
+  useEffect(
+    () => () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
     },
     [],
   );
-  useEffect(() => () => {
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
-  }, []);
 
   // --- Example 1 transitions ---
 
@@ -124,7 +124,7 @@ export default function DemoScreen() {
       case 'idle2':
         return (
           <Text
-            className="text-center text-text-muted"
+            className="text-text-muted text-center"
             style={{ fontSize: 12, lineHeight: 18, paddingVertical: 14 }}
           >
             Tap the highlighted share icon on the post.
@@ -133,7 +133,7 @@ export default function DemoScreen() {
       case 'shareSheet2':
         return (
           <Text
-            className="text-center text-text-muted"
+            className="text-text-muted text-center"
             style={{ fontSize: 12, lineHeight: 18, paddingVertical: 14 }}
           >
             Tap Trip Pocket in the share sheet.
@@ -142,7 +142,7 @@ export default function DemoScreen() {
       case 'waitingPick':
         return (
           <Text
-            className="text-center text-text-muted"
+            className="text-text-muted text-center"
             style={{ fontSize: 12, lineHeight: 18, paddingVertical: 14 }}
           >
             Tap the highlighted trip to save it.
@@ -158,15 +158,11 @@ export default function DemoScreen() {
   // Hide the back chevron during the busy extraction phase — leaving
   // mid-animation would leak shared-value state. All other phases are
   // user-driven and safe to back out of.
-  const showBack =
-    phase !== 'extracting1' && phase !== 'extracting2' && phase !== 'revealed2';
+  const showBack = phase !== 'extracting1' && phase !== 'extracting2' && phase !== 'revealed2';
 
   // Step-pill label updates with phase to reinforce which example you're on.
-  const isExample1 =
-    phase === 'idle1' || phase === 'extracting1' || phase === 'revealed1';
-  const stepLabel = isExample1
-    ? '1 / 2 · FROM A SCREENSHOT'
-    : '2 / 2 · FROM A SHARE';
+  const isExample1 = phase === 'idle1' || phase === 'extracting1' || phase === 'revealed1';
+  const stepLabel = isExample1 ? '1 / 2 · FROM A SCREENSHOT' : '2 / 2 · FROM A SHARE';
 
   // Sub-mockup phase mapping for example 2.
   const sharePathPhase: SharePathPhase = (() => {
@@ -179,31 +175,26 @@ export default function DemoScreen() {
   })();
 
   return (
-    <OnboardingScaffold
-      step={4}
-      showBack={showBack}
-      scroll={false}
-      footer={footer}
-    >
+    <OnboardingScaffold step={4} showBack={showBack} scroll={false} footer={footer}>
       <ScrollView
         contentContainerClassName="items-center pb-4"
         showsVerticalScrollIndicator={false}
         style={{ flex: 1 }}
       >
         <Text
-          className="mt-1 text-center text-text"
+          className="text-text mt-1 text-center"
           style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4, lineHeight: 34 }}
         >
           Watch it work.
         </Text>
         <Text
-          className="mt-2 text-center text-text-muted"
+          className="text-text-muted mt-2 text-center"
           style={{ fontSize: 15, lineHeight: 22, paddingHorizontal: 8 }}
         >
           Two ways to add a place.
         </Text>
         <Text
-          className="mt-3 text-text-muted"
+          className="text-text-muted mt-3"
           style={{
             fontSize: 11,
             fontWeight: '700',
@@ -214,18 +205,16 @@ export default function DemoScreen() {
         </Text>
 
         <View style={{ width: '100%', marginTop: 40, alignItems: 'center' }}>
-          {(phase === 'idle1' || phase === 'extracting1') ? (
-            <ExtractingFrame
-              variant={phase === 'idle1' ? 'idle' : 'busy'}
-            />
+          {phase === 'idle1' || phase === 'extracting1' ? (
+            <ExtractingFrame variant={phase === 'idle1' ? 'idle' : 'busy'} />
           ) : null}
 
           {phase === 'revealed1' ? <RevealedExample1 /> : null}
 
-          {(phase === 'idle2' ||
-            phase === 'shareSheet2' ||
-            phase === 'waitingPick' ||
-            phase === 'extracting2') ? (
+          {phase === 'idle2' ||
+          phase === 'shareSheet2' ||
+          phase === 'waitingPick' ||
+          phase === 'extracting2' ? (
             <>
               <DemoSharePathMockup
                 fixture={DEMO_SHARE}
@@ -301,9 +290,7 @@ function ExtractingFrame({ variant }: { variant: 'idle' | 'busy' }) {
   const scanStyle = useAnimatedStyle(() => ({
     transform: [
       {
-        translateY:
-          -SCAN_BAND_HEIGHT / 2 +
-          scan.value * Math.max(cardHeight, 1),
+        translateY: -SCAN_BAND_HEIGHT / 2 + scan.value * Math.max(cardHeight, 1),
       },
     ],
   }));

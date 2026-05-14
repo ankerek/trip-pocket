@@ -23,11 +23,11 @@ export function ProcessingBanner({ count }: ProcessingBannerProps) {
       accessibilityRole="text"
       accessibilityLabel={label}
       testID="processing-banner"
-      className="mx-3.5 mb-2 mt-1 flex-row items-center gap-3 rounded-2xl bg-info-bg px-3 py-3"
+      className="bg-info-bg mx-3.5 mt-1 mb-2 flex-row items-center gap-3 rounded-2xl px-3 py-3"
       style={{ borderWidth: 1, borderColor: 'rgba(17, 94, 89, 0.10)' }}
     >
       <ActivityIndicator size="small" color={colors.infoText} />
-      <Text className="flex-1 text-[14px] font-semibold text-info-text">{label}</Text>
+      <Text className="text-info-text flex-1 text-[14px] font-semibold">{label}</Text>
     </View>
   );
 }

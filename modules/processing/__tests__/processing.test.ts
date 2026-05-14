@@ -17,11 +17,7 @@ import {
   type ImageDownloader,
 } from '../processing';
 import { FetchPostError } from '@/modules/capture/fetchPostFromProxy';
-import {
-  provideExtractor,
-  _resetExtractorForTests,
-  type Extractor,
-} from '@/modules/extraction';
+import { provideExtractor, _resetExtractorForTests, type Extractor } from '@/modules/extraction';
 
 async function freshDb(): Promise<Database> {
   const db = await openDatabase(':memory:');
@@ -62,7 +58,10 @@ async function seedSource(
   }
 }
 
-async function getStatus(db: Database, id: string): Promise<{ status: string; text: string | null }> {
+async function getStatus(
+  db: Database,
+  id: string,
+): Promise<{ status: string; text: string | null }> {
   const row = await db.getFirstAsync<{ ocr_status: string; ocr_text: string | null }>(
     `SELECT ocr_status, ocr_text FROM sources WHERE id = ?`,
     id,
@@ -247,7 +246,9 @@ describe('createProcessor', () => {
       // permanently-broken file and immediately re-mark it 'failed'.
       const db = await freshDb();
       await seedSource(db, 'broken');
-      const ocr = jest.fn<Promise<string>, [string]>().mockRejectedValue(new Error('decode failed'));
+      const ocr = jest
+        .fn<Promise<string>, [string]>()
+        .mockRejectedValue(new Error('decode failed'));
       const p = createProcessor({ db, ocr, maxRetries: 3 });
 
       await p.runOcrSweep();
@@ -397,9 +398,7 @@ describe('createProcessor', () => {
           imageUrls: ['https://cdn.example/cover.jpg'],
           author: 'someone',
         });
-        const downloadImage: ImageDownloader = jest
-          .fn()
-          .mockResolvedValue('/storage/cover.jpg');
+        const downloadImage: ImageDownloader = jest.fn().mockResolvedValue('/storage/cover.jpg');
         const ocr: OcrRunner = jest.fn().mockResolvedValue('Mt Fuji');
 
         const p = createProcessor({ db, ocr, fetchPost, downloadImage });
@@ -432,9 +431,7 @@ describe('createProcessor', () => {
           imageUrls: ['https://cdn.example/cover.jpg'],
           author: null,
         });
-        const downloadImage: ImageDownloader = jest
-          .fn()
-          .mockRejectedValue(new Error('CDN 404'));
+        const downloadImage: ImageDownloader = jest.fn().mockRejectedValue(new Error('CDN 404'));
         const ocr: OcrRunner = jest.fn();
 
         const p = createProcessor({ db, ocr, fetchPost, downloadImage });
@@ -536,9 +533,9 @@ describe('createProcessor', () => {
         const db = await freshDb();
         await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
 
-        const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
-          new FetchPostError('private', { kind: 'permanent', code: 'private' }),
-        );
+        const fetchPost: UrlFetcher = jest
+          .fn()
+          .mockRejectedValue(new FetchPostError('private', { kind: 'permanent', code: 'private' }));
         const p = createProcessor({
           db,
           ocr: jest.fn(),
@@ -572,14 +569,12 @@ describe('createProcessor', () => {
           const db = await freshDb();
           await seedUrlSource(db, 'tt1', 'https://www.tiktok.com/@u/photo/9');
 
-          const fetchPost: UrlFetcher = jest
-            .fn()
-            .mockRejectedValue(
-              new FetchPostError('not-found', {
-                kind: 'permanent',
-                code: 'not-found',
-              }),
-            );
+          const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
+            new FetchPostError('not-found', {
+              kind: 'permanent',
+              code: 'not-found',
+            }),
+          );
           const p = createProcessor({
             db,
             ocr: jest.fn(),
@@ -651,9 +646,13 @@ describe('createProcessor', () => {
           const db = await freshDb();
           await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
 
-          const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
-            new FetchPostError('fetch-post-entitlement-required', { kind: 'entitlement-required' }),
-          );
+          const fetchPost: UrlFetcher = jest
+            .fn()
+            .mockRejectedValue(
+              new FetchPostError('fetch-post-entitlement-required', {
+                kind: 'entitlement-required',
+              }),
+            );
           const p = createProcessor({ db, ocr: jest.fn(), fetchPost, maxRetries: 3 });
           p.enqueueUrlFetch('u1');
           await drain(p);
@@ -665,7 +664,9 @@ describe('createProcessor', () => {
             ocr_status: string;
             extraction_status: string;
             url_fetch_paused_reason: string | null;
-          }>(`SELECT ocr_status, extraction_status, url_fetch_paused_reason FROM sources WHERE id = 'u1'`);
+          }>(
+            `SELECT ocr_status, extraction_status, url_fetch_paused_reason FROM sources WHERE id = 'u1'`,
+          );
           // Only url_fetch_paused_reason is stamped — status columns are untouched.
           expect(row?.ocr_status).toBe('pending');
           expect(row?.extraction_status).toBe('pending');
@@ -756,9 +757,13 @@ describe('createProcessor', () => {
             const db = await freshDb();
             await seedUrlSource(db, 'ent1', 'https://instagram.com/p/ENT/');
 
-            const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
-              new FetchPostError('fetch-post-entitlement-required', { kind: 'entitlement-required' }),
-            );
+            const fetchPost: UrlFetcher = jest
+              .fn()
+              .mockRejectedValue(
+                new FetchPostError('fetch-post-entitlement-required', {
+                  kind: 'entitlement-required',
+                }),
+              );
             const p = createProcessor({ db, ocr: jest.fn(), fetchPost, maxRetries: 3 });
             p.enqueueUrlFetch('ent1');
             await drain(p);
@@ -806,14 +811,12 @@ describe('createProcessor', () => {
           const downloadImage: ImageDownloader = jest
             .fn()
             .mockImplementation(async (u: string) => pathFor(u));
-          const ocr: OcrRunner = jest
-            .fn()
-            .mockImplementation(async (p: string) => {
-              if (p.includes('cover')) return 'COVER TEXT';
-              if (p.includes('slide2')) return 'SLIDE 2';
-              if (p.includes('slide3')) return 'SLIDE 3';
-              return '';
-            });
+          const ocr: OcrRunner = jest.fn().mockImplementation(async (p: string) => {
+            if (p.includes('cover')) return 'COVER TEXT';
+            if (p.includes('slide2')) return 'SLIDE 2';
+            if (p.includes('slide3')) return 'SLIDE 3';
+            return '';
+          });
           const disposeFile = jest.fn().mockResolvedValue(undefined);
 
           const p = createProcessor({
@@ -836,9 +839,7 @@ describe('createProcessor', () => {
           expect(row?.file_path).toBe(pathFor('https://cdn/cover.jpg'));
           expect(row?.caption).toBe('Mt Fuji spots');
           expect(row?.ocr_status).toBe('done');
-          expect(row?.ocr_text).toBe(
-            'COVER TEXT\n---\nSLIDE 2\n---\nSLIDE 3\n---\nMt Fuji spots',
-          );
+          expect(row?.ocr_text).toBe('COVER TEXT\n---\nSLIDE 2\n---\nSLIDE 3\n---\nMt Fuji spots');
 
           // Cover stays; slides 2 and 3 are deleted.
           expect(disposeFile).toHaveBeenCalledTimes(2);
@@ -855,7 +856,11 @@ describe('createProcessor', () => {
           // image_download done → 3 × ocr done (cover + 2 slides). Newest
           // first from the table; reverse for chronological order.
           await flushPipelineInserts();
-          const events = await db.getAllAsync<{ stage: string; status: string; source_id: string | null }>(
+          const events = await db.getAllAsync<{
+            stage: string;
+            status: string;
+            source_id: string | null;
+          }>(
             `SELECT stage, status, source_id FROM pipeline_events
               WHERE source_id = 'u1' ORDER BY id ASC`,
           );
@@ -883,19 +888,15 @@ describe('createProcessor', () => {
             ],
             author: null,
           });
-          const downloadImage: ImageDownloader = jest
-            .fn()
-            .mockImplementation(async (u: string) => {
-              if (u.includes('slide2')) throw new Error('CDN 404');
-              return pathFor(u);
-            });
-          const ocr: OcrRunner = jest
-            .fn()
-            .mockImplementation(async (p: string) => {
-              if (p.includes('cover')) return 'COVER';
-              if (p.includes('slide3')) return 'S3';
-              return '';
-            });
+          const downloadImage: ImageDownloader = jest.fn().mockImplementation(async (u: string) => {
+            if (u.includes('slide2')) throw new Error('CDN 404');
+            return pathFor(u);
+          });
+          const ocr: OcrRunner = jest.fn().mockImplementation(async (p: string) => {
+            if (p.includes('cover')) return 'COVER';
+            if (p.includes('slide3')) return 'S3';
+            return '';
+          });
           const disposeFile = jest.fn().mockResolvedValue(undefined);
 
           const p = createProcessor({
@@ -977,15 +978,10 @@ describe('createProcessor', () => {
             platform: 'instagram',
             permalink: 'https://instagram.com/p/CAR/',
             caption: 'list of places',
-            imageUrls: [
-              'https://cdn/cover.jpg',
-              'https://cdn/slide2.jpg',
-            ],
+            imageUrls: ['https://cdn/cover.jpg', 'https://cdn/slide2.jpg'],
             author: null,
           });
-          const downloadImage: ImageDownloader = jest
-            .fn()
-            .mockRejectedValue(new Error('CDN dead'));
+          const downloadImage: ImageDownloader = jest.fn().mockRejectedValue(new Error('CDN dead'));
           const ocr: OcrRunner = jest.fn();
           const disposeFile = jest.fn();
 

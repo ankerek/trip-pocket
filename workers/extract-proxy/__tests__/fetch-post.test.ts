@@ -71,8 +71,7 @@ describe('findOgMeta', () => {
     expect(findOgMeta(ogIg, 'og:description')).toBe('hello world');
   });
   it('also handles content-first ordering', () => {
-    const html =
-      '<meta content="https://cdn/img.jpg" property="og:image" />';
+    const html = '<meta content="https://cdn/img.jpg" property="og:image" />';
     expect(findOgMeta(html, 'og:image')).toBe('https://cdn/img.jpg');
   });
   it('returns null when missing', () => {
@@ -154,12 +153,12 @@ describe('decodeEfgFromImageUrl', () => {
 
 describe('TikTok author helpers', () => {
   it('extractAuthorFromTikTokUrl reads /@handle/ from /video/ and /photo/ paths', () => {
-    expect(
-      extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/@khaby/video/12')),
-    ).toBe('@khaby');
-    expect(
-      extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/@khaby/photo/12')),
-    ).toBe('@khaby');
+    expect(extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/@khaby/video/12'))).toBe(
+      '@khaby',
+    );
+    expect(extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/@khaby/photo/12'))).toBe(
+      '@khaby',
+    );
     expect(extractAuthorFromTikTokUrl(new URL('https://www.tiktok.com/'))).toBeNull();
   });
   it('extractAuthorFromTikTokTitle takes prefix before " on TikTok"', () => {
@@ -308,8 +307,7 @@ describe('handleFetchPost — Instagram', () => {
     );
     global.fetch = scriptedFetch([
       {
-        match: (url) =>
-          url === 'https://www.instagram.com/p/ABC123/',
+        match: (url) => url === 'https://www.instagram.com/p/ABC123/',
         response: () =>
           new Response(html, {
             status: 200,
@@ -736,8 +734,7 @@ describe('handleFetchPost — TikTok', () => {
     });
     global.fetch = scriptedFetch([
       {
-        match: (url) =>
-          url === 'https://www.tiktok.com/@foodietravels/photo/123',
+        match: (url) => url === 'https://www.tiktok.com/@foodietravels/photo/123',
         response: () =>
           new Response(html, {
             status: 200,
@@ -755,11 +752,7 @@ describe('handleFetchPost — TikTok', () => {
     expect(body.platform).toBe('tiktok');
     expect(body.caption).toBe('5 cafes in Tokyo');
     expect(body.author).toBe('@foodietravels');
-    expect(body.imageUrls).toEqual([
-      'https://p16/1.jpg',
-      'https://p16/2.jpg',
-      'https://p16/3.jpg',
-    ]);
+    expect(body.imageUrls).toEqual(['https://p16/1.jpg', 'https://p16/2.jpg', 'https://p16/3.jpg']);
   });
 
   it('returns the video cover for a /video/ URL via the rehydration parser', async () => {
@@ -843,9 +836,7 @@ describe('handleFetchPost — TikTok', () => {
     );
     expect(resp.status).toBe(502);
     expect(resp.headers.get('cache-control')).toBe('no-store');
-    expect(((await resp.json()) as { error: string }).error).toBe(
-      'fetch-failed',
-    );
+    expect(((await resp.json()) as { error: string }).error).toBe('fetch-failed');
   });
 });
 
@@ -885,10 +876,7 @@ describe('handleFetchPost — _debug echo', () => {
           new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.instagram.com/p/S/' }),
-      envWithApify(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.instagram.com/p/S/' }), envWithApify());
     expect(dbg.route).toBe('og_only');
     expect(dbg.ogOutcome).toBe('ok');
     expect(dbg.apifyOutcome).toBe('not_called');
@@ -933,10 +921,7 @@ describe('handleFetchPost — _debug echo', () => {
           ]),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.instagram.com/p/C/' }),
-      envWithApify(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.instagram.com/p/C/' }), envWithApify());
     expect(dbg.route).toBe('og_then_apify_carousel');
     expect(dbg.ogOutcome).toBe('ok');
     expect(dbg.apifyOutcome).toBe('ok');
@@ -963,10 +948,7 @@ describe('handleFetchPost — _debug echo', () => {
           ]),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.instagram.com/p/U/' }),
-      envWithApify(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.instagram.com/p/U/' }), envWithApify());
     expect(dbg.route).toBe('og_then_apify_unknown_efg');
   });
 
@@ -993,10 +975,7 @@ describe('handleFetchPost — _debug echo', () => {
           ]),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.instagram.com/p/F/' }),
-      envWithApify(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.instagram.com/p/F/' }), envWithApify());
     expect(dbg.route).toBe('og_failed_apify_fallback');
     // og:-failed surfaces in ogOutcome with the closed-vocab class for the
     // upstream error (502 fetch-failed → upstream_5xx).
@@ -1035,10 +1014,7 @@ describe('handleFetchPost — _debug echo', () => {
           new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.tiktok.com/@u/photo/1' }),
-      makeEnv(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.tiktok.com/@u/photo/1' }), makeEnv());
     expect(dbg.route).toBe('tiktok_rehyd_photo');
     expect(dbg.ogOutcome).toBe('ok');
     expect(dbg.apifyOutcome).toBe('not_called');
@@ -1057,10 +1033,7 @@ describe('handleFetchPost — _debug echo', () => {
           new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.tiktok.com/@u/video/1' }),
-      makeEnv(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.tiktok.com/@u/video/1' }), makeEnv());
     expect(dbg.route).toBe('tiktok_rehyd_video');
     expect(dbg.ogOutcome).toBe('ok');
   });
@@ -1088,10 +1061,7 @@ describe('handleFetchPost — _debug echo', () => {
           ),
       },
     ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.tiktok.com/@foo/video/2' }),
-      makeEnv(),
-    );
+    const dbg = await debugOf(postJson({ url: 'https://www.tiktok.com/@foo/video/2' }), makeEnv());
     expect(dbg.route).toBe('tiktok_oembed_fallback');
     expect(dbg.ogOutcome).toBe('empty');
   });
@@ -1111,9 +1081,7 @@ describe('handleFetchPost — guards', () => {
     expect(((await resp.json()) as { error: string }).error).toBe('unsupported-url');
     // Only the RC entitlement check should have been called — no IG/TikTok fetches.
     const calls = (fetchSpy as unknown as jest.Mock).mock.calls as Array<[unknown]>;
-    const nonRcCalls = calls.filter(
-      (c) => !String(c[0]).startsWith('https://api.revenuecat.com/'),
-    );
+    const nonRcCalls = calls.filter((c) => !String(c[0]).startsWith('https://api.revenuecat.com/'));
     expect(nonRcCalls).toHaveLength(0);
   });
 
@@ -1121,10 +1089,7 @@ describe('handleFetchPost — guards', () => {
     const env = makeEnv({
       RATE_LIMIT: rateLimit(false) as unknown as Env['RATE_LIMIT'],
     });
-    const resp = await handleFetchPost(
-      postJson({ url: 'https://www.instagram.com/p/X/' }),
-      env,
-    );
+    const resp = await handleFetchPost(postJson({ url: 'https://www.instagram.com/p/X/' }), env);
     expect(resp.status).toBe(429);
   });
 

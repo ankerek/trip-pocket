@@ -39,7 +39,7 @@ export function OptionRow({
       accessibilityRole={variant === 'multi' ? 'checkbox' : 'radio'}
       accessibilityState={{ selected, checked: selected }}
       accessibilityLabel={label}
-      className="mb-2 flex-row items-center rounded-2xl bg-surface px-4"
+      className="bg-surface mb-2 flex-row items-center rounded-2xl px-4"
       style={{
         minHeight: 56,
         paddingVertical: 12,
@@ -73,10 +73,7 @@ export function OptionRow({
           {label}
         </Text>
         {description ? (
-          <Text
-            className="mt-0.5 text-text-muted"
-            style={{ fontSize: 13, lineHeight: 18 }}
-          >
+          <Text className="text-text-muted mt-0.5" style={{ fontSize: 13, lineHeight: 18 }}>
             {description}
           </Text>
         ) : null}

@@ -1,10 +1,6 @@
 import { openDatabase, runMigrations, type Database } from '@/modules/storage/db';
 import { migrations } from '@/modules/storage/migrations';
-import {
-  insertSource,
-  deleteSource,
-  assignSourceTrip,
-} from '@/modules/storage/sources';
+import { insertSource, deleteSource, assignSourceTrip } from '@/modules/storage/sources';
 import { linkPlaceSource } from '@/modules/storage/place_sources';
 import { deletePlace } from '@/modules/storage/places';
 import { createTrip, deleteTrip } from '@/modules/storage/trips';
@@ -28,7 +24,13 @@ async function seedPlace(
     `INSERT INTO places (id, trip_id, name, city, normalized_key,
                          enrichment_status, owner_id, created_at, updated_at)
      VALUES (?, ?, ?, 'Tokyo', ?, 'pending', ?, ?, ?)`,
-    id, tripId, name, `${name.toLowerCase()}|tokyo`, ownerId, now, now,
+    id,
+    tripId,
+    name,
+    `${name.toLowerCase()}|tokyo`,
+    ownerId,
+    now,
+    now,
   );
 }
 
@@ -39,14 +41,15 @@ async function seedSource(
   tripId: string | null = null,
 ): Promise<void> {
   await insertSource(db, {
-    id, tripId, filePath: `/x/${id}.jpg`,
-    contentHash: `h-${id}`, origin: 'manual',
-    capturedAt: '2026-05-10T10:00:00Z', ownerId,
+    id,
+    tripId,
+    filePath: `/x/${id}.jpg`,
+    contentHash: `h-${id}`,
+    origin: 'manual',
+    capturedAt: '2026-05-10T10:00:00Z',
+    ownerId,
   });
-  await db.runAsync(
-    `UPDATE sources SET ocr_text = ? WHERE id = ?`,
-    ocrText, id,
-  );
+  await db.runAsync(`UPDATE sources SET ocr_text = ? WHERE id = ?`, ocrText, id);
 }
 
 const link = async (
@@ -56,9 +59,11 @@ const link = async (
   rawText?: string,
 ): Promise<void> => {
   await linkPlaceSource(db, {
-    placeId, sourceId,
+    placeId,
+    sourceId,
     rawText: rawText ?? null,
-    extractionModel: 'gemini', ownerId,
+    extractionModel: 'gemini',
+    ownerId,
   });
 };
 

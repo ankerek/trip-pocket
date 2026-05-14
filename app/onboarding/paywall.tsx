@@ -10,7 +10,12 @@ import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
 import { useThemeColors } from '@/tw/theme';
 import { markOnboardingComplete } from '@/lib/onboarding/storage';
 import { useOnboarding, type Destination } from '@/lib/onboarding/state';
-import { PLANS, DEFAULT_SELECTED_PLAN, type PlanId, type PlanConfig } from '@/lib/entitlement/plans';
+import {
+  PLANS,
+  DEFAULT_SELECTED_PLAN,
+  type PlanId,
+  type PlanConfig,
+} from '@/lib/entitlement/plans';
 import { useEntitlement } from '@/lib/entitlement/provider';
 import { showToast } from '@/lib/toast/toast';
 
@@ -37,11 +42,16 @@ function trialDaysFromPackage(pkg: PurchasesPackage | undefined): number | null 
   const unit = pkg?.product.introPrice?.periodUnit;
   if (period == null || unit == null) return null;
   switch (unit) {
-    case 'DAY':   return period;
-    case 'WEEK':  return period * 7;
-    case 'MONTH': return period * 30;
-    case 'YEAR':  return period * 365;
-    default:      return null;
+    case 'DAY':
+      return period;
+    case 'WEEK':
+      return period * 7;
+    case 'MONTH':
+      return period * 30;
+    case 'YEAR':
+      return period * 365;
+    default:
+      return null;
   }
 }
 
@@ -71,7 +81,9 @@ export default function PaywallScreen() {
   const { offerings, purchasePlan, restore } = useEntitlement();
   const headline = isLapseMode
     ? 'Welcome back to Trip Pocket'
-    : (answers.destination ? PAYWALL_HEADLINE[answers.destination] : FALLBACK_HEADLINE);
+    : answers.destination
+      ? PAYWALL_HEADLINE[answers.destination]
+      : FALLBACK_HEADLINE;
 
   const selectedPlanCfg = PLANS.find((pl) => pl.id === plan);
   const selectedPkg = offerings?.current?.availablePackages.find(
@@ -109,7 +121,7 @@ export default function PaywallScreen() {
       exitOnboarding();
       return;
     }
-    if (result.reason === 'user-cancelled') return;       // silent
+    if (result.reason === 'user-cancelled') return; // silent
     showToast({ kind: 'error', message: "Couldn't start your trial. Try again." });
   }
 
@@ -134,7 +146,7 @@ export default function PaywallScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View className="flex-1 bg-bg">
+      <View className="bg-bg flex-1">
         <View
           style={{
             paddingTop: insets.top + 8,
@@ -160,10 +172,7 @@ export default function PaywallScreen() {
           )}
         </View>
 
-        <ScrollView
-          contentContainerClassName="px-6 pb-6"
-          showsVerticalScrollIndicator={false}
-        >
+        <ScrollView contentContainerClassName="px-6 pb-6" showsVerticalScrollIndicator={false}>
           {/* App lockup */}
           <View className="items-center" style={{ marginTop: 8 }}>
             <View
@@ -173,7 +182,7 @@ export default function PaywallScreen() {
               <Icon name="tray.full" size={26} tintColor="#ffffff" />
             </View>
             <Text
-              className="mt-3 text-text"
+              className="text-text mt-3"
               style={{ fontSize: 13, fontWeight: '600', letterSpacing: 0.4 }}
             >
               TRIP POCKET
@@ -181,13 +190,13 @@ export default function PaywallScreen() {
           </View>
 
           <Text
-            className="mt-6 text-center text-text"
+            className="text-text mt-6 text-center"
             style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4, lineHeight: 34 }}
           >
             {headline}
           </Text>
           <Text
-            className="mt-2 text-center text-text-muted"
+            className="text-text-muted mt-2 text-center"
             style={{ fontSize: 15, lineHeight: 22 }}
           >
             Save it now. Find it when you actually need it.
@@ -213,7 +222,7 @@ export default function PaywallScreen() {
                   }}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: isPicked }}
-                  className="rounded-2xl bg-surface px-4 py-4 flex-row items-center"
+                  className="bg-surface flex-row items-center rounded-2xl px-4 py-4"
                   style={{
                     borderWidth: isPicked ? 2 : 1,
                     borderColor: isPicked ? colors.accent : colors.hairline,
@@ -237,12 +246,17 @@ export default function PaywallScreen() {
                       >
                         {planCfg.label}
                       </Text>
-                      <Text className="ml-2 text-text" style={{ fontSize: 15, fontWeight: '600' }}>
+                      <Text className="text-text ml-2" style={{ fontSize: 15, fontWeight: '600' }}>
                         {price}
-                        <Text className="text-text-muted" style={{ fontSize: 13 }}>{per}</Text>
+                        <Text className="text-text-muted" style={{ fontSize: 13 }}>
+                          {per}
+                        </Text>
                       </Text>
                     </View>
-                    <Text className="mt-0.5 text-text-muted" style={{ fontSize: 12, lineHeight: 18 }}>
+                    <Text
+                      className="text-text-muted mt-0.5"
+                      style={{ fontSize: 12, lineHeight: 18 }}
+                    >
                       {note}
                     </Text>
                   </View>
@@ -252,7 +266,12 @@ export default function PaywallScreen() {
                       style={{ backgroundColor: colors.accent }}
                     >
                       <Text
-                        style={{ color: '#ffffff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 }}
+                        style={{
+                          color: '#ffffff',
+                          fontSize: 10,
+                          fontWeight: '800',
+                          letterSpacing: 0.4,
+                        }}
                       >
                         {planCfg.badge}
                       </Text>
@@ -265,24 +284,17 @@ export default function PaywallScreen() {
         </ScrollView>
 
         <View
-          className="border-t border-hairline bg-bg px-6 pt-3"
+          className="border-hairline bg-bg border-t px-6 pt-3"
           style={{ paddingBottom: Math.max(16, insets.bottom) }}
         >
-          <PrimaryButton
-            label={trialCtaLabel}
-            onPress={handleStartTrial}
-            disabled={busy}
-          />
+          <PrimaryButton label={trialCtaLabel} onPress={handleStartTrial} disabled={busy} />
           <Text
-            className="mt-2 text-center text-text-muted"
+            className="text-text-muted mt-2 text-center"
             style={{ fontSize: 11, lineHeight: 16 }}
           >
             {trialFooterCopy}
           </Text>
-          <View
-            className="mt-2 flex-row items-center justify-center"
-            style={{ gap: 14 }}
-          >
+          <View className="mt-2 flex-row items-center justify-center" style={{ gap: 14 }}>
             <Pressable
               onPress={handleRestore}
               disabled={busy}
@@ -294,7 +306,9 @@ export default function PaywallScreen() {
                 Restore purchases
               </Text>
             </Pressable>
-            <Text className="text-text-muted" style={{ fontSize: 12 }}>·</Text>
+            <Text className="text-text-muted" style={{ fontSize: 12 }}>
+              ·
+            </Text>
             <Pressable
               onPress={() => void Linking.openURL('https://trippocket.app/terms')}
               accessibilityRole="link"
@@ -304,7 +318,9 @@ export default function PaywallScreen() {
                 Terms
               </Text>
             </Pressable>
-            <Text className="text-text-muted" style={{ fontSize: 12 }}>·</Text>
+            <Text className="text-text-muted" style={{ fontSize: 12 }}>
+              ·
+            </Text>
             <Pressable
               onPress={() => void Linking.openURL('https://trippocket.app/privacy')}
               accessibilityRole="link"

@@ -18,6 +18,7 @@ Two related problems with how delete works today:
 ## Scope
 
 In scope:
+
 - Replace soft-delete with hard-delete throughout. Drop the `deleted_at` column from `trips`, `sources`, `places`, `place_sources`. Remove every `WHERE deleted_at IS NULL` filter. Migrate FTS5 triggers from `UPDATE OF deleted_at` to `AFTER DELETE`.
 - New cascade rules per §3.
 - Two delete affordances on a trip: gentle (untriage members, default) and destructive (cascade everything, opt-in).
@@ -26,6 +27,7 @@ In scope:
 - One-time cleanup migration that hard-deletes any pre-existing `deleted_at IS NOT NULL` rows before dropping the column.
 
 Not in scope:
+
 - Undo toasts, Recently Deleted shelves, restore-from-trash flows.
 - Background purge scheduling (no soft-delete remaining ⇒ nothing to purge).
 - Sync conflict resolution (v0.2 has no sync).
@@ -38,7 +40,7 @@ Not in scope:
 
 **Soft-delete is removed from the schema.** SQLite hard-DELETE inside a transaction is immediately invisible to subsequent reads in the same transaction, so multi-step cascades do not need a soft-delete intermediate. The `deleted_at` column does not survive the migration.
 
-**Cascade is symmetric.** A junction row is the only relationship between a place and a source. If deleting one entity (or the junction itself) leaves the other entity with zero live junctions, that other entity is also deleted — *unless* the surviving entity is a source that was deliberately preserved by `assignSourceTrip` (see §3.5).
+**Cascade is symmetric.** A junction row is the only relationship between a place and a source. If deleting one entity (or the junction itself) leaves the other entity with zero live junctions, that other entity is also deleted — _unless_ the surviving entity is a source that was deliberately preserved by `assignSourceTrip` (see §3.5).
 
 ## §1 — Schema changes
 
@@ -63,8 +65,8 @@ Not in scope:
    ```
 
    The `idx_places_external_place_id` index keeps its `WHERE external_place_id IS NOT NULL` predicate (still needed — not all places are enriched). The partial-by-`deleted_at` half is gone, which forces the enrichment-merge resequence in §3.6.
-3. **Rebuild the nine FTS triggers** without any `deleted_at` mentions. The bodies are otherwise unchanged. Concretely:
 
+3. **Rebuild the nine FTS triggers** without any `deleted_at` mentions. The bodies are otherwise unchanged. Concretely:
    - `places_fts_ai` — drop the `WHEN NEW.deleted_at IS NULL` clause; body unchanged.
    - `places_fts_au` — `AFTER UPDATE OF name, city, description ON places` (no `deleted_at`); drop the outer `WHERE NEW.deleted_at IS NULL`; drop both inner `WHERE deleted_at IS NULL` filters in the GROUP_CONCAT sub-queries.
    - `places_fts_ad` — unchanged.
@@ -74,6 +76,7 @@ Not in scope:
    - `sources_fts_ai` — drop the `WHEN`; relax the tag sub-query from `WHERE source_id = NEW.id AND deleted_at IS NULL` to `WHERE source_id = NEW.id`.
    - `sources_fts_au` — `AFTER UPDATE OF ocr_text, trip_id ON sources` (no `deleted_at`); drop the outer guard; drop the tag-subquery filter.
    - `sources_fts_ad` — unchanged.
+
 4. **Header comment update** — refresh the file's leading comment to note that the soft-delete column is gone and that delete is hard, mirroring how the prior places-first restructure annotated itself in the same comment block.
 
 ### §1.2 — Developer ergonomics
@@ -85,6 +88,7 @@ Add a section to `docs/ARCHITECTURE.md` (or the README, whichever is closer to d
 Every read in `modules/storage/*.ts` and every inline SQL in `app/**` and `components/**` currently has `WHERE ... deleted_at IS NULL`. After this change, those filters are removed because no live row has `deleted_at` anymore.
 
 This is a mechanical pass but the surface is wide. The full list (from `grep -rn "deleted_at IS NULL"`):
+
 - `modules/storage/places.ts` — 8 occurrences across listing / lookup / counting helpers.
 - `modules/storage/sources.ts` — 9 occurrences.
 - `modules/storage/trips.ts` — 4 occurrences.
@@ -211,19 +215,20 @@ notifyChange('trips')
 
 The "defensive untriage" UPDATE handles a real edge case: a place with multiple sources, assigned to this trip, where one of its other sources lives in a different trip. We delete this trip's sources, but the place still has surviving evidence elsewhere — preserve the place, un-assign it from the deleted trip, do not yank it into a stranger trip. The user's confirm copy in §4.3 must reflect this: shared places do **not** get deleted by this cascade, only their trip_id gets cleared.
 
-`affectedPlaceIds` must be captured *before* the junction DELETE; otherwise the orphan-prune has no way to scope itself.
+`affectedPlaceIds` must be captured _before_ the junction DELETE; otherwise the orphan-prune has no way to scope itself.
 
 `notifyChange` is called once per channel post-commit; the live-query API (`live-query.ts:21`) takes a single table name per call and re-runs subscribed queries synchronously after each call, so call order across channels is irrelevant.
 
 ### §3.4 — Junction-only delete (existing `assignSourceTrip` excludePlaceIds path)
 
 No behaviour change. The triage deselect-to-drop path stays as-is, with two purely mechanical edits:
+
 - The junction `UPDATE ... SET deleted_at` becomes `DELETE FROM place_sources WHERE source_id = ? AND place_id = ?`.
 - The orphan-place soft-delete becomes a hard-DELETE.
 
 ### §3.5 — Why `assignSourceTrip` does NOT trigger the source-prune rule
 
-When triage's deselect-to-drop empties a place's last junction, the place is deleted (existing behaviour, kept). But the source whose junction we just deleted is *the entity being assigned* in the same transaction. The user has explicitly chosen to keep that source by picking a trip for it, even if no extracted places stick. This is the documented "save it anyway and label it later" path through triage — the placeholder copy in the triage card already says exactly that.
+When triage's deselect-to-drop empties a place's last junction, the place is deleted (existing behaviour, kept). But the source whose junction we just deleted is _the entity being assigned_ in the same transaction. The user has explicitly chosen to keep that source by picking a trip for it, even if no extracted places stick. This is the documented "save it anyway and label it later" path through triage — the placeholder copy in the triage card already says exactly that.
 
 So: the source-prune rule fires inside `deletePlace` and `deleteSource`, not inside `assignSourceTrip`. Encoded as: `assignSourceTrip` deletes junctions and prunes orphan places only. It never inspects `place_sources` counts on the source side.
 
@@ -295,7 +300,7 @@ If `deletePlace` would orphan-prune sources (junction-count check before the dia
 > This can't be undone.
 > [Cancel] [Delete]
 
-Pre-dialog count — number of sources that will be orphan-pruned, i.e. sources whose *only* live junction is to this place:
+Pre-dialog count — number of sources that will be orphan-pruned, i.e. sources whose _only_ live junction is to this place:
 
 ```sql
 SELECT COUNT(*) AS n
@@ -338,6 +343,7 @@ Two delete actions in the existing edit screen, separated visually.
 ```
 
 Confirm:
+
 > Delete '{name}'?
 > {N} screenshots and {M} places will move back to your Inbox.
 > [Cancel] [Delete trip]
@@ -355,6 +361,7 @@ In a separate visual block — at minimum a hairline above and a different label
 ```
 
 Confirm uses iOS `Alert` with destructive style and an explicit count:
+
 > Delete '{name}' and {N} screenshots, {M} places?
 > {S} place(s) shared with other trips will be moved to your Inbox.
 > This can't be undone.
@@ -414,6 +421,7 @@ Spacing: 8pt gap between the three rows; the "Delete" row has the same horizonta
 Tap → confirm dialog from §4.2 (uses the orphan-prune-aware copy variant when relevant). Confirmed → calls `deleteSource(db, current.id)`. After commit, the triage screen advances to the next source the same way `Skip` does (`advanceOrClose`). If that was the last item → `router.back()`.
 
 Accessibility:
+
 - `accessibilityRole="button"`
 - `accessibilityLabel="Delete screenshot"`
 - `accessibilityHint="Permanently delete this screenshot and any extracted places."`
@@ -426,7 +434,7 @@ Accessibility:
 - `deleteSource`: after the transaction commits, delete `source.file_path`. Failures are logged at `warn` and swallowed. The DB row is the source of truth; the existing `cleanupOrphans` worker (see `modules/capture/__tests__/cleanupOrphans.test.ts`) will sweep up any stragglers on the next launch.
 - `deleteTrip` cascade: same as `deleteSource`, batched. Collect file paths inside the transaction (before `DELETE FROM sources`) and unlink them after commit.
 
-File deletion happens *outside* the SQLite transaction. We do not want disk failures to roll back the DB — the trash-can semantics are "user said gone, so it's gone from the DB; the bytes will catch up."
+File deletion happens _outside_ the SQLite transaction. We do not want disk failures to roll back the DB — the trash-can semantics are "user said gone, so it's gone from the DB; the bytes will catch up."
 
 `cleanupOrphans` already exists (per the migration tests). Confirm it still does the right thing under the new contract — orphan = file on disk with no matching `sources.file_path` row. After this change there will be more orphan files because the cascade can fail mid-disk-cleanup; the orphan worker remains the safety net.
 
@@ -437,6 +445,7 @@ File deletion happens *outside* the SQLite transaction. We do not want disk fail
 Existing `softDelete*` tests in `modules/storage/__tests__/{trips,sources,places}.test.ts` rewritten for the new `delete*` functions. Replace `expect(deleted_at).toBeTruthy()` assertions with `expect(getX(...)).toBeNull()` and direct row-not-found checks via `getAllAsync`.
 
 Symmetric orphan-prune cases:
+
 - `deletePlace` with a place that has 1 source whose only junction is this place → source row gone, file unlinked.
 - `deletePlace` with a place that has 1 source which has 2 places → source survives, junction gone.
 - `deletePlace` with a place that has 2 sources, each with only this place → both sources gone, both files unlinked.
@@ -444,16 +453,19 @@ Symmetric orphan-prune cases:
 - `deleteSource` with a source whose place has 2 sources → place survives.
 
 Trip cases:
+
 - `deleteTrip(mode='untriage')` → members untriaged, files untouched, tags untouched (when present).
 - `deleteTrip(mode='cascade')` end-to-end: trip + sources + files + places + junctions + tags all removed.
 - `deleteTrip(mode='cascade')` with a place shared across trips: the shared place survives with `trip_id = NULL`; the other trip's sources untouched; the cascade-deleted trip's sources/places/files all gone.
 
 Carve-out / FK regression cases:
+
 - `assignSourceTrip(..., excludePlaceIds)` does **not** delete the assigned source even if all its junctions are excluded (§3.5).
 - `deleteSource` with a source that has tags → tags also deleted (FK regression).
 - `deleteTrip(mode='cascade')` with sources that have tags → all tags deleted; assertion: `SELECT COUNT(*) FROM tags` is 0 in the affected scope.
 
 Enrichment merge cases (§3.6):
+
 - Incoming-wins merge: enrichment returns `external_place_id` X; existing place `E` already has X. Run `enrichWithCollisionMerge` for incoming `I`. Assert: `E` is gone, `I` survives with `external_place_id = X`, all junctions previously on `E` are now on `I` (deduped on conflict), `places_fts` row keyed by `I.id` reflects merged content.
 - Existing-wins merge: `E.created_at < I.created_at` so `E` is winner. Assert: `I` is gone, `E` keeps its junctions plus any from `I` it didn't already have, `E.external_place_id` unchanged.
 - Merge with junction conflict: both `E` and `I` already attach the same source `S`. Run merge. Assert: only one (winner-keyed) junction for `S` remains, no PRIMARY KEY violation, `place_sources` count for the winner equals `|junctions(E) ∪ junctions(I)|`.
@@ -492,6 +504,7 @@ ROADMAP.md will get a "delete cascade rewrite" line under v0.2 In flight pointin
 ## §8 — Open questions
 
 None. All forks were resolved during the brainstorm and the codex pre-implementation review:
+
 - Hard-delete + drop column: resolved.
 - Trip delete: two affordances (gentle default, destructive opt-in): resolved.
 - Source delete prunes orphan places, place delete prunes orphan sources: resolved (symmetric).

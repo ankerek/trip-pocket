@@ -14,9 +14,7 @@ const BUNDLE_ID = IS_DEV ? 'com.trippocket.app.dev' : 'com.trippocket.app';
 // prod project. Falls back to the prod key if the dev key isn't set so
 // existing devs without the new env var keep working.
 const RC_IOS_API_KEY = IS_DEV
-  ? (process.env.EXPO_PUBLIC_RC_IOS_API_KEY_DEV ??
-      process.env.EXPO_PUBLIC_RC_IOS_API_KEY ??
-      '')
+  ? (process.env.EXPO_PUBLIC_RC_IOS_API_KEY_DEV ?? process.env.EXPO_PUBLIC_RC_IOS_API_KEY ?? '')
   : (process.env.EXPO_PUBLIC_RC_IOS_API_KEY ?? '');
 const ANDROID_PACKAGE = IS_DEV ? 'com.trippocket.app.dev' : 'com.trippocket.app';
 const APP_NAME = IS_DEV ? 'Trip Pocket Dev' : 'Trip Pocket';
@@ -32,7 +30,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: BUNDLE_ID,
-    buildNumber: '5',
+    buildNumber: '6',
     icon: './assets/AppIcon.icon',
     supportsTablet: false,
     entitlements: {
@@ -40,12 +38,7 @@ const config: ExpoConfig = {
     },
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      LSApplicationQueriesSchemes: [
-        'comgooglemaps',
-        'instagram',
-        'tiktok',
-        'snssdk1233',
-      ],
+      LSApplicationQueriesSchemes: ['comgooglemaps', 'instagram', 'tiktok', 'snssdk1233'],
     },
     appleTeamId: 'WL5ALL46C4',
   },

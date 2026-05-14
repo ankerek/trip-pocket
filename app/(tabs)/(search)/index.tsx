@@ -1,11 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  FlatList,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from '@/tw';
+import { FlatList, Pressable, ScrollView, Text, View } from '@/tw';
 import { PixelRatio, useWindowDimensions } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -80,11 +74,11 @@ export default function Search() {
   );
 
   const trips = useLiveQuery<TripChipRow>(TRIPS_SQL, [], ['trips']);
-  const rows = useLiveQuery<SearchPlaceRow>(
-    SEARCH_SQL,
-    queryParams,
-    ['places', 'trips', 'place_sources'],
-  );
+  const rows = useLiveQuery<SearchPlaceRow>(SEARCH_SQL, queryParams, [
+    'places',
+    'trips',
+    'place_sources',
+  ]);
 
   const trimmed = input.trim();
   const tooShort = match === null && trimmed.length > 0;
@@ -105,16 +99,14 @@ export default function Search() {
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: SearchPlaceRow }) => (
-      <GridCell place={item} style={cellStyle} />
-    ),
+    ({ item }: { item: SearchPlaceRow }) => <GridCell place={item} style={cellStyle} />,
     [cellStyle],
   );
 
   const showResults = trimmed.length > 0 && !tooShort && rows !== null && rows.length > 0;
 
   return (
-    <View className="flex-1 bg-bg">
+    <View className="bg-bg flex-1">
       <Stack.Screen
         options={{
           title: 'Search',
@@ -142,9 +134,7 @@ export default function Search() {
         removeClippedSubviews={false}
         windowSize={5}
         contentContainerClassName="pb-24"
-        columnWrapperStyle={
-          numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined
-        }
+        columnWrapperStyle={numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined}
         ItemSeparatorComponent={GridGap}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -176,19 +166,17 @@ export default function Search() {
         ListEmptyComponent={
           trimmed.length === 0 ? (
             <View className="px-8 pt-12">
-              <Text className="text-center text-base text-text-muted">
-                Search your places
-              </Text>
+              <Text className="text-text-muted text-center text-base">Search your places</Text>
             </View>
           ) : tooShort ? (
             <View className="px-8 pt-12">
-              <Text className="text-center text-base text-text-muted">
+              <Text className="text-text-muted text-center text-base">
                 Type at least 3 characters
               </Text>
             </View>
           ) : rows === null ? null : (
             <View className="px-8 pt-12">
-              <Text className="text-center text-base text-text-muted">
+              <Text className="text-text-muted text-center text-base">
                 No places match &ldquo;{trimmed}&rdquo;
               </Text>
             </View>
@@ -241,21 +229,13 @@ function FilterChip({
     <Pressable
       onPress={onPress}
       className={
-        selected
-          ? 'rounded-pill bg-accent px-3 py-1.5'
-          : 'rounded-pill bg-surface px-3 py-1.5'
+        selected ? 'rounded-pill bg-accent px-3 py-1.5' : 'rounded-pill bg-surface px-3 py-1.5'
       }
       accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityLabel={`Filter: ${label}`}
     >
-      <Text
-        className={
-          selected
-            ? 'text-sm font-medium text-bg'
-            : 'text-sm text-text-muted'
-        }
-      >
+      <Text className={selected ? 'text-bg text-sm font-medium' : 'text-text-muted text-sm'}>
         {label}
       </Text>
     </Pressable>

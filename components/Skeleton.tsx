@@ -38,11 +38,7 @@ export function SkeletonBlock({ testID, style }: CommonProps) {
   return (
     <Animated.View
       testID={testID ?? 'skeleton-block'}
-      style={[
-        { width: '100%', height: '100%', backgroundColor: colors.surface },
-        style,
-        animStyle,
-      ]}
+      style={[{ width: '100%', height: '100%', backgroundColor: colors.surface }, style, animStyle]}
     />
   );
 }
@@ -75,19 +71,12 @@ export function SkeletonLine({
 
 /** Stack of `count` text-line bars at descending widths. Used for paragraph
  * placeholders (description, etc.). Bars share one pulse for visual unity. */
-export function SkeletonLines({
-  count,
-  testID,
-}: CommonProps & { count: number }) {
+export function SkeletonLines({ count, testID }: CommonProps & { count: number }) {
   const widths = [100, 92, 60, 84, 70];
   return (
     <RNView testID={testID ?? 'skeleton-lines'} style={{ gap: 8 }}>
       {Array.from({ length: count }, (_, i) => (
-        <SkeletonLine
-          key={i}
-          widthPercent={widths[i] ?? 80}
-          testID={`skeleton-lines-${i}`}
-        />
+        <SkeletonLine key={i} widthPercent={widths[i] ?? 80} testID={`skeleton-lines-${i}`} />
       ))}
     </RNView>
   );
@@ -114,12 +103,8 @@ export function SkeletonRow({ testID }: CommonProps) {
     >
       <Animated.View style={[{ width: 44, height: 44, borderRadius: 10 }, surface, pulse]} />
       <RNView style={{ flex: 1, gap: 6 }}>
-        <Animated.View
-          style={[{ width: '60%', height: 13, borderRadius: 4 }, surface, pulse]}
-        />
-        <Animated.View
-          style={[{ width: '38%', height: 11, borderRadius: 4 }, surface, pulse]}
-        />
+        <Animated.View style={[{ width: '60%', height: 13, borderRadius: 4 }, surface, pulse]} />
+        <Animated.View style={[{ width: '38%', height: 11, borderRadius: 4 }, surface, pulse]} />
       </RNView>
     </RNView>
   );

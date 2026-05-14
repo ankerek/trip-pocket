@@ -16,6 +16,7 @@ InboxBanner visual refresh, quicker-trip-assignment shortcuts, and per-place inl
 ## Scope
 
 In scope:
+
 - Replace the triage card layout with a single vertical scroll (Layout "C").
 - Show the full list of extracted places under each source.
 - Per-place selection: default checked, user can deselect to drop a place.
@@ -23,6 +24,7 @@ In scope:
 - Extend `assignSourceTrip` to honor selection.
 
 Not in scope:
+
 - `components/InboxBanner.tsx` — untouched.
 - Quick-trip chips, recent-trip suggestions, swipe-to-assign.
 - Per-place rename / category edit / city edit inside triage.
@@ -78,12 +80,14 @@ const [selections, setSelections] = useState<SelectionsBySource>(new Map());
 ```
 
 Read rule for the current source `s`:
+
 - If `selections.get(s.id)` exists, use it as the override map. Any place row not present in the override map is treated as **selected by default** (the default-on rule).
 - If `selections.get(s.id)` is missing entirely, every row is selected by default.
 
 This means the data structure stays compact — only deselected (or explicitly toggled) places need entries. New rows that arrive mid-triage (extraction landing while the user reads the card) inherit the default-on rule without any explicit write, matching "all places added by default".
 
 Lifecycle:
+
 - **Per-session**, not per-disk. The whole `selections` map lives in component state and is discarded when the modal unmounts (X tap, swipe-down, or after the last source is triaged).
 - **Skipping** a source preserves its entry in `selections` (the user might swipe back). The source itself stays in the inbox.
 - **Confirming a trip** for a source removes its entry from `selections` (it's no longer in the inbox queue, so any remaining state is moot).
@@ -92,6 +96,7 @@ Lifecycle:
 Place row tap target = the entire row (rectangular, 60pt high). Toggling fires `Haptics.selectionAsync()` on iOS to match other selection affordances in the app.
 
 The "Select all / Deselect all" header toggle for the current source:
+
 - Label is `Deselect all` when **every** row is currently selected; `Select all` otherwise (any row unchecked, including the all-deselected state).
 - Tap behavior is **set, not invert**: tapping `Deselect all` writes `false` for every place in the current source's list; tapping `Select all` writes `true` for every place. After the tap, the label flips to the opposite state.
 
@@ -115,7 +120,7 @@ export async function assignSourceTrip(
   db: Database,
   sourceId: string,
   tripId: string | null,
-): Promise<void>
+): Promise<void>;
 ```
 
 becomes:
@@ -126,7 +131,7 @@ export async function assignSourceTrip(
   sourceId: string,
   tripId: string | null,
   opts?: { excludePlaceIds?: string[] },
-): Promise<void>
+): Promise<void>;
 ```
 
 Inside the existing transaction (`db.withTransactionAsync`), before the place-trip cascade runs, the function processes `excludePlaceIds`:
@@ -161,6 +166,7 @@ Two consequences worth calling out:
 Then the existing place-cascade runs unchanged (it already filters both `places.deleted_at IS NULL` and `place_sources.deleted_at IS NULL`, so deselected places naturally do not move into the trip).
 
 Finally:
+
 - `notifyChange('sources')` — unchanged.
 - `notifyChange('places')` — already gated on `movedPlaces`; extend the gate so it fires when any place is soft-deleted in step 3 too.
 - `notifyChange('trips')` — unchanged.
@@ -173,7 +179,7 @@ All three steps run inside the same transaction so a failure rolls back as a uni
 
 ### `excludePlaceIds` contract for `tripId === null`
 
-When `tripId === null` (the "Remove from trip" path), `excludePlaceIds` is **explicitly ignored**: the function does not run the deselect step, does not soft-delete any `place_sources` rows, and does not soft-delete any places. Rationale: "Remove from trip" is the inverse of triage, not a place-pruning operation. A future caller wanting to remove a source from a trip *and* drop specific places should be a separate API rather than overloading this one. Document this in the JSDoc on `assignSourceTrip` so the contract is impossible to miss.
+When `tripId === null` (the "Remove from trip" path), `excludePlaceIds` is **explicitly ignored**: the function does not run the deselect step, does not soft-delete any `place_sources` rows, and does not soft-delete any places. Rationale: "Remove from trip" is the inverse of triage, not a place-pruning operation. A future caller wanting to remove a source from a trip _and_ drop specific places should be a separate API rather than overloading this one. Document this in the JSDoc on `assignSourceTrip` so the contract is impossible to miss.
 
 ## Skip
 
@@ -192,16 +198,16 @@ No mutation. Selection state, deselected toggles, all discarded. Source stays in
 
 ## Files touched
 
-| Path | Change |
-|------|--------|
-| `app/triage.tsx` | Rewrite `TriageCard` and `TriageSheet` to Layout C. Add per-source selection state and the place row component. Wire `excludePlaceIds` into the `TripPicker.onClose` callback. |
-| `app/_layout.tsx` | Triage screen: `presentation: 'modal'` (was `'fullScreenModal'`); drop `animation: 'slide_from_bottom'`. |
-| `modules/storage/sources.ts` | Extend `assignSourceTrip` with `opts.excludePlaceIds`. Add the in-transaction deselect logic per the rule above. Extend the `notifyChange('places')` gate so it fires when a place is soft-deleted. |
-| `modules/storage/__tests__/sources.test.ts` | Add tests for the deselect cases and the delete-only `notifyChange('places')` gate (see Testing). |
-| `components/TripPicker.tsx` | Add an optional `assignOptions?: { excludePlaceIds?: string[] }` prop. When set, the picker forwards it to its internal `assignSourceTrip` call. All existing callers omit the prop and behave identically. |
-| `components/__tests__/TripPicker.test.tsx` | New (or extend if exists). Assert the picker forwards `assignOptions` to `assignSourceTrip` correctly, and behaves identically when the prop is omitted. |
-| `__tests__/triage.test.tsx` | New. Cover default-on, single-row toggle, bulk-toggle (set semantics), selection persistence across paging, and the confirm-flow `excludePlaceIds` payload. |
-| `lib/relativeTime.ts` (or equivalent) | Add a `formatCapturedAt(date)` helper if one doesn't already exist, returning strings like `Captured today · 14:22`. Locale + timezone come from the device. |
+| Path                                        | Change                                                                                                                                                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/triage.tsx`                            | Rewrite `TriageCard` and `TriageSheet` to Layout C. Add per-source selection state and the place row component. Wire `excludePlaceIds` into the `TripPicker.onClose` callback.                              |
+| `app/_layout.tsx`                           | Triage screen: `presentation: 'modal'` (was `'fullScreenModal'`); drop `animation: 'slide_from_bottom'`.                                                                                                    |
+| `modules/storage/sources.ts`                | Extend `assignSourceTrip` with `opts.excludePlaceIds`. Add the in-transaction deselect logic per the rule above. Extend the `notifyChange('places')` gate so it fires when a place is soft-deleted.         |
+| `modules/storage/__tests__/sources.test.ts` | Add tests for the deselect cases and the delete-only `notifyChange('places')` gate (see Testing).                                                                                                           |
+| `components/TripPicker.tsx`                 | Add an optional `assignOptions?: { excludePlaceIds?: string[] }` prop. When set, the picker forwards it to its internal `assignSourceTrip` call. All existing callers omit the prop and behave identically. |
+| `components/__tests__/TripPicker.test.tsx`  | New (or extend if exists). Assert the picker forwards `assignOptions` to `assignSourceTrip` correctly, and behaves identically when the prop is omitted.                                                    |
+| `__tests__/triage.test.tsx`                 | New. Cover default-on, single-row toggle, bulk-toggle (set semantics), selection persistence across paging, and the confirm-flow `excludePlaceIds` payload.                                                 |
+| `lib/relativeTime.ts` (or equivalent)       | Add a `formatCapturedAt(date)` helper if one doesn't already exist, returning strings like `Captured today · 14:22`. Locale + timezone come from the device.                                                |
 
 ### Single source of truth for the assign call
 
@@ -235,7 +241,7 @@ No mutation. Selection state, deselected toggles, all discarded. Source stays in
 
 5. **Empty trip target** — calling `assignSourceTrip(db, sId, null, { excludePlaceIds: [pId] })` ignores `excludePlaceIds` (no cascade runs, source goes back to inbox). The deselect step also no-ops because we only run it when `tripId !== null`. Add an explicit test asserting `place_sources(sId, pId).deleted_at` and `places(pId).deleted_at` are both `NULL` afterwards.
 
-6. **Notify gating: delete-only path** — given a source with one place, all selected, then a second call to `assignSourceTrip(db, sId, tId, { excludePlaceIds: [pId] })`. Even though zero places are *moved* (the place was already in `tId` from the first call... but that contradicts the multi-link guard — better setup: give source two places, P1 selected, P2 deselected). Assert that subscribers registered on `'places'` invalidations fire because P2 was soft-deleted, even though P1 was the only place that moved. This guards the extended `notifyChange('places')` gate.
+6. **Notify gating: delete-only path** — given a source with one place, all selected, then a second call to `assignSourceTrip(db, sId, tId, { excludePlaceIds: [pId] })`. Even though zero places are _moved_ (the place was already in `tId` from the first call... but that contradicts the multi-link guard — better setup: give source two places, P1 selected, P2 deselected). Assert that subscribers registered on `'places'` invalidations fire because P2 was soft-deleted, even though P1 was the only place that moved. This guards the extended `notifyChange('places')` gate.
 
 ### `TripPicker` test (`components/__tests__/TripPicker.test.tsx`, new file if absent)
 

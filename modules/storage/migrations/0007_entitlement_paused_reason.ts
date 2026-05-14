@@ -11,14 +11,8 @@ import type { Migration } from '../db';
 export const entitlementPausedReason: Migration = {
   version: 7,
   up: async (db) => {
-    await db.execAsync(
-      `ALTER TABLE sources ADD COLUMN extraction_paused_reason TEXT`,
-    );
-    await db.execAsync(
-      `ALTER TABLE sources ADD COLUMN url_fetch_paused_reason TEXT`,
-    );
-    await db.execAsync(
-      `ALTER TABLE places ADD COLUMN enrichment_paused_reason TEXT`,
-    );
+    await db.execAsync(`ALTER TABLE sources ADD COLUMN extraction_paused_reason TEXT`);
+    await db.execAsync(`ALTER TABLE sources ADD COLUMN url_fetch_paused_reason TEXT`);
+    await db.execAsync(`ALTER TABLE places ADD COLUMN enrichment_paused_reason TEXT`);
   },
 };

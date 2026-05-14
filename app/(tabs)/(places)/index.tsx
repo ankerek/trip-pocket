@@ -1,9 +1,5 @@
 import { memo, useCallback, useMemo, useState } from 'react';
-import {
-  PixelRatio,
-  RefreshControl,
-  useWindowDimensions,
-} from 'react-native';
+import { PixelRatio, RefreshControl, useWindowDimensions } from 'react-native';
 import { FlatList, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import { useLiveQuery, PROCESSING_SOURCES_WHERE } from '@/modules/storage';
@@ -65,16 +61,8 @@ export default function Pocket() {
   const router = useRouter();
   const colors = useThemeColors();
   const places = useLiveQuery<PlaceRow>(PLACES_SQL, [], ['places', 'trips']);
-  const inboxCountRows = useLiveQuery<InboxCount>(
-    INBOX_COUNT_SQL,
-    [],
-    ['sources'],
-  );
-  const processingRows = useLiveQuery<InboxCount>(
-    PROCESSING_COUNT_SQL,
-    [],
-    ['sources'],
-  );
+  const inboxCountRows = useLiveQuery<InboxCount>(INBOX_COUNT_SQL, [], ['sources']);
+  const processingRows = useLiveQuery<InboxCount>(PROCESSING_COUNT_SQL, [], ['sources']);
   const tripRows = useLiveQuery<TripRow>(TRIPS_SQL, [], ['trips', 'places']);
 
   const [filter, setFilter] = useState<string>(ALL_FILTER_ID);
@@ -121,9 +109,7 @@ export default function Pocket() {
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: PlaceRow }) => (
-      <GridCell place={item} style={cellStyle} />
-    ),
+    ({ item }: { item: PlaceRow }) => <GridCell place={item} style={cellStyle} />,
     [cellStyle],
   );
 
@@ -183,9 +169,7 @@ export default function Pocket() {
         removeClippedSubviews={false}
         windowSize={5}
         contentContainerClassName="pb-24"
-        columnWrapperStyle={
-          numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined
-        }
+        columnWrapperStyle={numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined}
         ItemSeparatorComponent={GridGap}
         ListHeaderComponent={
           <View>
@@ -195,16 +179,13 @@ export default function Pocket() {
                 feed visually quiet for users who already have a queue
                 they're ignoring. */}
             {filter === UNTRIAGED_FILTER_ID ? (
-              <InboxBanner
-                count={inboxCount}
-                onPress={() => router.push('/triage' as never)}
-              />
+              <InboxBanner count={inboxCount} onPress={() => router.push('/triage' as never)} />
             ) : null}
           </View>
         }
         ListEmptyComponent={
           <View className="px-8 pt-12">
-            <Text className="text-center text-base text-text-muted">
+            <Text className="text-text-muted text-center text-base">
               {filter === UNTRIAGED_FILTER_ID
                 ? 'Nothing to triage.'
                 : 'No places yet for this filter.'}
@@ -213,11 +194,7 @@ export default function Pocket() {
         }
         renderItem={renderItem}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={colors.accent}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
         }
       />
     </>

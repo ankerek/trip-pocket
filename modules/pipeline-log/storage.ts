@@ -59,10 +59,7 @@ export function persistEvent(args: PersistArgs, db?: Database): void {
 /**
  * LRU sweep: keep the most recent N rows globally. Run once at cold start.
  */
-export async function sweepPipelineEvents(
-  limit = RETENTION_LIMIT,
-  db?: Database,
-): Promise<void> {
+export async function sweepPipelineEvents(limit = RETENTION_LIMIT, db?: Database): Promise<void> {
   const handle = db ?? getDatabaseHandle();
   if (!handle) return;
   // Deletes everything whose id is at or below the cutoff row. Using id rather
@@ -80,10 +77,7 @@ export async function sweepPipelineEvents(
 /**
  * Read the most recent N rows for the in-app stream. Newest first.
  */
-export async function readRecentEvents(
-  limit: number,
-  db?: Database,
-): Promise<PipelineEventRow[]> {
+export async function readRecentEvents(limit: number, db?: Database): Promise<PipelineEventRow[]> {
   const handle = db ?? getDatabaseHandle();
   if (!handle) return [];
   const rows = await handle.getAllAsync<{

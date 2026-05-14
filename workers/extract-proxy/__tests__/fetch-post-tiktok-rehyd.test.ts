@@ -1,9 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  extractTikTokRehydrationJson,
-  mapTikTokRehydrationItem,
-} from '../src/fetch-post';
+import { extractTikTokRehydrationJson, mapTikTokRehydrationItem } from '../src/fetch-post';
 
 const fixtures = join(__dirname, 'fixtures', 'tiktok');
 const photoHtml = readFileSync(join(fixtures, 'photo-6slides.html'), 'utf8');
@@ -28,9 +25,7 @@ describe('extractTikTokRehydrationJson', () => {
   });
 
   it('throws tiktok-no-rehydration on an anti-bot stub HTML', () => {
-    expect(() => extractTikTokRehydrationJson(stubHtml)).toThrow(
-      /tiktok-no-rehydration/,
-    );
+    expect(() => extractTikTokRehydrationJson(stubHtml)).toThrow(/tiktok-no-rehydration/);
   });
 
   it('throws tiktok-rehyd-non-json when the script body is not valid JSON', () => {
@@ -39,9 +34,7 @@ describe('extractTikTokRehydrationJson', () => {
       '<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">' +
       '{not json}' +
       '</script></body></html>';
-    expect(() => extractTikTokRehydrationJson(bad)).toThrow(
-      /tiktok-rehyd-non-json/,
-    );
+    expect(() => extractTikTokRehydrationJson(bad)).toThrow(/tiktok-rehyd-non-json/);
   });
 });
 
@@ -78,10 +71,7 @@ describe('mapTikTokRehydrationItem', () => {
       desc: 'x',
       author: { uniqueId: 'u' },
       imagePost: {
-        images: [
-          { imageURL: { urlList: ['', ''] } },
-          { imageURL: { urlList: [''] } },
-        ],
+        images: [{ imageURL: { urlList: ['', ''] } }, { imageURL: { urlList: [''] } }],
       },
     });
     const out = mapTikTokRehydrationItem(raw, canonical);
@@ -129,13 +119,11 @@ describe('mapTikTokRehydrationItem', () => {
       __DEFAULT_SCOPE__: {
         'webapp.reflow.video.detail': {
           statusCode: 10204,
-          statusMessage: 'item doesn\'t exist',
+          statusMessage: "item doesn't exist",
         },
       },
     };
-    expect(() => mapTikTokRehydrationItem(raw, canonical)).toThrow(
-      /tiktok-rehyd-no-item/,
-    );
+    expect(() => mapTikTokRehydrationItem(raw, canonical)).toThrow(/tiktok-rehyd-no-item/);
   });
 
   it('skips slides with empty urlList[0] while keeping others', () => {

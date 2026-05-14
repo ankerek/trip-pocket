@@ -1,8 +1,4 @@
-import {
-  extractionResponseSchema,
-  requestBodySchema,
-  type ExtractionResponse,
-} from './schema';
+import { extractionResponseSchema, requestBodySchema, type ExtractionResponse } from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
 import { handleEnrich } from './enrich';
 import { handleFetchPost } from './fetch-post';
@@ -36,7 +32,11 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function errorResponse(error: string, status: number, extraHeaders: Record<string, string> = {}): Response {
+function errorResponse(
+  error: string,
+  status: number,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify({ error }), {
     status,
     headers: { ...JSON_HEADERS, ...extraHeaders },

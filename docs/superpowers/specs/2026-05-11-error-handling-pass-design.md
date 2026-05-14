@@ -13,11 +13,12 @@ v0.3's definition of done is "5–10 friends are using it on TestFlight, app is 
 - **Denied Photos permission** — `expo-image-picker` returns `result.canceled` for both real cancellation and a denied prompt. After a one-time denial, iOS will not re-prompt and the user cannot recover without help.
 - **Storage full** — listed in roadmap. Realistically rare on iOS but a friend hitting it during the beta would be silent today.
 
-The wedge here is *user trust*. A friend who taps share and sees nothing happen will assume the app is broken and stop. Surfacing failures is the cheapest way to keep them in the loop.
+The wedge here is _user trust_. A friend who taps share and sees nothing happen will assume the app is broken and stop. Surfacing failures is the cheapest way to keep them in the loop.
 
 ## Scope
 
 In:
+
 - Share-sheet import failures (Swift, in the extension UI).
 - Camera-roll import failures and partial-failure summaries.
 - Photos permission denial with a recovery path (Open Settings).
@@ -25,6 +26,7 @@ In:
 - A reusable toast primitive for non-blocking errors (and any future success/info confirmations).
 
 Out (explicit non-goals for this pass):
+
 - Destructive-action Alerts (delete trip, remove from trip, rename, etc.) — these already work and are correctly modal.
 - Extraction / enrichment pipeline errors — already classified for the worker retry loop; not user-surfaced by design.
 - A generic global error boundary — Sentry already captures crashes.
@@ -34,12 +36,12 @@ Out (explicit non-goals for this pass):
 
 ## UX decisions
 
-| Decision | Choice |
-|---|---|
-| Surface style | **Mixed.** `Alert.alert` for *actionable* errors (permission denied with Open Settings deeplink); non-blocking toast for *partial / silent* failures ("3 of 12 didn't import"). |
-| Share-extension failure UX | **Inline error in `TripPickerView`** with Retry / Cancel. The user is still looking at the sheet — that's the most discoverable place. |
-| Storage-full detection | **Catch + classify** on write failure. No pre-flight free-space check. |
-| Permission denial flow | **Pre-check** `ImagePicker.getMediaLibraryPermissionsAsync()` before launching the picker. If `canAskAgain`, prompt natively. Otherwise show `Alert.alert` with **Open Settings** + **Not now**. `'limited'` counts as granted. |
+| Decision                   | Choice                                                                                                                                                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Surface style              | **Mixed.** `Alert.alert` for _actionable_ errors (permission denied with Open Settings deeplink); non-blocking toast for _partial / silent_ failures ("3 of 12 didn't import").                                                 |
+| Share-extension failure UX | **Inline error in `TripPickerView`** with Retry / Cancel. The user is still looking at the sheet — that's the most discoverable place.                                                                                          |
+| Storage-full detection     | **Catch + classify** on write failure. No pre-flight free-space check.                                                                                                                                                          |
+| Permission denial flow     | **Pre-check** `ImagePicker.getMediaLibraryPermissionsAsync()` before launching the picker. If `canAskAgain`, prompt natively. Otherwise show `Alert.alert` with **Open Settings** + **Not now**. `'limited'` counts as granted. |
 
 ## Architecture
 
@@ -68,6 +70,7 @@ export function useToastSubscription(): Toast | null;
 ```
 
 **Behavior:**
+
 - Single-slot. A new toast replaces the current one immediately. No queue.
 - Bottom-anchored. Uses `useSafeAreaInsets()` for the bottom offset; sits above the NativeTab bar and above any modal stack (mounted at the root layout, outside the `<Stack>`).
 - Auto-dismiss after `durationMs` (default 5s, 8s with an action).
@@ -75,6 +78,7 @@ export function useToastSubscription(): Toast | null;
 - Accessibility: `accessibilityRole="alert"`, `accessibilityLiveRegion="polite"` (VoiceOver announces the message).
 
 **Theme tokens:**
+
 - Reuses existing `infoBg` / `infoText` for `kind: 'success'`.
 - Adds `dangerBg` / `dangerText` to `tw/theme.ts` (light + dark) for `kind: 'error'`. Suggested values: light `#fee2e2` / `#991b1b`, dark `#3f1d1d` / `#fca5a5`. Verify contrast in the design pass.
 
@@ -90,6 +94,7 @@ export async function ensurePhotosAccess(): Promise<PhotosAccess>;
 ```
 
 **Flow:**
+
 1. `getMediaLibraryPermissionsAsync()`.
 2. `status === 'granted'` (incl. `'limited'`) → return `'granted'`.
 3. `canAskAgain === true` → call `requestMediaLibraryPermissionsAsync()`. Return based on result.
@@ -112,12 +117,13 @@ export function classifyImportError(err: unknown): CaptureErrorKind;
 ```
 
 **Detection:** match (case-insensitive) on the error's `code`, `message`, or stringified form for any of:
+
 - `ENOSPC`
 - `NSFileWriteOutOfSpaceError` (Cocoa file write, no space)
 - Cocoa `NSCocoaErrorDomain` code `640` (`NSFileWriteOutOfSpaceError`)
 - substrings `"no space"`, `"out of space"`, `"out of storage"`, `"database or disk is full"` (SQLite full-disk error from `insertSource`)
 
-Cocoa `642` is **`NSFileWriteVolumeReadOnlyError`**, *not* out-of-space, and is intentionally excluded — matching it would surface "Your device is out of storage" for a read-only-volume failure (an unrelated, much rarer condition we don't address in this pass).
+Cocoa `642` is **`NSFileWriteVolumeReadOnlyError`**, _not_ out-of-space, and is intentionally excluded — matching it would surface "Your device is out of storage" for a read-only-volume failure (an unrelated, much rarer condition we don't address in this pass).
 
 Anything not matching is `'unknown'`. We do not classify network / extraction / enrichment errors here — those have their own taxonomy in the worker pipeline.
 
@@ -125,8 +131,8 @@ Anything not matching is `'unknown'`. We do not classify network / extraction / 
 
 ```ts
 type Outcome = {
-  imported: number;   // includes 'duplicate' results from importImage (same net state for the user)
-  failed: number;     // hard failures + items skipped after storage-full short-circuit
+  imported: number; // includes 'duplicate' results from importImage (same net state for the user)
+  failed: number; // hard failures + items skipped after storage-full short-circuit
   storageFull: number;
   denied: boolean;
 };
@@ -137,6 +143,7 @@ type Outcome = {
 **Concurrency and storage-full short-circuit:** the importer currently runs 4 concurrent workers (`pickPhotos.ts:47-72`). On the first `'storage-full'` classification, a shared `storageFullDetected` flag is set. Each worker checks it before pulling the next item from the queue; if set, the worker drains the remaining queue without calling `importImage` (any items already in flight finish — best-effort stop, no cancellation). Drained items are counted in `failed` (they're failures from the user's POV — we tried, the device was full, we gave up). The `storageFull` field still counts only items where the classifier matched, so toast rule precedence is: any `storageFull > 0` → storage-full message regardless of other counts.
 
 **Changes:**
+
 1. Before `launchImageLibraryAsync`, call `ensurePhotosAccess()`. If `'denied'`, return `{ imported: 0, failed: 0, storageFull: 0, denied: true }`. No toast — the Alert already explained it.
 2. Per-asset `catch` calls `classifyImportError(err)`. If `'storage-full'`, increment `storageFull` and `failed`, set `storageFullDetected`. Other failures increment `failed` only.
 3. Workers check `storageFullDetected` before each `queue.shift()`; if set, drain the queue, counting each remaining item as `failed`.
@@ -159,34 +166,37 @@ enum SaveError { case noImage, writeFailed }
 ```
 
 When `saveError != nil`, the picker UI is replaced (or overlaid) with:
+
 - Icon + heading **"Couldn't save"**
 - Body: error-specific copy ("This share didn't include an image we can read." / "Trip Pocket couldn't save the screenshot. Try again, or open Trip Pocket if the problem keeps happening.")
 - Buttons: **Retry** (re-runs the save flow) / **Cancel** (calls extension `cancel()`).
 
 **`ShareViewController.swift`** changes:
+
 - Lift the `handleSave` body into a method the SwiftUI view can re-invoke. The view holds a closure passed in via `TripPickerView(onSave:onCancel:)`.
 - On the three failure paths (`item == nil`, `materializeImage == nil`, `PendingImportWriter().write` throws), don't call `cancel()`. Instead, dispatch to main and set the view's `saveError` via a callback the view passes in (extend constructor: `onError: (SaveError) -> Void`, or thread a binding). The view shows the error UI; the user picks Retry or Cancel.
 - `Retry` re-runs the same `handleSave` with the previously-picked `tripId`.
 - `Cancel` invokes the existing `cancel()` path.
 
 **Implementation notes:**
+
 - Disambiguate "no attachment" from "image load failed": no attachment is a user-error (they shared something we can't read), and the body copy reflects that.
 - Time-bound retries: don't limit them. The user is in front of the sheet and can dismiss.
 - **No file leaks on Retry.** `PendingImportWriter.write` (`native/ShareExtension/PendingImportWriter.swift:22-33, 82-84`) generates a fresh UUID destination, copies the image into the app-group inbox, then opens SQLite and inserts the row. If the DB step throws (`PendingImportError.dbFailed`), the copied file is orphaned today. Under the new Retry loop, every retry on a persistent DB-failure would copy another orphan. Fix as part of this pass: `PendingImportWriter.write` must remove the copied file on any post-copy failure (DB open, table create, prepare, step). Wrap the post-copy work in a `do { ... } catch { try? FileManager.default.removeItem(at: destURL); throw }` pattern. Retry then starts clean.
-- Telemetry: we *do not* add anything new for the share extension here. Sentry's React Native SDK does not cover the extension target. Adding `sentry-cocoa` to the extension is a separate sub-project if we want signal on these failures; for this pass we accept that share-extension errors are user-surfaced only.
+- Telemetry: we _do not_ add anything new for the share extension here. Sentry's React Native SDK does not cover the extension target. Adding `sentry-cocoa` to the extension is a separate sub-project if we want signal on these failures; for this pass we accept that share-extension errors are user-surfaced only.
 
 ## Wire-up summary
 
-| Call site | Change |
-|---|---|
-| `app/_layout.tsx` | Mount `<ErrorToast />` once at the root (outside the `<Stack>`, inside the safe-area provider). |
-| `components/pickPhotos.ts` | Add `ensurePhotosAccess()` gate; classify per-asset errors; fire one toast on outcome. |
-| `components/HeaderCaptureButton.tsx` | No change — the button calls `pickPhotosForImport` which now self-handles permission + errors. |
-| `modules/capture/importImage.ts` | No change. Errors propagate as today; classification happens in the caller. |
-| `modules/capture/ingest.ts` | No change in this pass. Pending-imports failures keep their row and retry on next foreground; we do not toast for them here. (Revisit if a friend reports stuck pending rows.) |
-| `tw/theme.ts` | Add `dangerBg` / `dangerText` for light + dark schemes. |
-| `native/ShareExtension/ShareViewController.swift` | Refactor `handleSave` to report errors back to the view rather than calling `cancel()`. |
-| `native/ShareExtension/TripPickerView.swift` | Add `saveError` state + error overlay with Retry / Cancel. Constructor extended with `onError` callback. |
+| Call site                                         | Change                                                                                                                                                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/_layout.tsx`                                 | Mount `<ErrorToast />` once at the root (outside the `<Stack>`, inside the safe-area provider).                                                                                             |
+| `components/pickPhotos.ts`                        | Add `ensurePhotosAccess()` gate; classify per-asset errors; fire one toast on outcome.                                                                                                      |
+| `components/HeaderCaptureButton.tsx`              | No change — the button calls `pickPhotosForImport` which now self-handles permission + errors.                                                                                              |
+| `modules/capture/importImage.ts`                  | No change. Errors propagate as today; classification happens in the caller.                                                                                                                 |
+| `modules/capture/ingest.ts`                       | No change in this pass. Pending-imports failures keep their row and retry on next foreground; we do not toast for them here. (Revisit if a friend reports stuck pending rows.)              |
+| `tw/theme.ts`                                     | Add `dangerBg` / `dangerText` for light + dark schemes.                                                                                                                                     |
+| `native/ShareExtension/ShareViewController.swift` | Refactor `handleSave` to report errors back to the view rather than calling `cancel()`.                                                                                                     |
+| `native/ShareExtension/TripPickerView.swift`      | Add `saveError` state + error overlay with Retry / Cancel. Constructor extended with `onError` callback.                                                                                    |
 | `native/ShareExtension/PendingImportWriter.swift` | On any post-copy failure (DB open / create / prepare / step), remove the just-copied file before re-throwing. Prevents Retry from leaking app-group inbox files on a persistent DB-failure. |
 
 ## Data flow
@@ -216,14 +226,14 @@ Share-sheet path (in app process, later):
 
 ## Testing
 
-| Unit | Test |
-|---|---|
-| `lib/toast/toast.ts` | Subscription receives showToast / dismissToast events; auto-dismiss timer fires after `durationMs`; replace-on-new-show behavior. |
-| `components/ErrorToast.tsx` | Renders nothing when no current toast; renders message + action; tap action calls handler then dismisses; live-region attribute present. |
-| `lib/permissions/photos.ts` | Three cases — granted immediately, prompt-then-grant, denied-with-alert. Mock `ImagePicker` and `Linking.openSettings`. |
-| `lib/errors/captureErrors.ts` | Pure unit tests: `ENOSPC` string, `NSFileWriteOutOfSpaceError` object, Cocoa code 640/642, "no space" substring, unknown. |
-| `components/pickPhotos.ts` | New tests for the outcome → toast mapping (denied, partial, total, storage-full). Existing import success path stays green. Mock `ensurePhotosAccess` and `showToast`. |
-| Share extension | Manual on device. Two paths: deny sharing a non-image attachment (e.g. share a URL via a path the extension doesn't support — verifies "noImage" copy if reachable, otherwise mock by temporarily breaking `PendingImportWriter.write` in a debug build to verify the Retry UI). |
+| Unit                          | Test                                                                                                                                                                                                                                                                             |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/toast/toast.ts`          | Subscription receives showToast / dismissToast events; auto-dismiss timer fires after `durationMs`; replace-on-new-show behavior.                                                                                                                                                |
+| `components/ErrorToast.tsx`   | Renders nothing when no current toast; renders message + action; tap action calls handler then dismisses; live-region attribute present.                                                                                                                                         |
+| `lib/permissions/photos.ts`   | Three cases — granted immediately, prompt-then-grant, denied-with-alert. Mock `ImagePicker` and `Linking.openSettings`.                                                                                                                                                          |
+| `lib/errors/captureErrors.ts` | Pure unit tests: `ENOSPC` string, `NSFileWriteOutOfSpaceError` object, Cocoa code 640/642, "no space" substring, unknown.                                                                                                                                                        |
+| `components/pickPhotos.ts`    | New tests for the outcome → toast mapping (denied, partial, total, storage-full). Existing import success path stays green. Mock `ensurePhotosAccess` and `showToast`.                                                                                                           |
+| Share extension               | Manual on device. Two paths: deny sharing a non-image attachment (e.g. share a URL via a path the extension doesn't support — verifies "noImage" copy if reachable, otherwise mock by temporarily breaking `PendingImportWriter.write` in a debug build to verify the Retry UI). |
 
 No new e2e coverage. Existing Cloudflare Worker tests and DB tests are unaffected.
 
@@ -238,8 +248,8 @@ No new e2e coverage. Existing Cloudflare Worker tests and DB tests are unaffecte
 
 ## Risks
 
-- **`dangerBg` / `dangerText` contrast** — needs a quick check against the existing Sea+Teal palette in light and dark. If the suggested values clash, pick adjusted hex values in the implementation step; the *shape* of the design doesn't change.
-- **Toast above modals** — depending on where `<Stack>` modals render relative to the root, the toast may be obscured by a presented modal. Mitigation: mount the toast as the *last* child of the safe-area provider, and verify on the trip-picker / new-trip modal in a manual pass.
+- **`dangerBg` / `dangerText` contrast** — needs a quick check against the existing Sea+Teal palette in light and dark. If the suggested values clash, pick adjusted hex values in the implementation step; the _shape_ of the design doesn't change.
+- **Toast above modals** — depending on where `<Stack>` modals render relative to the root, the toast may be obscured by a presented modal. Mitigation: mount the toast as the _last_ child of the safe-area provider, and verify on the trip-picker / new-trip modal in a manual pass.
 - **Share-extension Retry loop** — if the underlying failure is permanent (e.g. corrupt image), Retry will fail again. Acceptable; the user has Cancel.
 - **Storage-full classifier brittle to error strings** — Expo's filesystem and `expo-sqlite` may produce platform-specific messages. Mitigation: classifier matches multiple substrings + codes. If a friend hits a miss, add their string in a follow-up commit.
 

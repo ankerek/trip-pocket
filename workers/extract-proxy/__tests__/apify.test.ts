@@ -38,10 +38,7 @@ describe('mapApifyItem', () => {
         url: 'https://www.instagram.com/p/CAR/',
         caption: 'slides',
         displayUrl: 'https://cdn/cover.jpg',
-        childPosts: [
-          { displayUrl: 'https://cdn/s2.jpg' },
-          { displayUrl: 'https://cdn/s3.jpg' },
-        ],
+        childPosts: [{ displayUrl: 'https://cdn/s2.jpg' }, { displayUrl: 'https://cdn/s3.jpg' }],
         ownerUsername: 'creator',
         type: 'Sidecar',
       },
@@ -106,15 +103,9 @@ describe('fetchInstagramViaApify', () => {
       );
     }) as unknown as typeof fetch;
 
-    const out = await fetchInstagramViaApify(
-      'https://www.instagram.com/p/ABC/',
-      opts,
-    );
+    const out = await fetchInstagramViaApify('https://www.instagram.com/p/ABC/', opts);
     expect(out.caption).toBe('hello');
-    expect(out.imageUrls).toEqual([
-      'https://cdn/cover.jpg',
-      'https://cdn/s2.jpg',
-    ]);
+    expect(out.imageUrls).toEqual(['https://cdn/cover.jpg', 'https://cdn/s2.jpg']);
     expect(out.author).toBe('@foo');
 
     const c = captured as unknown as { url: string; init: RequestInit };

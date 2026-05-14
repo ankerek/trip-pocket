@@ -15,6 +15,7 @@ Apify's `apify/instagram-post-scraper` actor returns the full carousel (`childPo
 ## Scope
 
 **In scope:**
+
 - New worker dispatch in `/fetch-post`: og: stays the cheap fast-path; Apify fires for IG carousels and og: failures.
 - Apify integration (`APIFY_TOKEN`, `APIFY_ACTOR_ID`) with the actor pluggable via env.
 - Phone-side multi-image OCR for carousels — download all slides, OCR each, concat into `sources.ocr_text`, then drop temp slide files. Cover (slide 1) remains the only persisted image.
@@ -22,6 +23,7 @@ Apify's `apify/instagram-post-scraper` actor returns the full carousel (`childPo
 - Telemetry: per-request route, og: outcome, Apify outcome, cache hit/miss.
 
 **Not in scope:**
+
 - TikTok via Apify — TikTok stays on og: + oEmbed.
 - Persisting slides 2..N to disk. The WebView pulls them live from IG's CDN; local cache only holds the cover.
 - Rich metadata storage (likes, hashtags, mentions, alt text, video URL). Apify returns these; we still don't store any.
@@ -42,13 +44,13 @@ Calls `sones/instagram-posts-scraper-lowcost` (configurable via `APIFY_ACTOR_ID`
 
 ### Dispatch matrix
 
-| URL shape | og: fetch | `efg` hint | Apify fires? | Final response source |
-|---|---|---|---|---|
-| `/reel/`, `/tv/` | yes | n/a | no | og: |
-| `/p/` | yes | `single` | no | og: |
-| `/p/` | yes | `CAROUSEL_ITEM` | **yes** | **Apify** (og: discarded) |
-| `/p/` | yes | unknown / missing / decode-fail | **yes** | **Apify** (og: discarded) |
-| any | failed / empty | n/a | yes | Apify (full replacement) |
+| URL shape        | og: fetch      | `efg` hint                      | Apify fires? | Final response source     |
+| ---------------- | -------------- | ------------------------------- | ------------ | ------------------------- |
+| `/reel/`, `/tv/` | yes            | n/a                             | no           | og:                       |
+| `/p/`            | yes            | `single`                        | no           | og:                       |
+| `/p/`            | yes            | `CAROUSEL_ITEM`                 | **yes**      | **Apify** (og: discarded) |
+| `/p/`            | yes            | unknown / missing / decode-fail | **yes**      | **Apify** (og: discarded) |
+| any              | failed / empty | n/a                             | yes          | Apify (full replacement)  |
 
 og: is still fetched for `/p/` posts because that's how we cheaply distinguish single from carousel. The fetch is sub-second; we discard its body when Apify fires.
 
@@ -80,11 +82,11 @@ og: is still fetched for `/p/` posts because that's how we cheaply distinguish s
 
 **Selected:** `apify/instagram-post-scraper` at **$1.70 / 1000 results** on our Apify plan. Headless-browser-based, maintained by Apify.
 
-| | **Selected: `apify/instagram-post-scraper`** | Alternative: `sones/instagram-posts-scraper-lowcost` |
-|---|---|---|
-| Price (our tier) | $1.70 / 1000 | $0.30 / 1000 |
-| Engine | Headless browser | HTTP-only |
-| Maintainer | Apify | Third-party |
+|                  | **Selected: `apify/instagram-post-scraper`** | Alternative: `sones/instagram-posts-scraper-lowcost` |
+| ---------------- | -------------------------------------------- | ---------------------------------------------------- |
+| Price (our tier) | $1.70 / 1000                                 | $0.30 / 1000                                         |
+| Engine           | Headless browser                             | HTTP-only                                            |
+| Maintainer       | Apify                                        | Third-party                                          |
 
 The actor is pluggable. `APIFY_ACTOR_ID` is a Wrangler env var defaulting to the official actor. If cost ever bites at scale, swapping to the lowcost actor is a config change. The worker normalizes the actor's output into the response shape above:
 
@@ -142,15 +144,15 @@ The processing state machine extends with multi-image OCR for carousels. Storage
 
 Extends the v0.2.1 matrix.
 
-| Stage fails | Outcome |
-|---|---|
-| Worker `og: fetch` fails on `/p/` | Apify fallback fires. Standard. |
-| Worker detects carousel; Apify call fails | **Source goes to `extraction_status='failed'`.** No og: degradation. Tile shows platform placeholder; user can re-share to retry. |
-| Apify returns empty `childPosts` for a known carousel | Treat as single-image: cover + caption only. Log `apify_outcome=carousel_no_children`. |
-| Slide-N download fails (N>0) on phone | Skip that slide; continue OCR for remaining slides + caption. Don't fail the whole source. |
-| All slides + cover fail to download | Caption-only fallback (today's behavior). |
-| OCR fails on slide N | Skip that slide's text; continue. |
-| `/extract` returns empty / errors | Same as today. |
+| Stage fails                                           | Outcome                                                                                                                           |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Worker `og: fetch` fails on `/p/`                     | Apify fallback fires. Standard.                                                                                                   |
+| Worker detects carousel; Apify call fails             | **Source goes to `extraction_status='failed'`.** No og: degradation. Tile shows platform placeholder; user can re-share to retry. |
+| Apify returns empty `childPosts` for a known carousel | Treat as single-image: cover + caption only. Log `apify_outcome=carousel_no_children`.                                            |
+| Slide-N download fails (N>0) on phone                 | Skip that slide; continue OCR for remaining slides + caption. Don't fail the whole source.                                        |
+| All slides + cover fail to download                   | Caption-only fallback (today's behavior).                                                                                         |
+| OCR fails on slide N                                  | Skip that slide's text; continue.                                                                                                 |
+| `/extract` returns empty / errors                     | Same as today.                                                                                                                    |
 
 The "Apify fails on a known carousel" case deliberately does not fall back to og:-only. Once the worker has identified a post as a carousel, partial data (slide-1 + caption) is worse than no data — it would silently miss the places on slides 2..N that the user just saved the post to capture. Better to surface a clear failure the user can retry than to ship a source that looks fine but has half the information.
 
@@ -165,6 +167,7 @@ Worker logs per `/fetch-post` call. No URL, no caption, no body content — shap
 - `latency_ms`
 
 Sentry alerts:
+
 - Apify `error` rate > 5% over the trailing 100 calls → investigate (actor regression, Apify outage, or IG blocking the actor's egress).
 - og: `http_429` rate > 0 → IG rate-limiting; pivot ladder is engaging.
 - Weekly Apify call count → sanity check on billing (count × $1.70/1000 at our current Apify tier; flip to $0.30/1000 if `APIFY_ACTOR_ID` is swapped to the lowcost alternative).

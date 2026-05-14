@@ -1,9 +1,5 @@
 import { z } from 'zod';
-import {
-  EnrichmentError,
-  type EnrichOutcome,
-  type EnrichRequestPayload,
-} from './enrichment';
+import { EnrichmentError, type EnrichOutcome, type EnrichRequestPayload } from './enrichment';
 import { getEntitlementUserId } from '@/lib/entitlement/userId';
 
 // Closed-vocab debug echo from the worker. Optional because an older deployed
@@ -51,7 +47,10 @@ const responseSchema = z.union([
     // Null when missing on Google's side; COALESCE in the write path then
     // preserves the LLM value.
     city: z.string().nullable(),
-    country_code: z.string().regex(/^[A-Z]{2}$/).nullable(),
+    country_code: z
+      .string()
+      .regex(/^[A-Z]{2}$/)
+      .nullable(),
     model: z.string().min(1),
     _debug: debugSchema.optional(),
   }),

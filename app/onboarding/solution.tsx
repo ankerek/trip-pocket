@@ -43,18 +43,13 @@ export default function SolutionScreen() {
       step={3}
       headline="Here's the fix for each one."
       sub="Old pain on top. The fix, right below."
-      footer={
-        <PrimaryButton
-          label="Continue"
-          onPress={() => router.push('/onboarding/demo')}
-        />
-      }
+      footer={<PrimaryButton label="Continue" onPress={() => router.push('/onboarding/demo')} />}
     >
       <View>
         {ROWS.map((r) => (
           <View
             key={r.icon}
-            className="mb-3 flex-row items-start rounded-2xl border border-hairline bg-surface p-4"
+            className="border-hairline bg-surface mb-3 flex-row items-start rounded-2xl border p-4"
           >
             <View
               className="mr-3 h-10 w-10 items-center justify-center rounded-full"
@@ -70,7 +65,7 @@ export default function SolutionScreen() {
                 {r.pain}
               </Text>
               <Text
-                className="mt-1 text-text"
+                className="text-text mt-1"
                 style={{ fontSize: 15, fontWeight: '600', lineHeight: 22, letterSpacing: -0.2 }}
               >
                 {r.solution}

@@ -83,9 +83,7 @@ function buildGoogleUrl(t: MapTarget): string {
   return `comgooglemaps://?q=${encodeURIComponent(buildSearchQuery(t))}`;
 }
 
-function hasCoords(
-  t: MapTarget,
-): t is MapTarget & { latitude: number; longitude: number } {
+function hasCoords(t: MapTarget): t is MapTarget & { latitude: number; longitude: number } {
   return (
     typeof t.latitude === 'number' &&
     Number.isFinite(t.latitude) &&

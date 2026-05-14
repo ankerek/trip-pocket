@@ -19,10 +19,7 @@ const TARGETS = process.argv.slice(2).length
     ];
 
 function findOg(html, prop) {
-  const re = new RegExp(
-    `<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']*)["']`,
-    'i'
-  );
+  const re = new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']*)["']`, 'i');
   const m = html.match(re);
   return m ? m[1] : null;
 }
@@ -31,9 +28,7 @@ function decodeEntities(s) {
   if (!s) return s;
   // Numeric (decimal and hex) HTML entities
   return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) =>
-      String.fromCodePoint(parseInt(h, 16))
-    )
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
@@ -137,7 +132,9 @@ async function probe(id) {
   const ogImage = decodeEntities(ogImageRaw);
 
   console.log(`\n  og:type        = ${ogType}`);
-  console.log(`  og:title       = (${ogTitleRaw?.length ?? 0} raw chars) ${ogTitle?.slice(0, 200)}`);
+  console.log(
+    `  og:title       = (${ogTitleRaw?.length ?? 0} raw chars) ${ogTitle?.slice(0, 200)}`,
+  );
   console.log(`  og:description = (${ogDescRaw?.length ?? 0} raw chars)`);
   if (ogDesc) {
     console.log(`     ┌─ full decoded ─`);
@@ -167,9 +164,7 @@ async function probe(id) {
 
   const cdnImages = findAllCdnImages(html);
   console.log(`\n  CDN image URLs: ${cdnImages.length} unique`);
-  cdnImages.slice(0, 20).forEach((u, i) =>
-    console.log(`    [${i}] ${u.slice(0, 160)}`)
-  );
+  cdnImages.slice(0, 20).forEach((u, i) => console.log(`    [${i}] ${u.slice(0, 160)}`));
 
   // Dump HTML for offline inspection
   const outPath = new URL(`./dump-${id}.html`, import.meta.url);

@@ -1,16 +1,7 @@
-import {
-  openDatabase,
-  runMigrations,
-  listSources,
-  type Database,
-} from '@/modules/storage';
+import { openDatabase, runMigrations, listSources, type Database } from '@/modules/storage';
 import { migrations } from '@/modules/storage/migrations';
 import { _resetProcessorForTests, provideProcessor, type Processor } from '@/modules/processing';
-import {
-  detectPlatformFromUrl,
-  importUrl,
-  normalizeUrl,
-} from '../importUrl';
+import { detectPlatformFromUrl, importUrl, normalizeUrl } from '../importUrl';
 
 const ownerId = '00000000-0000-0000-0000-000000000001';
 
@@ -49,13 +40,12 @@ describe('detectPlatformFromUrl', () => {
     expect(detectPlatformFromUrl(url)).toBe(expected);
   });
 
-  it.each([
-    ['https://youtube.com/watch?v=1'],
-    ['not-a-url'],
-    ['https://twitter.com/x/status/1'],
-  ])('returns null for unsupported url %s', (url) => {
-    expect(detectPlatformFromUrl(url)).toBeNull();
-  });
+  it.each([['https://youtube.com/watch?v=1'], ['not-a-url'], ['https://twitter.com/x/status/1']])(
+    'returns null for unsupported url %s',
+    (url) => {
+      expect(detectPlatformFromUrl(url)).toBeNull();
+    },
+  );
 });
 
 describe('normalizeUrl', () => {
@@ -72,12 +62,8 @@ describe('normalizeUrl', () => {
   });
 
   it('preserves TikTok short-link subdomains (vm./vt. carry meaning)', () => {
-    expect(normalizeUrl('https://vm.tiktok.com/abc')).toBe(
-      'https://vm.tiktok.com/abc',
-    );
-    expect(normalizeUrl('https://vt.tiktok.com/xyz')).toBe(
-      'https://vt.tiktok.com/xyz',
-    );
+    expect(normalizeUrl('https://vm.tiktok.com/abc')).toBe('https://vm.tiktok.com/abc');
+    expect(normalizeUrl('https://vt.tiktok.com/xyz')).toBe('https://vt.tiktok.com/xyz');
   });
 
   it('keeps a bare https://host/ slash', () => {

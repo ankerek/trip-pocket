@@ -19,13 +19,9 @@ import { entitlementStatus, type EntitlementStatus } from './status';
 import { readCachedStatus, writeCachedStatus } from './storage';
 import { PLANS, type PlanId } from './plans';
 
-type PurchaseResult =
-  | { ok: true }
-  | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' };
+type PurchaseResult = { ok: true } | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' };
 
-type RestoreResult =
-  | { ok: true; entitled: boolean }
-  | { ok: false };
+type RestoreResult = { ok: true; entitled: boolean } | { ok: false };
 
 interface EntitlementContextValue {
   status: 'loading' | EntitlementStatus;
@@ -50,14 +46,18 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
   // Seed from the cached file synchronously so first render has a definite
   // status. Provider sits outside the existing root `ready` guard — see
   // app/_layout.tsx changes in Task 21.
-  const [status, setStatus] = useState<'loading' | EntitlementStatus>(() => readCachedStatus() ?? 'loading');
+  const [status, setStatus] = useState<'loading' | EntitlementStatus>(
+    () => readCachedStatus() ?? 'loading',
+  );
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [offerings, setOfferings] = useState<PurchasesOfferings | null>(null);
   const previousStatus = useRef<EntitlementStatus | 'loading'>(status);
   const offeringsRef = useRef<PurchasesOfferings | null>(offerings);
   const resumeHandlers = useRef<Set<() => void | Promise<void>>>(new Set());
 
-  useEffect(() => { offeringsRef.current = offerings; }, [offerings]);
+  useEffect(() => {
+    offeringsRef.current = offerings;
+  }, [offerings]);
 
   const applyCustomerInfo = useCallback((info: CustomerInfo | null) => {
     const next = entitlementStatus(info);
@@ -86,9 +86,7 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (!RC_API_KEY) {
-        console.warn(
-          '[entitlement] EXPO_PUBLIC_RC_IOS_API_KEY missing — treating as inactive',
-        );
+        console.warn('[entitlement] EXPO_PUBLIC_RC_IOS_API_KEY missing — treating as inactive');
         setStatus('inactive');
         return;
       }
@@ -147,36 +145,30 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
     }
   }, [applyCustomerInfo]);
 
-  const purchasePlan = useCallback(
-    async (planId: PlanId): Promise<PurchaseResult> => {
-      const plan = PLANS.find((p) => p.id === planId);
-      if (!plan) return { ok: false, reason: 'error' };
-      try {
-        const off = offeringsRef.current ?? (await Purchases.getOfferings());
-        const pkg = off.current?.availablePackages.find(
-          (p) => p.product.identifier === plan.productId,
-        );
-        if (!pkg) return { ok: false, reason: 'error' };
-        await Purchases.purchasePackage(pkg);
-        return { ok: true };
-      } catch (err: unknown) {
-        const e = err as { userCancelled?: boolean | null; code?: PURCHASES_ERROR_CODE };
-        // Detect user cancel: check both the legacy boolean field and the canonical error code.
-        if (
-          e?.userCancelled === true ||
-          e?.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR
-        ) {
-          return { ok: false, reason: 'user-cancelled' };
-        }
-        // Detect pending payment (e.g. Ask to Buy / deferred purchase).
-        if (e?.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
-          return { ok: false, reason: 'pending' };
-        }
-        return { ok: false, reason: 'error' };
+  const purchasePlan = useCallback(async (planId: PlanId): Promise<PurchaseResult> => {
+    const plan = PLANS.find((p) => p.id === planId);
+    if (!plan) return { ok: false, reason: 'error' };
+    try {
+      const off = offeringsRef.current ?? (await Purchases.getOfferings());
+      const pkg = off.current?.availablePackages.find(
+        (p) => p.product.identifier === plan.productId,
+      );
+      if (!pkg) return { ok: false, reason: 'error' };
+      await Purchases.purchasePackage(pkg);
+      return { ok: true };
+    } catch (err: unknown) {
+      const e = err as { userCancelled?: boolean | null; code?: PURCHASES_ERROR_CODE };
+      // Detect user cancel: check both the legacy boolean field and the canonical error code.
+      if (e?.userCancelled === true || e?.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR) {
+        return { ok: false, reason: 'user-cancelled' };
       }
-    },
-    [],
-  );
+      // Detect pending payment (e.g. Ask to Buy / deferred purchase).
+      if (e?.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
+        return { ok: false, reason: 'pending' };
+      }
+      return { ok: false, reason: 'error' };
+    }
+  }, []);
 
   const restore = useCallback(async (): Promise<RestoreResult> => {
     try {

@@ -55,8 +55,7 @@ type Row = {
   updated_at: string;
 };
 
-const ALL =
-  `id, trip_id, name, city, country_code, category, normalized_key,
+const ALL = `id, trip_id, name, city, country_code, category, normalized_key,
    external_place_id, photo_name, description, rating, price_level,
    external_url, latitude, longitude, formatted_address,
    enrichment_status, enriched_at, enrichment_model,
@@ -125,18 +124,12 @@ export async function insertPlace(db: Database, input: InsertPlaceInput): Promis
   );
   notifyChange('places');
   notifyChange('trips');
-  const row = await db.getFirstAsync<Row>(
-    `SELECT ${ALL} FROM places WHERE id = ?`,
-    input.id,
-  );
+  const row = await db.getFirstAsync<Row>(`SELECT ${ALL} FROM places WHERE id = ?`, input.id);
   return rowToPlace(row!);
 }
 
 export async function getPlace(db: Database, id: string): Promise<Place | null> {
-  const row = await db.getFirstAsync<Row>(
-    `SELECT ${ALL} FROM places WHERE id = ?`,
-    id,
-  );
+  const row = await db.getFirstAsync<Row>(`SELECT ${ALL} FROM places WHERE id = ?`, id);
   return row ? rowToPlace(row) : null;
 }
 
@@ -174,9 +167,7 @@ export async function listPlaces(
     );
     return rows.map(rowToPlace);
   }
-  const rows = await db.getAllAsync<Row>(
-    `SELECT ${ALL} FROM places ORDER BY created_at DESC`,
-  );
+  const rows = await db.getAllAsync<Row>(`SELECT ${ALL} FROM places ORDER BY created_at DESC`);
   return rows.map(rowToPlace);
 }
 

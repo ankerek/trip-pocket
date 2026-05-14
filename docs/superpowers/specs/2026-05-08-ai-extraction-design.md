@@ -181,6 +181,7 @@ The Worker still Zod-validates the response as defense-in-depth; on validation f
 > You extract travel places from OCR text of social-media screenshots. Return all distinct places mentioned in the text.
 >
 > For each place return:
+>
 > - `name`: the proper name of the venue (e.g. "Maru Tonkatsu", "Tsukiji Outer Market"). Not generic categories ("a ramen shop"). Not descriptions ("the place near the station").
 > - `city`: the city the place is in. Infer from context if possible (neighborhood names, country names, surrounding text). Empty string if truly ambiguous — never guess wildly.
 > - `category`: `food` for restaurants / cafés / bars / markets. `activity` for things to do (hikes, museums, viewpoints, tours, day-trips). `place` for everything else (hotels, neighborhoods, generic locations).
@@ -203,10 +204,13 @@ simple = { limit = 100, period = 60 }   # 100 req/min per key
 ```
 
 ```ts
-const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
 const { success } = await env.RATE_LIMIT.limit({ key: ip });
-if (!success) return new Response(JSON.stringify({ error: "rate-limited" }),
-  { status: 429, headers: { "content-type": "application/json" } });
+if (!success)
+  return new Response(JSON.stringify({ error: 'rate-limited' }), {
+    status: 429,
+    headers: { 'content-type': 'application/json' },
+  });
 ```
 
 Cheap insurance. A leaked URL costs only a few dollars to abuse before the limiter cuts in. The client (extraction module) treats 429 as retryable with exponential backoff.
@@ -218,6 +222,7 @@ Cheap insurance. A leaked URL costs only a few dollars to abuse before the limit
 **Deploy:** `wrangler deploy`. Single environment, single URL — no staging during v0.2 (solo dev iteration). The proxy URL is committed in app config (`app.config.ts` extras) so the device knows where to call.
 
 **Cost ceiling for the Worker itself** (Gemini cost is the line item that matters):
+
 - Workers compute: free up to 100k req/day.
 - Rate Limiting binding: free.
 - Gemini: ~$6/mo at 45k calls (per the post-refresh budget table).
@@ -240,8 +245,8 @@ export type GeocoderRunner = (name: string, city: string) => Promise<GeocodeResu
 
 export type CreateExtractorOptions = {
   db: Database;
-  extract: ExtractionRunner;     // proxy client
-  geocode: GeocoderRunner;       // native AppleGeocoder
+  extract: ExtractionRunner; // proxy client
+  geocode: GeocoderRunner; // native AppleGeocoder
   ownerId: string;
 };
 
@@ -300,14 +305,14 @@ export interface Extractor {
 
 **Retry classification** (in the proxy adapter, not in `processOne`):
 
-| Proxy response | Treated as |
-|---|---|
-| 2xx | success |
-| 429 | **deferred — does NOT consume 3-try budget.** Honor `Retry-After` header if present (clamped to a 5-minute ceiling); else default 60s. The row is re-enqueued at the back of the queue after the delay. The retry counter does not increment. |
-| 5xx | retryable (consumes 3-try budget; backoff 1s/4s/16s) |
-| 4xx (other) | permanent failure (immediate `failed`) |
-| Network timeout (10s default) | retryable (consumes budget) |
-| TLS / DNS error | retryable (consumes budget) |
+| Proxy response                | Treated as                                                                                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2xx                           | success                                                                                                                                                                                                                                       |
+| 429                           | **deferred — does NOT consume 3-try budget.** Honor `Retry-After` header if present (clamped to a 5-minute ceiling); else default 60s. The row is re-enqueued at the back of the queue after the delay. The retry counter does not increment. |
+| 5xx                           | retryable (consumes 3-try budget; backoff 1s/4s/16s)                                                                                                                                                                                          |
+| 4xx (other)                   | permanent failure (immediate `failed`)                                                                                                                                                                                                        |
+| Network timeout (10s default) | retryable (consumes budget)                                                                                                                                                                                                                   |
+| TLS / DNS error               | retryable (consumes budget)                                                                                                                                                                                                                   |
 
 `processOne` sees three outcomes: "success", "deferred — re-enqueue after delay" (429), or "throw — retry policy applies" (5xx / timeout / 4xx). The classifier of what's retryable / deferred lives in the adapter so it can be unit-tested in isolation.
 
@@ -427,8 +432,7 @@ Same shape for the trip-detail grid (`WHERE s.trip_id = ?`). The pin overlay com
 
 ```ts
 const shimmer =
-  ocr_status === 'pending' ||
-  (ocr_status === 'done' && extraction_status === 'pending');
+  ocr_status === 'pending' || (ocr_status === 'done' && extraction_status === 'pending');
 ```
 
 Read as: shimmer when the pipeline still has live work to do for this row. OCR-pending counts (OCR will run); OCR-done-and-extraction-pending counts (extraction will run); OCR-failed does NOT count even though `extraction_status` is still at its default `'pending'` (extraction's sweep requires `ocr_status='done'`, so it'll never reach this row this session — shimmer would be a lie). There's no visual distinction between the OCR phase and the extraction phase; the user shouldn't have to care which step we're on. On the live transition from extraction-pending → done-with-places, the shimmer disappears and the pin badge appears in the same `useLiveQuery` re-fire (the SQLite COMMIT is atomic).
@@ -469,6 +473,7 @@ Tap row → `Linking.openURL(apple_maps_url || queryFallback(name, city))`.
 `queryFallback`: `https://maps.apple.com/?q=${encodeURIComponent([name, city].filter(Boolean).join(', '))}`.
 
 **Category icon mapping** (single source of truth in `app/_components/CategoryIcon.tsx`):
+
 - `food` → SF Symbol `fork.knife`
 - `activity` → SF Symbol `figure.walk`
 - `place` → SF Symbol `mappin.circle`
@@ -516,18 +521,22 @@ Error mapping in the adapter (so `processOne` only deals with three outcomes: su
 
 ```ts
 type ExtractionErrorKind =
-  | { kind: 'permanent' }                       // 4xx (non-429) — immediate `failed`
-  | { kind: 'retryable' }                       // 5xx, timeout, TLS — counts toward 3-try budget
+  | { kind: 'permanent' } // 4xx (non-429) — immediate `failed`
+  | { kind: 'retryable' } // 5xx, timeout, TLS — counts toward 3-try budget
   | { kind: 'deferred'; retryAfterMs: number }; // 429 — re-enqueue, do NOT count
 
 class ExtractionError extends Error {
-  constructor(message: string, public readonly classification: ExtractionErrorKind) {
+  constructor(
+    message: string,
+    public readonly classification: ExtractionErrorKind,
+  ) {
     super(message);
   }
 }
 ```
 
 `processOne`'s catch block branches on `err.classification.kind`:
+
 - `permanent` → mark `failed` immediately.
 - `retryable` → increment counter; re-enqueue if `<3`, else `failed`.
 - `deferred` → `setTimeout(() => enqueueExtraction(id), retryAfterMs)`. Counter untouched. The dedup set is freed when the timer fires (so a second enqueue from a foreground sweep during the wait window doesn't create a parallel timer).
@@ -582,51 +591,51 @@ The queue dedupes on `screenshotId`, so the OCR-success path and the sweep path 
 
 ## State & retry policy
 
-| State | Semantics | Transitions |
-|---|---|---|
+| State     | Semantics                                                                                                             | Transitions                                                                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pending` | Not yet attempted, or attempt in flight, or deferred after a 429, or just promoted from `failed` by startup recovery. | → `done` on success (incl. empty-OCR short-circuit). → `failed` after 3 in-memory retries within the current app session (429 deferrals are NOT counted). |
-| `done` | Extraction complete. 0..N rows in `extracted_places`. The 0-row case IS the classifier's "noise" signal. | Terminal in v0.2 (no re-extraction). |
-| `failed` | 3 in-session retries exhausted. | → `pending` on next process start (via `runStartupRecovery`), once. Mid-session foreground sweeps **do not** re-pick `failed`. |
+| `done`    | Extraction complete. 0..N rows in `extracted_places`. The 0-row case IS the classifier's "noise" signal.              | Terminal in v0.2 (no re-extraction).                                                                                                                      |
+| `failed`  | 3 in-session retries exhausted.                                                                                       | → `pending` on next process start (via `runStartupRecovery`), once. Mid-session foreground sweeps **do not** re-pick `failed`.                            |
 
 3 in-memory retries reuses the OCR pipeline's number — same defensible default. Once-per-launch promotion of `failed → pending` is intentional: a screenshot that genuinely can't be extracted (e.g. proxy is down for hours) doesn't burn budget on every foreground in between, but does get re-tried on the next cold start.
 
 ## UI states
 
-| Surface | State | Behavior |
-|---|---|---|
-| Inbox / Trip detail thumbnail | shimmer condition true (see above) | Shimmer (`animate-pulse` + `bg-black/10`). Single affordance for both background phases — no visual distinction between OCR-pending and extraction-pending. |
-| Inbox / Trip detail thumbnail | `extraction_status='done'`, `place_count > 0` | **Pin badge** (bottom-right corner): SF Symbol `mappin.circle.fill`, system-blue, full opacity. On extraction commit, the shimmer-off and pin-on transitions are atomic. |
-| Inbox / Trip detail thumbnail | `extraction_status='done'`, `place_count == 0` | **"No places" badge** (bottom-right corner): SF Symbol `mappin.slash`, system-gray, ~60% opacity. Tells the user "we processed this and didn't find anything to save" so they can confidently delete. Visually subordinate to the positive pin badge. |
-| Inbox / Trip detail thumbnail | `ocr_status='failed'` OR `extraction_status='failed'` | No badge, no shimmer. Failure is silent — the row may still produce places after a process restart (`runStartupRecovery`), so showing "no places" would be a false signal. Same posture as ARCHITECTURE.md's OCR rule. |
-| Screenshot detail | `extraction_status='done'`, ≥1 places | "Places" section renders below image + OCR panel. |
-| Screenshot detail | `extraction_status='done'`, 0 places | Small annotation below the OCR panel: "No places detected." Subtle (system-gray, footnote weight). No CTA — the existing detail-screen delete affordance is what the user uses. |
-| Screenshot detail | `extraction_status='pending'` | No "Places" section yet, no annotation. The thumbnail-grid shimmer is the only "still working" cue; the detail screen doesn't get its own. |
-| Screenshot detail | `extraction_status='failed'` | No "Places" section, no annotation. Silent. |
-| Trip detail | trip has any extracted places | Tab toggle visible: Photos / Places. |
-| Trip detail | trip has 0 extracted places | Tab toggle hidden (just the Photos grid as today). Avoids an empty Places tab dangling at the top of every brand-new trip. |
-| Trip detail | tab toggle visible, Places tab tapped | Distinct-place list, ordered by last-seen DESC. |
+| Surface                       | State                                                 | Behavior                                                                                                                                                                                                                                              |
+| ----------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbox / Trip detail thumbnail | shimmer condition true (see above)                    | Shimmer (`animate-pulse` + `bg-black/10`). Single affordance for both background phases — no visual distinction between OCR-pending and extraction-pending.                                                                                           |
+| Inbox / Trip detail thumbnail | `extraction_status='done'`, `place_count > 0`         | **Pin badge** (bottom-right corner): SF Symbol `mappin.circle.fill`, system-blue, full opacity. On extraction commit, the shimmer-off and pin-on transitions are atomic.                                                                              |
+| Inbox / Trip detail thumbnail | `extraction_status='done'`, `place_count == 0`        | **"No places" badge** (bottom-right corner): SF Symbol `mappin.slash`, system-gray, ~60% opacity. Tells the user "we processed this and didn't find anything to save" so they can confidently delete. Visually subordinate to the positive pin badge. |
+| Inbox / Trip detail thumbnail | `ocr_status='failed'` OR `extraction_status='failed'` | No badge, no shimmer. Failure is silent — the row may still produce places after a process restart (`runStartupRecovery`), so showing "no places" would be a false signal. Same posture as ARCHITECTURE.md's OCR rule.                                |
+| Screenshot detail             | `extraction_status='done'`, ≥1 places                 | "Places" section renders below image + OCR panel.                                                                                                                                                                                                     |
+| Screenshot detail             | `extraction_status='done'`, 0 places                  | Small annotation below the OCR panel: "No places detected." Subtle (system-gray, footnote weight). No CTA — the existing detail-screen delete affordance is what the user uses.                                                                       |
+| Screenshot detail             | `extraction_status='pending'`                         | No "Places" section yet, no annotation. The thumbnail-grid shimmer is the only "still working" cue; the detail screen doesn't get its own.                                                                                                            |
+| Screenshot detail             | `extraction_status='failed'`                          | No "Places" section, no annotation. Silent.                                                                                                                                                                                                           |
+| Trip detail                   | trip has any extracted places                         | Tab toggle visible: Photos / Places.                                                                                                                                                                                                                  |
+| Trip detail                   | trip has 0 extracted places                           | Tab toggle hidden (just the Photos grid as today). Avoids an empty Places tab dangling at the top of every brand-new trip.                                                                                                                            |
+| Trip detail                   | tab toggle visible, Places tab tapped                 | Distinct-place list, ordered by last-seen DESC.                                                                                                                                                                                                       |
 
 Extraction failures are silent (same posture as OCR failures, per ARCHITECTURE.md's "OCR failures: silent in UI" — extending the rule to extraction).
 
 ## Failure modes
 
-| Case | Behavior |
-|---|---|
-| Proxy 5xx | Retry per policy. After 3, `failed`. |
-| Proxy 429 | Defer (re-enqueue at back of queue) after `Retry-After` (default 60s, max 5min). **Does not consume the 3-try budget** — flow control isn't a per-row failure. |
-| Proxy 4xx (other) | Mark `failed` immediately. No retry. |
-| Network timeout (10s default) | Retry per policy. |
-| Gemini returns malformed JSON | Worker returns 502. Client retries. (Should be ~impossible with `responseSchema`, but defended.) |
-| Empty / whitespace-only OCR text | Short-circuit — `extraction_status='done'`, 0 places. No proxy call. |
-| OCR text > some-large-threshold | Truncate to ~10000 chars in the client before posting. Realistic OCR is far below this; the cap exists so a pathological screenshot doesn't blow the input-token budget. |
-| Geocoding returns null (place not found) | Persist place with NULL lat/lng/address. Tap-to-Maps falls back to `?q=` query string. |
-| Geocoding throws | Same as null — swallow, persist place without geocode, log `geocode_error` class. |
-| Screenshot soft-deleted mid-extraction | `processOne` re-checks the row at start; if `deleted_at` is set, abort writes. If deletion happens between the load and the INSERT, the INSERT still succeeds (queries filter on `s.deleted_at IS NULL` so the orphan place rows are invisible — best-effort cleanup deferred). |
-| Screenshot hard-deleted mid-extraction | INSERT fails on FK constraint. Caught and treated as a permanent failure (no retry). |
-| User force-quits the app during a Gemini call | The fetch is dropped; no DB write happens. Row stays `pending`. Next foreground sweep re-enqueues. |
-| Two extractions enqueued for same id | Dedup via in-memory `Set<string>`. One proxy call. |
-| Free-tier rate limit (15 RPM) hit | Proxy returns the upstream Gemini 429 with `Retry-After`. Client defers the row (no budget consumed) and re-enqueues after the delay. A burst of 20 imports drains in two waves ~60s apart. |
-| Worker hits Cloudflare's per-IP rate-limit binding | Proxy returns 429 with `Retry-After: 60`. Same deferred behavior. |
+| Case                                               | Behavior                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Proxy 5xx                                          | Retry per policy. After 3, `failed`.                                                                                                                                                                                                                                            |
+| Proxy 429                                          | Defer (re-enqueue at back of queue) after `Retry-After` (default 60s, max 5min). **Does not consume the 3-try budget** — flow control isn't a per-row failure.                                                                                                                  |
+| Proxy 4xx (other)                                  | Mark `failed` immediately. No retry.                                                                                                                                                                                                                                            |
+| Network timeout (10s default)                      | Retry per policy.                                                                                                                                                                                                                                                               |
+| Gemini returns malformed JSON                      | Worker returns 502. Client retries. (Should be ~impossible with `responseSchema`, but defended.)                                                                                                                                                                                |
+| Empty / whitespace-only OCR text                   | Short-circuit — `extraction_status='done'`, 0 places. No proxy call.                                                                                                                                                                                                            |
+| OCR text > some-large-threshold                    | Truncate to ~10000 chars in the client before posting. Realistic OCR is far below this; the cap exists so a pathological screenshot doesn't blow the input-token budget.                                                                                                        |
+| Geocoding returns null (place not found)           | Persist place with NULL lat/lng/address. Tap-to-Maps falls back to `?q=` query string.                                                                                                                                                                                          |
+| Geocoding throws                                   | Same as null — swallow, persist place without geocode, log `geocode_error` class.                                                                                                                                                                                               |
+| Screenshot soft-deleted mid-extraction             | `processOne` re-checks the row at start; if `deleted_at` is set, abort writes. If deletion happens between the load and the INSERT, the INSERT still succeeds (queries filter on `s.deleted_at IS NULL` so the orphan place rows are invisible — best-effort cleanup deferred). |
+| Screenshot hard-deleted mid-extraction             | INSERT fails on FK constraint. Caught and treated as a permanent failure (no retry).                                                                                                                                                                                            |
+| User force-quits the app during a Gemini call      | The fetch is dropped; no DB write happens. Row stays `pending`. Next foreground sweep re-enqueues.                                                                                                                                                                              |
+| Two extractions enqueued for same id               | Dedup via in-memory `Set<string>`. One proxy call.                                                                                                                                                                                                                              |
+| Free-tier rate limit (15 RPM) hit                  | Proxy returns the upstream Gemini 429 with `Retry-After`. Client defers the row (no budget consumed) and re-enqueues after the delay. A burst of 20 imports drains in two waves ~60s apart.                                                                                     |
+| Worker hits Cloudflare's per-IP rate-limit binding | Proxy returns 429 with `Retry-After: 60`. Same deferred behavior.                                                                                                                                                                                                               |
 
 ## Privacy / disclosure posture
 
@@ -640,26 +649,26 @@ The Worker never persists request bodies. Workers Logs gets only metadata (statu
 
 Resolved:
 
-| Question | Decision |
-|---|---|
-| Output shape | Multi-place: `{ name, city, category }` per place. `category ∈ {place, food, activity}`. |
-| Maps strategy | Apple Maps only. Geocoded deep link when MKLocalSearch hits; `?q=` query-string fallback otherwise. |
-| Geocoder | Apple `MKLocalSearch`, on-device, post-extraction. |
-| Model | Gemini 2.5 Flash-Lite. `responseSchema` for strict JSON. Free tier for v0.2; paid before v0.3. |
-| Proxy host | Cloudflare Worker. Free at our scale. |
-| Proxy rate-limit | Cloudflare Rate Limiting binding (not KV). 100 req/min per IP. |
-| Proxy logging | Status + latency + error class. **Never** OCR text or response bodies. |
-| Retry policy | Mirrors OCR for 5xx/timeout/network: 3 in-memory retries, `failed → pending` once per launch. **429 is deferred, not retried** — re-enqueued after `Retry-After` (default 60s, max 5min) without consuming the retry budget. |
-| Per-call dedup | Before the INSERT transaction, dedup model output on `(LOWER(name), LOWER(TRIM(city)))`. Defends against LLM list-mode repeating itself. |
-| Trip-Places dedup key | `GROUP BY LOWER(name), LOWER(TRIM(city)), COALESCE(apple_maps_url, '')`. Distinct branches with distinct geocoded URLs stay distinct; non-geocoded duplicates merge. |
-| Empty-OCR handling | Short-circuit to `extraction_status='done'` with 0 places. No proxy call. |
-| Classifier-driven hiding (Inbox) | **Not** in v0.2. Manual imports remain visible regardless of place count. Auto-detect (next spec) is the consumer of the 0-place signal. |
-| Places-tab dedup | `GROUP BY LOWER(name), LOWER(city)`. |
-| Per-screenshot badge | Three states: pin (`place_count > 0`, system-blue full-opacity), "no places" (`extraction_status='done' AND place_count == 0`, system-gray ~60% opacity), or none (any `failed` or shimmer-active). |
-| Pending indicator | Existing OCR shimmer extends to extraction. Render shimmer when `ocr_status='pending' OR (ocr_status='done' AND extraction_status='pending')`. Failures silent. One visual, both phases. |
-| 0-places posture | NOT silent. Show a "no places" badge on the thumbnail and a "No places detected." annotation in the detail screen so users can spot junk and clean it up. Failures stay silent (could be transient). |
-| FTS expansion | Out of scope. OCR text already covers the common case; inferred-city search is a later spec. |
-| Re-extraction | Out of scope. `done` is terminal in v0.2. |
+| Question                         | Decision                                                                                                                                                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Output shape                     | Multi-place: `{ name, city, category }` per place. `category ∈ {place, food, activity}`.                                                                                                                                     |
+| Maps strategy                    | Apple Maps only. Geocoded deep link when MKLocalSearch hits; `?q=` query-string fallback otherwise.                                                                                                                          |
+| Geocoder                         | Apple `MKLocalSearch`, on-device, post-extraction.                                                                                                                                                                           |
+| Model                            | Gemini 2.5 Flash-Lite. `responseSchema` for strict JSON. Free tier for v0.2; paid before v0.3.                                                                                                                               |
+| Proxy host                       | Cloudflare Worker. Free at our scale.                                                                                                                                                                                        |
+| Proxy rate-limit                 | Cloudflare Rate Limiting binding (not KV). 100 req/min per IP.                                                                                                                                                               |
+| Proxy logging                    | Status + latency + error class. **Never** OCR text or response bodies.                                                                                                                                                       |
+| Retry policy                     | Mirrors OCR for 5xx/timeout/network: 3 in-memory retries, `failed → pending` once per launch. **429 is deferred, not retried** — re-enqueued after `Retry-After` (default 60s, max 5min) without consuming the retry budget. |
+| Per-call dedup                   | Before the INSERT transaction, dedup model output on `(LOWER(name), LOWER(TRIM(city)))`. Defends against LLM list-mode repeating itself.                                                                                     |
+| Trip-Places dedup key            | `GROUP BY LOWER(name), LOWER(TRIM(city)), COALESCE(apple_maps_url, '')`. Distinct branches with distinct geocoded URLs stay distinct; non-geocoded duplicates merge.                                                         |
+| Empty-OCR handling               | Short-circuit to `extraction_status='done'` with 0 places. No proxy call.                                                                                                                                                    |
+| Classifier-driven hiding (Inbox) | **Not** in v0.2. Manual imports remain visible regardless of place count. Auto-detect (next spec) is the consumer of the 0-place signal.                                                                                     |
+| Places-tab dedup                 | `GROUP BY LOWER(name), LOWER(city)`.                                                                                                                                                                                         |
+| Per-screenshot badge             | Three states: pin (`place_count > 0`, system-blue full-opacity), "no places" (`extraction_status='done' AND place_count == 0`, system-gray ~60% opacity), or none (any `failed` or shimmer-active).                          |
+| Pending indicator                | Existing OCR shimmer extends to extraction. Render shimmer when `ocr_status='pending' OR (ocr_status='done' AND extraction_status='pending')`. Failures silent. One visual, both phases.                                     |
+| 0-places posture                 | NOT silent. Show a "no places" badge on the thumbnail and a "No places detected." annotation in the detail screen so users can spot junk and clean it up. Failures stay silent (could be transient).                         |
+| FTS expansion                    | Out of scope. OCR text already covers the common case; inferred-city search is a later spec.                                                                                                                                 |
+| Re-extraction                    | Out of scope. `done` is terminal in v0.2.                                                                                                                                                                                    |
 
 Deferred to later specs:
 

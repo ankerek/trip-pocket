@@ -68,11 +68,7 @@ export type FetchPostErrorKind =
   | { kind: 'permanent'; code: PermanentCode }
   | { kind: 'entitlement-required' };
 
-export type PermanentCode =
-  | 'not-found'
-  | 'private'
-  | 'unsupported-url'
-  | 'invalid-response';
+export type PermanentCode = 'not-found' | 'private' | 'unsupported-url' | 'invalid-response';
 
 export class FetchPostError extends Error {
   constructor(

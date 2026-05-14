@@ -8,12 +8,9 @@ export function isSourceProcessing(s: {
   return s.ocr_status === 'pending' || s.extraction_status === 'pending';
 }
 
-export function isPlaceProcessing(p: {
-  enrichment_status: EnrichmentStatus;
-}): boolean {
+export function isPlaceProcessing(p: { enrichment_status: EnrichmentStatus }): boolean {
   return p.enrichment_status === 'pending';
 }
 
 // SQL fragment used by the Pocket / Trip Detail banner count query.
-export const PROCESSING_SOURCES_WHERE =
-  `ocr_status = 'pending' OR extraction_status = 'pending'`;
+export const PROCESSING_SOURCES_WHERE = `ocr_status = 'pending' OR extraction_status = 'pending'`;

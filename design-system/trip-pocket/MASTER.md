@@ -4,47 +4,47 @@
 > If that file exists, its rules **override** this Master file. Otherwise, strictly follow the rules below.
 > Source spec: `docs/superpowers/specs/2026-05-08-app-redesign-design.md`.
 
-**Project:** Trip Pocket  ·  **Stack:** Expo SDK 55, React Native 0.83, NativeWind v5, expo-router, Reanimated 4  ·  **Platform:** iOS-first
+**Project:** Trip Pocket · **Stack:** Expo SDK 55, React Native 0.83, NativeWind v5, expo-router, Reanimated 4 · **Platform:** iOS-first
 
 ## Direction (locked)
 
-| Axis        | Decision                                     |
-| ----------- | -------------------------------------------- |
-| Personality | iOS Native Premium                           |
-| Motion      | Expressive — shared-element morph + spring   |
+| Axis        | Decision                                      |
+| ----------- | --------------------------------------------- |
+| Personality | iOS Native Premium                            |
+| Motion      | Expressive — shared-element morph + spring    |
 | IA          | Two tabs (Pocket, Trips) + center capture FAB |
-| Triage UX   | Hero photo + bottom sheet                    |
-| Color modes | Light + dark, both first-class               |
+| Triage UX   | Hero photo + bottom sheet                     |
+| Color modes | Light + dark, both first-class                |
 
 ## Color tokens
 
 Tokens live in `global.css` inside a `@theme` block (Tailwind v4 / NativeWind v5 only generates utility classes for tokens declared this way). `tw/theme.ts` mirrors the same hex values for JS-side animation code; both files keep the table below as their source of truth.
 
-| Role             | Light                           | Dark                                | NativeWind class           |
-| ---------------- | ------------------------------- | ----------------------------------- | -------------------------- |
-| `bg`             | `#ffffff`                       | `#020617`                           | `bg-bg`                    |
-| `surface`        | `#f8fafc` (Snow)                | `#0f172a`                           | `bg-surface`               |
-| `text`           | `#0c4a6e` (Sea)                 | `#e2e8f0`                           | `text-text`                |
-| `text-muted`     | `#64748b`                       | `#94a3b8`                           | `text-text-muted`          |
-| `accent`         | `#14b8a6` (Teal)                | `#2dd4bf`                           | `bg-accent` / `text-accent` |
-| `info-bg`        | `#ccfbf1` (Mint)                | `#134e4a`                           | `bg-info-bg`               |
-| `info-text`      | `#115e59`                       | `#5eead4`                           | `text-info-text`           |
-| `hairline`       | `rgba(15,23,42,0.06)`           | `rgba(255,255,255,0.08)`            | `border-hairline`          |
-| `overlay-strong` | `rgba(0,0,0,0.55)`              | `rgba(0,0,0,0.55)`                  | photo-name gradient bottom (single recipe across modes — see spec §9.2) |
+| Role             | Light                 | Dark                     | NativeWind class                                                        |
+| ---------------- | --------------------- | ------------------------ | ----------------------------------------------------------------------- |
+| `bg`             | `#ffffff`             | `#020617`                | `bg-bg`                                                                 |
+| `surface`        | `#f8fafc` (Snow)      | `#0f172a`                | `bg-surface`                                                            |
+| `text`           | `#0c4a6e` (Sea)       | `#e2e8f0`                | `text-text`                                                             |
+| `text-muted`     | `#64748b`             | `#94a3b8`                | `text-text-muted`                                                       |
+| `accent`         | `#14b8a6` (Teal)      | `#2dd4bf`                | `bg-accent` / `text-accent`                                             |
+| `info-bg`        | `#ccfbf1` (Mint)      | `#134e4a`                | `bg-info-bg`                                                            |
+| `info-text`      | `#115e59`             | `#5eead4`                | `text-info-text`                                                        |
+| `hairline`       | `rgba(15,23,42,0.06)` | `rgba(255,255,255,0.08)` | `border-hairline`                                                       |
+| `overlay-strong` | `rgba(0,0,0,0.55)`    | `rgba(0,0,0,0.55)`       | photo-name gradient bottom (single recipe across modes — see spec §9.2) |
 
 ## Typography
 
 System fonts only — no Google Fonts. iOS provides SF Pro Display ≥17pt and SF Pro Text below that automatically.
 
-| Token        | Size | Weight | Letter-spacing | Use                    |
-| ------------ | ---- | ------ | -------------- | ---------------------- |
-| `display-xl` | 34   | 700    | -0.5           | Tab home large titles  |
-| `display-lg` | 28   | 700    | -0.4           | Place name             |
-| `title`      | 22   | 700    | -0.3           | Triage AI-extracted    |
-| `headline`   | 17   | 600    | -0.2           | Section heads          |
-| `body`       | 15   | 400    | 0              | Default text           |
-| `caption`    | 12   | 500    | 0              | Meta, dates            |
-| `micro`      | 10   | 600    | 0.4            | Chips, kickers         |
+| Token        | Size | Weight | Letter-spacing | Use                   |
+| ------------ | ---- | ------ | -------------- | --------------------- |
+| `display-xl` | 34   | 700    | -0.5           | Tab home large titles |
+| `display-lg` | 28   | 700    | -0.4           | Place name            |
+| `title`      | 22   | 700    | -0.3           | Triage AI-extracted   |
+| `headline`   | 17   | 600    | -0.2           | Section heads         |
+| `body`       | 15   | 400    | 0              | Default text          |
+| `caption`    | 12   | 500    | 0              | Meta, dates           |
+| `micro`      | 10   | 600    | 0.4            | Chips, kickers        |
 
 Use `tabular-nums` font-variant for counts and durations.
 

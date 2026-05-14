@@ -310,12 +310,6 @@ describe('sweepPipelineEvents', () => {
     const rows = await readRecentEvents(100, db);
     expect(rows).toHaveLength(5);
     // Newest first; the last 5 source ids were src_15..src_19.
-    expect(rows.map((r) => r.sourceId)).toEqual([
-      'src_19',
-      'src_18',
-      'src_17',
-      'src_16',
-      'src_15',
-    ]);
+    expect(rows.map((r) => r.sourceId)).toEqual(['src_19', 'src_18', 'src_17', 'src_16', 'src_15']);
   });
 });

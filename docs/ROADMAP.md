@@ -24,6 +24,7 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 **Status (2026-05-09):** shipped. The capture loop — share-sheet (with trip picker), camera-roll import, list/grid, detail, trip CRUD, delete — works on device. v0.2 is now the active milestone; the empty-state audit folded into the v0.2 polish pass.
 
 ### Now
+
 - [x] Expo project set up, dev build running on iPhone, repo bootstrapped.
 - [x] Share-sheet target that accepts an image and saves it to app storage.
 - [x] Local persistence of saved screenshots (image + minimal metadata).
@@ -31,6 +32,7 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 - [x] ~~One hard-coded "trip"~~ → superseded by full trip support below.
 
 ### Next (this milestone)
+
 - [x] Trip creation + manual assign-to-trip.
 - [x] "Add from camera roll" flow inside the app.
 - [x] Tap-to-view full screenshot.
@@ -38,11 +40,13 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 - [x] **Beyond original scope:** trip picker inside the share extension itself (was deferred from Phase 1 to Phase 2; shipped 2026-05-07). Capture-to-trip is now one tap from Photos.
 
 ### Later (this milestone)
+
 - [x] Trip rename / delete.
 - [x] Basic settings screen (version, about). (Version shown; "about" copy minimal.)
 - [→] Empty state copy. Carried into v0.2 polish — some surfaces have it, full audit pending.
 
 ### Explicit non-goals for v0.1
+
 - OCR — v0.2.
 - AI categorization (place / food / activity) — v0.2 (AI-only; no manual tag editor).
 - AI extraction / Places view — v0.2.
@@ -53,15 +57,17 @@ The minimum capture/browse loop. Ugly is fine. Goal: prove that saving and re-fi
 
 ## v0.2 — "Full MVP, feature-complete" — 🟢 in progress
 
-Everything PRODUCT.md calls "at launch". The app is feature-complete for the wedge — *save it before it's lost* — plus the AI extraction layer that turns screenshots into usable places. Not yet polished for strangers.
+Everything PRODUCT.md calls "at launch". The app is feature-complete for the wedge — _save it before it's lost_ — plus the AI extraction layer that turns screenshots into usable places. Not yet polished for strangers.
 
 **Definition of done:** every "at launch" bullet from PRODUCT.md works end-to-end, capture-to-saved-in-trip is under ~5 seconds, and AI extraction reliably produces a tappable place for the obvious cases (single restaurant or POI in a screenshot).
 
 **Status (2026-05-10):** core pipeline is shipped end-to-end on device. OCR, AI extraction, enrichment, photo proxy, search, places-first home, triage (with multi-place selection + redesigned trip picker), per-trip Places tab, per-source places-found sheet, Maps deep-link — all live. Two design changes vs. the original plan:
+
 - Schema collapsed to a places-first shape (`places` + `place_sources` junction + generalised `sources`) before any users existed; FTS5 indexes the place document, not the source document.
 - Manual tagging UI is **cut**: `places.category` is populated by the AI extractor and that covers the launch-promise behaviour. No user-facing tag editor will ship in v0.2 (or v1.0). Override-the-AI-category lives in v1.x if users actually ask.
 
 **Shipped:**
+
 - [x] On-device OCR via Apple Vision (`modules/vision-ocr/`, Swift Expo Module).
 - [x] AI extraction pipeline: Cloudflare Worker proxy fronting Gemini 2.5 Flash-Lite via Cloudflare AI Gateway. Empty result = noise classifier.
 - [x] Place enrichment: Google Places + Gemini narrative through the same proxy (`/enrich`), plus a `/photo/:name` image proxy for resized venue photos. Lat/lng populates Maps deep-links.
@@ -74,12 +80,14 @@ Everything PRODUCT.md calls "at launch". The app is feature-complete for the wed
 - [x] **Beyond original scope:** triage flow — full-screen pager modal that walks new sources one at a time, picking-a-trip auto-saves and advances. (Triage redesign approved 2026-05-09 — see "In flight" below.)
 
 **In flight:**
+
 - [x] Triage redesign — multi-place selection per source, default-on with deselect-to-drop, swipe-down-to-dismiss. Shipped 2026-05-09 (`853eb78`); compact-bottom-sheet trip picker shipped 2026-05-10 (`eac25e9`). Specs: `docs/superpowers/specs/2026-05-09-triage-redesign-design.md`, `docs/superpowers/specs/2026-05-09-trip-picker-redesign-design.md`.
 - [x] Empty-state audit — shipped 2026-05-10. Extracted shared `components/EmptyState.tsx` (icon + title + body + optional CTA); applied to Pocket all-empty (now CTAs into capture), Trips list (CTAs into new-trip), and Trip detail (CTAs into capture). Other empty states across search, places-found sheet, source/place not-found, and triage card-no-places already had appropriate copy and were left alone.
 - [→] Performance pass — drive-by fixes shipped 2026-05-10: `recyclingKey` on PlaceTile + Trips-list preview thumb (prevents flash-of-old-image during FlatList row recycle); Pocket grid cell extracted to memoised `GridCell` with stable cell-style memo. Deferred to v0.3 (TestFlight): on-device profiling of list scroll fps + cold-launch TTI, photo-proxy size validation against measured display sizes, and triage's unbounded `EXTRACTED_SQL` (currently fetches all `place_sources` and filters in JS).
 - [x] Delete cascade rewrite — shipped 2026-05-10. Hard-delete throughout; `deleted_at` column dropped from all five tables; symmetric orphan prune (deleting a place removes any source whose only junction was to it, and vice-versa); trip delete has untriage default + cascade opt-in; triage CTA tray has tertiary Delete row. Spec: `docs/superpowers/specs/2026-05-10-delete-cascade-design.md`. Plan: `docs/superpowers/plans/2026-05-10-delete-cascade.md`.
 
 **Cut from v0.2:**
+
 - Manual tagging UI — formally cut 2026-05-10. AI-set `places.category` covers the launch-promise behaviour and avoids adding a write-surface that exists only to override the AI. Revisit in v1.x only if users actually ask.
 - Trip detail filtering by tag/category — moved to v1.x with the rest of the tag-editor surface area. Trip detail's "Map" view remains a "coming soon" placeholder (full map is v1.x).
 
@@ -94,6 +102,7 @@ Stop shipping new features. Make it okay to hand to a friend.
 **Definition of done:** 5–10 friends are using it on TestFlight. App is crash-free for a week. I have a list of real-user feedback.
 
 **Scope:**
+
 - Onboarding flow (3 screens max).
 - Empty states everywhere.
 - Error handling: failed import, storage full, denied photo permissions.
@@ -111,6 +120,7 @@ Public. Paid from day one.
 **Definition of done:** live on the App Store. Paywall is the gate at first launch and on entitlement lapse; trial-active and subscribed users get the whole app; everyone else is locked out.
 
 **Scope:**
+
 - Single paid tier: monthly + yearly subscription, both with a 7-day free trial.
 - StoreKit + RevenueCat integration with the introductory offer (the trial) configured in App Store Connect.
 - Paywall screen at first launch (after onboarding); cannot be dismissed without starting the trial or already being subscribed.
@@ -122,8 +132,9 @@ Public. Paid from day one.
 - In-app feedback / contact link.
 
 **Open questions for launch:**
+
 - Pricing tiers (monthly + yearly amounts).
-- Whether the paywall sits before or after onboarding. Default: paywall *after* onboarding so the user has seen what they're paying for; revisit if beta data argues otherwise.
+- Whether the paywall sits before or after onboarding. Default: paywall _after_ onboarding so the user has seen what they're paying for; revisit if beta data argues otherwise.
 - Whether to A/B-test the trial length around 7 days post-launch (PostHog feature flags).
 
 ---
@@ -162,4 +173,4 @@ Restated from PRODUCT.md so they stay loud:
 - Booking integrations.
 - Background screenshot auto-detect. Share-sheet capture is the capture path. PhotoKit observers + background fetch are a meaningful platform lift for an inbox we'd then need an AI classifier to keep clean — and the share sheet already gets capture down to one extra tap. Not a tarpit worth entering.
 
-Each of these is a tarpit. The wedge is *save it before it's lost*.
+Each of these is a tarpit. The wedge is _save it before it's lost_.

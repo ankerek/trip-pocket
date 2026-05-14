@@ -73,8 +73,7 @@ export function isPlaceProcessing(p: {
 }
 
 // SQL fragment used by the Pocket banner count query.
-export const PROCESSING_SOURCES_WHERE =
-  `ocr_status = 'pending' OR extraction_status = 'pending'`;
+export const PROCESSING_SOURCES_WHERE = `ocr_status = 'pending' OR extraction_status = 'pending'`;
 ```
 
 Three reasons to centralize:
@@ -124,14 +123,9 @@ Three new pieces under `components/`:
 Add one live query and one component:
 
 ```ts
-const PROCESSING_COUNT_SQL =
-  `SELECT COUNT(*) AS n FROM sources WHERE ${PROCESSING_SOURCES_WHERE}`;
+const PROCESSING_COUNT_SQL = `SELECT COUNT(*) AS n FROM sources WHERE ${PROCESSING_SOURCES_WHERE}`;
 
-const processingRows = useLiveQuery<{ n: number }>(
-  PROCESSING_COUNT_SQL,
-  [],
-  ['sources'],
-);
+const processingRows = useLiveQuery<{ n: number }>(PROCESSING_COUNT_SQL, [], ['sources']);
 const processingCount = processingRows?.[0]?.n ?? 0;
 ```
 
@@ -218,12 +212,12 @@ const status: 'loading' | 'processing' | 'settled' =
 
 Render branches in the bottom sheet header:
 
-| State                                                   | Label              | Subhead                              | Body                              |
-| ------------------------------------------------------- | ------------------ | ------------------------------------ | --------------------------------- |
-| `status === 'loading'`                                  | `PROCESSING…`      | (relative time, unchanged)           | 2× `<SkeletonRow />`              |
-| `status === 'processing'`                               | `PROCESSING…`      | (relative time, unchanged)           | 2× `<SkeletonRow />`              |
-| `status === 'settled' && total === 0`                   | `COULDN'T READ`    | `Save it anyway and label it later.` | (no rows — unchanged from today)  |
-| `status === 'settled' && total > 0`                     | `✦ N PLACES FOUND` | (unchanged)                          | real `<PlaceSelectRow />`s        |
+| State                                 | Label              | Subhead                              | Body                             |
+| ------------------------------------- | ------------------ | ------------------------------------ | -------------------------------- |
+| `status === 'loading'`                | `PROCESSING…`      | (relative time, unchanged)           | 2× `<SkeletonRow />`             |
+| `status === 'processing'`             | `PROCESSING…`      | (relative time, unchanged)           | 2× `<SkeletonRow />`             |
+| `status === 'settled' && total === 0` | `COULDN'T READ`    | `Save it anyway and label it later.` | (no rows — unchanged from today) |
+| `status === 'settled' && total > 0`   | `✦ N PLACES FOUND` | (unchanged)                          | real `<PlaceSelectRow />`s       |
 
 (`'loading'` and `'processing'` render identically; the distinction matters only as a comment on why `null` falls into the processing branch, not the settled branch.)
 

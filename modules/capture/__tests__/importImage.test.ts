@@ -1,11 +1,7 @@
 import { openDatabase, runMigrations, type Database } from '@/modules/storage/db';
 import { migrations } from '@/modules/storage/migrations';
 import { listSources, deleteSource } from '@/modules/storage/sources';
-import {
-  provideProcessor,
-  _resetProcessorForTests,
-  type Processor,
-} from '@/modules/processing';
+import { provideProcessor, _resetProcessorForTests, type Processor } from '@/modules/processing';
 import { importImage, type ImportFs } from '../importImage';
 
 const ownerId = '00000000-0000-0000-0000-000000000001';
@@ -125,9 +121,7 @@ describe('importImage', () => {
     if (second.status !== 'imported') throw new Error('expected imported');
 
     // Hard delete leaves only the new row.
-    const all = await db.getAllAsync<{ id: string }>(
-      'SELECT id FROM sources ORDER BY created_at',
-    );
+    const all = await db.getAllAsync<{ id: string }>('SELECT id FROM sources ORDER BY created_at');
     expect(all).toHaveLength(1);
     expect(all[0]?.id).toBe(second.sourceId);
   });

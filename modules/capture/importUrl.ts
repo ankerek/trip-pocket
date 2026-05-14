@@ -37,10 +37,7 @@ export type ImportUrlResult =
   | { status: 'duplicate'; existingSourceId: string }
   | { status: 'unsupported' };
 
-export async function importUrl(
-  db: Database,
-  input: ImportUrlInput,
-): Promise<ImportUrlResult> {
+export async function importUrl(db: Database, input: ImportUrlInput): Promise<ImportUrlResult> {
   // Pre-allocate so the share-import row and every downstream stage share one
   // source_id — see spec §Storage/schema.
   const sourceId = Crypto.randomUUID();
@@ -117,11 +114,7 @@ export function detectPlatformFromUrl(rawUrl: string): SourcePlatform | null {
     const url = new URL(rawUrl);
     const host = url.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
     if (host === 'instagram.com' || host === 'instagr.am') return 'instagram';
-    if (
-      host === 'tiktok.com' ||
-      host === 'vm.tiktok.com' ||
-      host === 'vt.tiktok.com'
-    ) {
+    if (host === 'tiktok.com' || host === 'vm.tiktok.com' || host === 'vt.tiktok.com') {
       return 'tiktok';
     }
     return null;

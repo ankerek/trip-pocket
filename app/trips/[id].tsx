@@ -4,12 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
-import {
-  getTrip,
-  useLiveQuery,
-  PROCESSING_SOURCES_WHERE,
-  type Trip,
-} from '@/modules/storage';
+import { getTrip, useLiveQuery, PROCESSING_SOURCES_WHERE, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
@@ -19,10 +14,7 @@ import { displayCountry } from '@/components/CountryDisplay';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
 import { pickPhotosForImport } from '@/components/pickPhotos';
-import {
-  DetailHeaderIconButton,
-  DetailHeaderOverlay,
-} from '@/components/DetailHeaderOverlay';
+import { DetailHeaderIconButton, DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
 import { useThemeColors } from '@/tw/theme';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
@@ -61,21 +53,12 @@ export default function TripDetail() {
   const [tab, setTab] = useState<'photos' | 'places'>('places');
   const [view, setView] = useState<ViewMode>('grid');
 
-  const sources = useLiveQuery<GridItem>(
-    TRIP_SOURCES_SQL,
-    id ? [id] : [],
-    ['sources', 'place_sources'],
-  );
-  const places = useLiveQuery<PlaceTileData>(
-    TRIP_PLACES_SQL,
-    id ? [id] : [],
-    ['places'],
-  );
-  const processingRows = useLiveQuery<{ n: number }>(
-    PROCESSING_COUNT_SQL,
-    [],
-    ['sources'],
-  );
+  const sources = useLiveQuery<GridItem>(TRIP_SOURCES_SQL, id ? [id] : [], [
+    'sources',
+    'place_sources',
+  ]);
+  const places = useLiveQuery<PlaceTileData>(TRIP_PLACES_SQL, id ? [id] : [], ['places']);
+  const processingRows = useLiveQuery<{ n: number }>(PROCESSING_COUNT_SQL, [], ['sources']);
   const processingCount = processingRows?.[0]?.n ?? 0;
 
   useEffect(() => {
@@ -126,7 +109,7 @@ export default function TripDetail() {
 
   if (trip === 'loading' || sources === null || places === null || processingRows === null) {
     return (
-      <View className="flex-1 bg-bg">
+      <View className="bg-bg flex-1">
         <DetailHeaderOverlay right={headerRight} />
       </View>
     );
@@ -135,9 +118,9 @@ export default function TripDetail() {
   if (trip === null) {
     return (
       <>
-        <View className="flex-1 items-center justify-center bg-bg">
+        <View className="bg-bg flex-1 items-center justify-center">
           <DetailHeaderOverlay right={headerRight} />
-          <Text className="text-base text-text-muted">Trip not found.</Text>
+          <Text className="text-text-muted text-base">Trip not found.</Text>
         </View>
       </>
     );
@@ -149,14 +132,10 @@ export default function TripDetail() {
     <>
       <ScrollView
         contentInsetAdjustmentBehavior="never"
-        className="flex-1 bg-bg"
+        className="bg-bg flex-1"
         contentContainerStyle={{ paddingBottom: 120 }}
       >
-        <TripHero
-          name={trip.name}
-          coverPhotoUrl={coverPhotoUrl}
-          placeCount={places.length}
-        />
+        <TripHero name={trip.name} coverPhotoUrl={coverPhotoUrl} placeCount={places.length} />
 
         <ProcessingBanner count={processingCount} />
 
@@ -169,8 +148,7 @@ export default function TripDetail() {
               cta={{
                 label: 'Add from Photos',
                 onPress: onAddFromPhotos,
-                accessibilityHint:
-                  'Imports photos from your library into this trip',
+                accessibilityHint: 'Imports photos from your library into this trip',
               }}
             />
           </View>
@@ -260,10 +238,7 @@ function TripHero({
         }}
       />
 
-      <View
-        pointerEvents="none"
-        style={{ position: 'absolute', left: 16, right: 16, bottom: 22 }}
-      >
+      <View pointerEvents="none" style={{ position: 'absolute', left: 16, right: 16, bottom: 22 }}>
         <Text
           numberOfLines={2}
           style={{
@@ -300,16 +275,9 @@ function TripHero({
 
 function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
-    <View
-      className="mx-4 flex-row rounded-full bg-hairline p-1"
-      accessibilityRole="tablist"
-    >
+    <View className="bg-hairline mx-4 flex-row rounded-full p-1" accessibilityRole="tablist">
       <ToggleSegment label="Grid" active={view === 'grid'} onPress={() => onChange('grid')} />
-      <ToggleSegment
-        label="Map"
-        active={view === 'map'}
-        onPress={() => onChange('map')}
-      />
+      <ToggleSegment label="Map" active={view === 'map'} onPress={() => onChange('map')} />
     </View>
   );
 }
@@ -347,12 +315,9 @@ function ToggleSegment({
 function MapPlaceholder() {
   const colors = useThemeColors();
   return (
-    <View className="mx-4 mt-2 items-center justify-center rounded-2xl bg-hairline py-12">
+    <View className="bg-hairline mx-4 mt-2 items-center justify-center rounded-2xl py-12">
       <Icon name="map" size={28} tintColor={colors.textMuted} />
-      <Text
-        className="mt-2 text-text-muted"
-        style={{ fontSize: 13, fontWeight: '500' }}
-      >
+      <Text className="text-text-muted mt-2" style={{ fontSize: 13, fontWeight: '500' }}>
         Map view coming soon
       </Text>
     </View>
@@ -453,7 +418,7 @@ function PlacesByCountry({ places }: { places: PlaceTileData[] }) {
     <View>
       {groups.map((group, idx) => {
         const isLeaderInTwoGroupCase = idx === 0 && hideHeaderOnLeader;
-        const label = group.code === null ? 'Other' : displayCountry(group.code) ?? group.code;
+        const label = group.code === null ? 'Other' : (displayCountry(group.code) ?? group.code);
         return (
           <View key={group.code ?? '__unknown'}>
             {!isLeaderInTwoGroupCase && <CountrySectionHeader label={label!} />}

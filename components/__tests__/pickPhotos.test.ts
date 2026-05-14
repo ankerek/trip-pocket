@@ -125,7 +125,16 @@ describe('pickPhotosForImport', () => {
     ensureMock.mockResolvedValue('granted');
     launchMock.mockResolvedValue({
       canceled: false,
-      assets: [asset('a'), asset('b'), asset('c'), asset('d'), asset('e'), asset('f'), asset('g'), asset('h')],
+      assets: [
+        asset('a'),
+        asset('b'),
+        asset('c'),
+        asset('d'),
+        asset('e'),
+        asset('f'),
+        asset('g'),
+        asset('h'),
+      ],
     });
     // First call: storage-full. Remaining calls: should never be reached
     // for the drained items (workers see the flag and skip).

@@ -1,6 +1,6 @@
 # Phase 1 — "Hello, screenshot"
 
-First implementation phase for Trip Pocket. Companion to ARCHITECTURE.md (the *how*) and ROADMAP.md (the *when*) — this is *what's in the first slice of code*.
+First implementation phase for Trip Pocket. Companion to ARCHITECTURE.md (the _how_) and ROADMAP.md (the _when_) — this is _what's in the first slice of code_.
 
 ## Goal
 
@@ -69,7 +69,7 @@ Rough order. Some steps can run in parallel; numbering is sequencing intent, not
 ## Risks to watch
 
 - **EAS build with a share extension target.** Adding an extra iOS target via config plugin is well-trodden but easy to misconfigure. Budget time for at least one EAS build cycle to fail and need debugging.
-- **App Group container.** The shared path is opaque to Swift; making the same path visible to both the extension and the main app requires the entitlement on both targets *and* an exact match on the group identifier.
+- **App Group container.** The shared path is opaque to Swift; making the same path visible to both the extension and the main app requires the entitlement on both targets _and_ an exact match on the group identifier.
 - **SQLite cross-process access.** Two processes (extension + main app) writing to the same SQLite file is supported but requires WAL mode and care with concurrent transactions. In Phase 1 the extension only writes `pending_imports`, so contention is minimal — but worth keeping the surface narrow.
 - **`expo-sqlite` live updates.** If the API isn't there or is flaky, fall back to the event-bus version. Don't sink time into making it work — the hook signature is the same either way.
 

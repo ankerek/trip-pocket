@@ -20,16 +20,11 @@ type StatusRow = { extraction_status: 'pending' | 'done' | 'failed' };
 
 export default function PlacesFoundSheet() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const places = useLiveQuery<PlaceRowData>(
-    PLACES_SQL,
-    id ? [id] : [],
-    ['place_sources', 'places'],
-  );
-  const statusRows = useLiveQuery<StatusRow>(
-    STATUS_SQL,
-    id ? [id] : [],
-    ['sources'],
-  );
+  const places = useLiveQuery<PlaceRowData>(PLACES_SQL, id ? [id] : [], [
+    'place_sources',
+    'places',
+  ]);
+  const statusRows = useLiveQuery<StatusRow>(STATUS_SQL, id ? [id] : [], ['sources']);
 
   if (places === null || statusRows === null) return null;
   const status = statusRows[0]?.extraction_status;
@@ -49,7 +44,7 @@ export default function PlacesFoundSheet() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      className="flex-1 bg-bg"
+      className="bg-bg flex-1"
       contentContainerClassName="py-2"
     >
       {places.map((p) => (
@@ -61,8 +56,8 @@ export default function PlacesFoundSheet() {
 
 function CenteredHint({ text }: { text: string }) {
   return (
-    <View className="flex-1 items-center justify-center bg-bg px-8">
-      <Text className="text-center text-base text-text-muted">{text}</Text>
+    <View className="bg-bg flex-1 items-center justify-center px-8">
+      <Text className="text-text-muted text-center text-base">{text}</Text>
     </View>
   );
 }

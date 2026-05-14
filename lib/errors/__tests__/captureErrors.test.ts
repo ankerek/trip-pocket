@@ -7,7 +7,9 @@ describe('classifyImportError', () => {
 
   test('NSFileWriteOutOfSpaceError name → storage-full', () => {
     expect(
-      classifyImportError(new Error('NSFileWriteOutOfSpaceError The operation couldn’t be completed.')),
+      classifyImportError(
+        new Error('NSFileWriteOutOfSpaceError The operation couldn’t be completed.'),
+      ),
     ).toBe('storage-full');
   });
 
@@ -28,7 +30,7 @@ describe('classifyImportError', () => {
   });
 
   test('"no space" substring → storage-full', () => {
-    expect(classifyImportError(new Error('Couldn\'t copy: no space left'))).toBe('storage-full');
+    expect(classifyImportError(new Error("Couldn't copy: no space left"))).toBe('storage-full');
   });
 
   test('"out of space" substring → storage-full', () => {

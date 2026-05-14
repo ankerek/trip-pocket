@@ -8,16 +8,12 @@ export default function TabsLayout() {
   return (
     <NativeTabs minimizeBehavior="onScrollDown">
       <NativeTabs.Trigger name="(places)">
-        <NativeTabs.Trigger.Icon
-          sf={{ default: 'tray', selected: 'tray.full' }}
-        />
+        <NativeTabs.Trigger.Icon sf={{ default: 'tray', selected: 'tray.full' }} />
         <NativeTabs.Trigger.Label>Pocket</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="(trips)">
-        <NativeTabs.Trigger.Icon
-          sf={{ default: 'map', selected: 'map.fill' }}
-        />
+        <NativeTabs.Trigger.Icon sf={{ default: 'map', selected: 'map.fill' }} />
         <NativeTabs.Trigger.Label>Trips</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 

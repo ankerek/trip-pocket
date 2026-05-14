@@ -1,12 +1,6 @@
 import { openDatabase, runMigrations, type Database } from '../db';
 import { migrations } from '../migrations';
-import {
-  createTrip,
-  listTrips,
-  getTrip,
-  renameTrip,
-  deleteTrip,
-} from '../trips';
+import { createTrip, listTrips, getTrip, renameTrip, deleteTrip } from '../trips';
 import { insertSource, listSources } from '../sources';
 import { linkPlaceSource } from '../place_sources';
 
@@ -18,17 +12,19 @@ async function freshDb(): Promise<Database> {
   return db;
 }
 
-async function seedPlace(
-  db: Database,
-  id: string,
-  tripId: string | null,
-): Promise<void> {
+async function seedPlace(db: Database, id: string, tripId: string | null): Promise<void> {
   const now = '2026-05-10T10:00:00.000Z';
   await db.runAsync(
     `INSERT INTO places (id, trip_id, name, city, normalized_key,
                          enrichment_status, owner_id, created_at, updated_at)
      VALUES (?, ?, 'Place ' || ?, 'Tokyo', 'p-' || ?, 'pending', ?, ?, ?)`,
-    id, tripId, id, id, ownerId, now, now,
+    id,
+    tripId,
+    id,
+    id,
+    ownerId,
+    now,
+    now,
   );
 }
 
@@ -77,9 +73,13 @@ describe('trips repository', () => {
       const db = await freshDb();
       await createTrip(db, { id: 't1', name: 'Japan', ownerId });
       await insertSource(db, {
-        id: 's1', tripId: 't1', filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: 't1',
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await seedPlace(db, 'p1', 't1');
 
@@ -110,24 +110,36 @@ describe('trips repository', () => {
 
       await createTrip(db, { id: 't1', name: 'Japan', ownerId });
       await insertSource(db, {
-        id: 's1', tripId: 't1', filePath: '/x/s1.jpg',
-        contentHash: 'h-s1', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 's1',
+        tripId: 't1',
+        filePath: '/x/s1.jpg',
+        contentHash: 'h-s1',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await insertSource(db, {
-        id: 's2', tripId: 't1', filePath: '/x/s2.jpg',
-        contentHash: 'h-s2', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:01Z', ownerId,
+        id: 's2',
+        tripId: 't1',
+        filePath: '/x/s2.jpg',
+        contentHash: 'h-s2',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:01Z',
+        ownerId,
       });
       await seedPlace(db, 'p1', 't1');
       await seedPlace(db, 'p2', 't1');
       await linkPlaceSource(db, {
-        placeId: 'p1', sourceId: 's1',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'p1',
+        sourceId: 's1',
+        extractionModel: 'gemini',
+        ownerId,
       });
       await linkPlaceSource(db, {
-        placeId: 'p2', sourceId: 's2',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'p2',
+        sourceId: 's2',
+        extractionModel: 'gemini',
+        ownerId,
       });
 
       await deleteTrip(db, 't1', 'cascade', { unlinkFile: fakeUnlink });
@@ -154,23 +166,35 @@ describe('trips repository', () => {
       await createTrip(db, { id: 'tB', name: 'Korea', ownerId });
       // pShared has two sources: sA in trip tA, sB in trip tB.
       await insertSource(db, {
-        id: 'sA', tripId: 'tA', filePath: '/x/sA.jpg',
-        contentHash: 'h-A', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z', ownerId,
+        id: 'sA',
+        tripId: 'tA',
+        filePath: '/x/sA.jpg',
+        contentHash: 'h-A',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:00Z',
+        ownerId,
       });
       await insertSource(db, {
-        id: 'sB', tripId: 'tB', filePath: '/x/sB.jpg',
-        contentHash: 'h-B', origin: 'manual',
-        capturedAt: '2026-05-10T10:00:01Z', ownerId,
+        id: 'sB',
+        tripId: 'tB',
+        filePath: '/x/sB.jpg',
+        contentHash: 'h-B',
+        origin: 'manual',
+        capturedAt: '2026-05-10T10:00:01Z',
+        ownerId,
       });
       await seedPlace(db, 'pShared', 'tA');
       await linkPlaceSource(db, {
-        placeId: 'pShared', sourceId: 'sA',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'pShared',
+        sourceId: 'sA',
+        extractionModel: 'gemini',
+        ownerId,
       });
       await linkPlaceSource(db, {
-        placeId: 'pShared', sourceId: 'sB',
-        extractionModel: 'gemini', ownerId,
+        placeId: 'pShared',
+        sourceId: 'sB',
+        extractionModel: 'gemini',
+        ownerId,
       });
 
       await deleteTrip(db, 'tA', 'cascade', { unlinkFile: () => {} });
@@ -187,9 +211,7 @@ describe('trips repository', () => {
       );
       expect(sB?.trip_id).toBe('tB');
       // sA gone, junction sA gone.
-      expect(
-        await db.getFirstAsync(`SELECT id FROM sources WHERE id = 'sA'`),
-      ).toBeNull();
+      expect(await db.getFirstAsync(`SELECT id FROM sources WHERE id = 'sA'`)).toBeNull();
       const sharedJunctions = await db.getAllAsync<{ source_id: string }>(
         `SELECT source_id FROM place_sources WHERE place_id = 'pShared'`,
       );

@@ -57,11 +57,13 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
   return (
     <PressableScale
       onPress={() => router.push(`/places/${place.id}`)}
-      className="overflow-hidden rounded-xl bg-surface"
+      className="bg-surface overflow-hidden rounded-xl"
       haptic={false}
       accessibilityRole="button"
       accessibilityLabel={place.name}
-      accessibilityHint={place.city ? `In ${place.city}. Opens place detail.` : 'Opens place detail.'}
+      accessibilityHint={
+        place.city ? `In ${place.city}. Opens place detail.` : 'Opens place detail.'
+      }
     >
       <View className="relative aspect-[3/4] w-full">
         {photoUrl ? (
@@ -79,7 +81,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
           // visually identical to the not-found / no-photo fallback below.
           <SkeletonBlock testID={`place-tile-skeleton-${place.id}`} />
         ) : (
-          <View className="h-full w-full items-center justify-center bg-surface">
+          <View className="bg-surface h-full w-full items-center justify-center">
             <Icon
               name={place.category ? CATEGORY_ICON[place.category] : 'mappin.circle'}
               size={36}
@@ -89,7 +91,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
         )}
 
         {place.trip_name ? (
-          <View className="absolute left-2 top-2">
+          <View className="absolute top-2 left-2">
             <TripChip name={place.trip_name} variant="overlay" />
           </View>
         ) : null}
@@ -113,10 +115,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
             height: '55%',
           }}
         />
-        <View
-          pointerEvents="none"
-          className="absolute inset-x-0 bottom-0 px-2.5 pb-2"
-        >
+        <View pointerEvents="none" className="absolute inset-x-0 bottom-0 px-2.5 pb-2">
           <Text
             numberOfLines={2}
             style={{

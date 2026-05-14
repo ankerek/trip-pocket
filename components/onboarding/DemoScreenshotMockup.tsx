@@ -83,26 +83,19 @@ export function DemoScreenshotMockup({
         ]}
       />
       <View
-        className="overflow-hidden bg-bg"
+        className="bg-bg overflow-hidden"
         style={{ borderRadius: 18, borderWidth: 1, borderColor: colors.hairline }}
       >
         {/* IG-style header strip */}
-        <View
-          className="flex-row items-center px-3"
-          style={{ height: 40, gap: 8 }}
-        >
+        <View className="flex-row items-center px-3" style={{ height: 40, gap: 8 }}>
           <View
             className="h-7 w-7 items-center justify-center rounded-full"
             style={{ backgroundColor: colors.accent }}
           >
-            <Text
-              style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}
-            >
-              T
-            </Text>
+            <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>T</Text>
           </View>
           <Text
-            className="flex-1 text-text"
+            className="text-text flex-1"
             style={{ fontSize: 13, fontWeight: '600' }}
             numberOfLines={1}
           >
@@ -148,11 +141,7 @@ export function DemoScreenshotMockup({
         {/* Numbered caption */}
         <View className="px-3 py-3" style={{ gap: 4 }}>
           {fixture.captionLines.map((line) => (
-            <Text
-              key={line}
-              className="text-text"
-              style={{ fontSize: 13, lineHeight: 18 }}
-            >
+            <Text key={line} className="text-text" style={{ fontSize: 13, lineHeight: 18 }}>
               {line}
             </Text>
           ))}

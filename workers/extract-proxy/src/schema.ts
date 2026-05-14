@@ -6,8 +6,8 @@ import { z } from 'zod';
 // for downstream code.
 export const placeSchema = z.object({
   name: z.string().min(1),
-  city: z.string(),  // empty string allowed — LLM signals truly ambiguous
-  address: z.string(),  // empty string when text has no street address
+  city: z.string(), // empty string allowed — LLM signals truly ambiguous
+  address: z.string(), // empty string when text has no street address
   category: z.enum(['place', 'food', 'activity']),
   // ISO 3166-1 alpha-2. Lenient parser: any non-conforming value (missing,
   // wrong case, 3-letter, full name, non-string, …) coerces to empty

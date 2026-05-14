@@ -19,7 +19,23 @@ describe('CountryDisplay', () => {
 
   it('covers a wide span of common travel destinations', () => {
     // Spot-check several countries the app is likely to encounter early.
-    const required = ['JP', 'US', 'FR', 'IT', 'ES', 'GB', 'DE', 'KR', 'TH', 'VN', 'TR', 'MX', 'PT', 'GR', 'AU'];
+    const required = [
+      'JP',
+      'US',
+      'FR',
+      'IT',
+      'ES',
+      'GB',
+      'DE',
+      'KR',
+      'TH',
+      'VN',
+      'TR',
+      'MX',
+      'PT',
+      'GR',
+      'AU',
+    ];
     for (const code of required) {
       expect(COUNTRY_NAMES[code]).toBeTruthy();
     }

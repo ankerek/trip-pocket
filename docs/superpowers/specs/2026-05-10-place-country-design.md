@@ -58,13 +58,13 @@ Trip Places tab query  ── GROUP BY country_code, render section per country
 
 Stage authority:
 
-| Field          | INSERT (extraction)   | UPDATE (enrichment)         | Authoritative when |
-|----------------|------------------------|------------------------------|---------------------|
-| `name`         | LLM                    | (unchanged)                  | Always LLM         |
-| `category`     | LLM                    | (unchanged)                  | Always LLM         |
-| `city`         | LLM                    | **Google Places `locality`** | Enriched: Google. Else: LLM. |
-| `country_code` | **LLM (new)**          | **Google Places `country.shortText`** | Enriched: Google. Else: LLM. |
-| `latitude`/`longitude`/`formatted_address`/`description`/… | (NULL) | Google Places | Enriched only |
+| Field                                                      | INSERT (extraction) | UPDATE (enrichment)                   | Authoritative when           |
+| ---------------------------------------------------------- | ------------------- | ------------------------------------- | ---------------------------- |
+| `name`                                                     | LLM                 | (unchanged)                           | Always LLM                   |
+| `category`                                                 | LLM                 | (unchanged)                           | Always LLM                   |
+| `city`                                                     | LLM                 | **Google Places `locality`**          | Enriched: Google. Else: LLM. |
+| `country_code`                                             | **LLM (new)**       | **Google Places `country.shortText`** | Enriched: Google. Else: LLM. |
+| `latitude`/`longitude`/`formatted_address`/`description`/… | (NULL)              | Google Places                         | Enriched only                |
 
 `not-found` rows keep whatever the LLM wrote — that's the whole point of dual-write. Pure-Google-Places would leave them NULL.
 
@@ -110,13 +110,13 @@ country_code: z.unknown().transform((v) => {
 
 **Lenient per-place coercion.** Any input that isn't a recognisable ISO-2 code becomes empty string:
 
-| Gemini sends | Stored |
-|---|---|
-| `"JP"` | `"JP"` |
-| `"jp"` / `"  jp  "` | `"JP"` (coerced) |
-| `""` | `""` |
-| field missing | `""` |
-| `"JPN"` / `"Japan"` / `"J"` / non-string | `""` |
+| Gemini sends                             | Stored           |
+| ---------------------------------------- | ---------------- |
+| `"JP"`                                   | `"JP"`           |
+| `"jp"` / `"  jp  "`                      | `"JP"` (coerced) |
+| `""`                                     | `""`             |
+| field missing                            | `""`             |
+| `"JPN"` / `"Japan"` / `"J"` / non-string | `""`             |
 
 Empty string normalises to NULL at the storage boundary in `extraction.ts`. Rationale: a single bad apple should never blow up the whole extraction batch — drop the bad value, keep the place, let enrichment fill country authoritatively from Google Places. There is no "loud failure" signal for schema drift in v0.2; if Gemini consistently emits malformed country_code, the symptom is rows with NULL country until enrichment runs. Add Sentry/telemetry coverage when v0.3 lands.
 
@@ -127,12 +127,15 @@ The client's Zod (`modules/extraction/proxy.ts`) applies the same coercion — d
 In `getPlaceDetails`, add `addressComponents` to the field mask string. Parse the response:
 
 ```ts
-function pickComponent(components: AddressComponent[], type: string): { shortText?: string; longText?: string } | null {
-  return components.find(c => c.types?.includes(type)) ?? null;
+function pickComponent(
+  components: AddressComponent[],
+  type: string,
+): { shortText?: string; longText?: string } | null {
+  return components.find((c) => c.types?.includes(type)) ?? null;
 }
 
 const locality = pickComponent(obj.addressComponents ?? [], 'locality')?.longText ?? null;
-const country  = pickComponent(obj.addressComponents ?? [], 'country')?.shortText ?? null;  // ISO-2
+const country = pickComponent(obj.addressComponents ?? [], 'country')?.shortText ?? null; // ISO-2
 ```
 
 Extend `PlaceDetails` + `EnrichResponse` with `city: string | null` and `country_code: string | null`. The 'not-found' branch is unchanged (no city/country_code in that response shape).
@@ -179,11 +182,11 @@ Extend `TRIP_PLACES_SQL` to select `country_code` (no SQL grouping — group at 
 
 Render rules:
 
-| Buckets present | UI |
-|---|---|
-| One non-null bucket (and no unknown bucket) | Existing flat 2-column grid, no section headers. Single-country trips look identical to today. |
-| One non-null bucket + an unknown bucket | Existing flat grid for the known country (no header), then a small "Other" header followed by another 2-column grid for unknowns. Header only renders when both buckets are non-empty. |
-| Multiple non-null buckets | One section per country, each rendered as a 2-column grid with a header above. Sort sections by row count desc within the trip; unknown bucket last. |
+| Buckets present                             | UI                                                                                                                                                                                     |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One non-null bucket (and no unknown bucket) | Existing flat 2-column grid, no section headers. Single-country trips look identical to today.                                                                                         |
+| One non-null bucket + an unknown bucket     | Existing flat grid for the known country (no header), then a small "Other" header followed by another 2-column grid for unknowns. Header only renders when both buckets are non-empty. |
+| Multiple non-null buckets                   | One section per country, each rendered as a 2-column grid with a header above. Sort sections by row count desc within the trip; unknown bucket last.                                   |
 
 **Layout primitive.** Stay with the existing flex-wrap pattern, not `SectionList`. The render becomes a plain map over `[{ code, places }, …]`, emitting `<CountrySectionHeader />` then a flex-wrap row of `PlaceTile`s per group. Avoids restructuring the tab into a virtualised list.
 
@@ -219,43 +222,43 @@ Screenshot OCR text →
 
 ## Failure modes
 
-| Case | Behavior |
-|---|---|
-| LLM omits `country_code` from a place | Coerced to empty string by per-place Zod transform → stored as NULL. Place is still saved. |
-| LLM emits lowercase (`"jp"`) | Uppercased and accepted. |
-| LLM emits 3-letter (`"JPN"`), full name (`"Japan"`), 1-char, non-string | Coerced to empty string → stored as NULL. Place is still saved. |
-| LLM emits `""` (ambiguous) | Stored as NULL in `places.country_code`. Place lands in the "Other" bucket until enriched (or until a later same-place extraction fills NULL via asymmetric-fill). |
-| One place in a multi-place batch has a bad country_code | That single place's country_code becomes empty/NULL. All sibling places persist normally. Whole-batch failure is **not** triggered by per-field validation. |
-| Google `addressComponents.country.shortText` is lowercase (CLDR convention says uppercase, but defensive) | Normalise to uppercase in the Worker before serialising the response. Client never sees mixed case. |
-| Same-name + same-city across countries (Cambridge UK + Cambridge MA both "Flour Bakery") | Collide on `normalized_key`; one row wins. Acknowledged limitation, see "Dedup-match path" above. |
-| Google `addressComponents` missing the `country` entry | Rare. Parser returns null; `COALESCE` preserves LLM value. |
-| Google returns a different ISO-2 than the LLM | Google wins (the override is the whole point). |
-| Place enriches to `not-found` | `country_code` stays at whatever the LLM wrote (NULL or ISO-2). |
-| Place hasn't been enriched yet (`pending`) | Same: LLM value is what shows. |
-| Trip has one country but a few unknown-bucket rows | Flat list for the known country, small "Other" section at the bottom. |
+| Case                                                                                                      | Behavior                                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| LLM omits `country_code` from a place                                                                     | Coerced to empty string by per-place Zod transform → stored as NULL. Place is still saved.                                                                         |
+| LLM emits lowercase (`"jp"`)                                                                              | Uppercased and accepted.                                                                                                                                           |
+| LLM emits 3-letter (`"JPN"`), full name (`"Japan"`), 1-char, non-string                                   | Coerced to empty string → stored as NULL. Place is still saved.                                                                                                    |
+| LLM emits `""` (ambiguous)                                                                                | Stored as NULL in `places.country_code`. Place lands in the "Other" bucket until enriched (or until a later same-place extraction fills NULL via asymmetric-fill). |
+| One place in a multi-place batch has a bad country_code                                                   | That single place's country_code becomes empty/NULL. All sibling places persist normally. Whole-batch failure is **not** triggered by per-field validation.        |
+| Google `addressComponents.country.shortText` is lowercase (CLDR convention says uppercase, but defensive) | Normalise to uppercase in the Worker before serialising the response. Client never sees mixed case.                                                                |
+| Same-name + same-city across countries (Cambridge UK + Cambridge MA both "Flour Bakery")                  | Collide on `normalized_key`; one row wins. Acknowledged limitation, see "Dedup-match path" above.                                                                  |
+| Google `addressComponents` missing the `country` entry                                                    | Rare. Parser returns null; `COALESCE` preserves LLM value.                                                                                                         |
+| Google returns a different ISO-2 than the LLM                                                             | Google wins (the override is the whole point).                                                                                                                     |
+| Place enriches to `not-found`                                                                             | `country_code` stays at whatever the LLM wrote (NULL or ISO-2).                                                                                                    |
+| Place hasn't been enriched yet (`pending`)                                                                | Same: LLM value is what shows.                                                                                                                                     |
+| Trip has one country but a few unknown-bucket rows                                                        | Flat list for the known country, small "Other" section at the bottom.                                                                                              |
 
 ## Open questions / decisions made
 
 Resolved:
 
-| Question | Decision |
-|---|---|
-| Storage shape | Single column `places.country_code TEXT`, ISO 3166-1 alpha-2 uppercase. No long-name column. |
-| Display | Static English `COUNTRY_NAMES` map in `components/CountryDisplay.ts` (~250 entries, ~5KB). No `Intl.DisplayNames` — Hermes support is not guaranteed on RN 0.83. |
-| Localisation | English-only labels for v1. If/when the app ships in other locales, swap the static map for `Intl.DisplayNames` or a per-locale map. |
-| Write path | Both: LLM at INSERT, Google Places at UPDATE. Enrichment uses `COALESCE` so it only overrides when Google has a value. |
-| Scope of override | Both `city` and `country_code` get the dual-write treatment. Fixes the pre-existing inconsistency where `city` was LLM-only forever. |
-| `not-found` rows | Keep LLM-extracted values (the whole reason for dual-write). |
-| LLM ambiguity sentinel | Empty string from the LLM; stored as NULL in the DB. |
-| Format enforcement | **Lenient per-place coercion**, not strict rejection: at the worker and the client, any non-conforming `country_code` becomes empty string (→ NULL downstream). A single bad place never fails the whole batch. Downstream code can assume uppercase ISO-2 or NULL. Google's `shortText` defensively normalised to uppercase in the Worker. |
-| Dedup-match write | Asymmetric fill: replace NULL with non-empty values; never overwrite a non-NULL existing value. |
-| Cross-country same-name+same-city collisions | Acknowledged pre-existing limitation of `normalized_key = name|city`. Affects `country_code` exactly as it affects every other Google-Places-derived column. Out of scope to fix here. |
-| Per-source provenance for country | Out of scope. `place_sources` does not gain an `extracted_country_code` column. |
-| Migration shape | Edit `0001_init.ts` in place; dev DB wipe (matches the existing comment in that file). |
-| Backfill | None. Pre-launch. |
-| Trip-Places SQL grouping | Group at render time, not in SQL. Small N. |
-| Trip-Places layout | Stay on the existing flex-wrap 2-column grid; insert section headers between country groups when >1 country. No `SectionList` migration. |
-| `regionCode` hint to Google Places `searchText` | **Optional** follow-up. Adding `regionCode: <country_code>` to the searchText body, when LLM provided one, would disambiguate "Cambridge" globally. Defer until evidence it matters. |
+| Question                                        | Decision                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Storage shape                                   | Single column `places.country_code TEXT`, ISO 3166-1 alpha-2 uppercase. No long-name column.                                                                                                                                                                                                                                                |
+| Display                                         | Static English `COUNTRY_NAMES` map in `components/CountryDisplay.ts` (~250 entries, ~5KB). No `Intl.DisplayNames` — Hermes support is not guaranteed on RN 0.83.                                                                                                                                                                            |
+| Localisation                                    | English-only labels for v1. If/when the app ships in other locales, swap the static map for `Intl.DisplayNames` or a per-locale map.                                                                                                                                                                                                        |
+| Write path                                      | Both: LLM at INSERT, Google Places at UPDATE. Enrichment uses `COALESCE` so it only overrides when Google has a value.                                                                                                                                                                                                                      |
+| Scope of override                               | Both `city` and `country_code` get the dual-write treatment. Fixes the pre-existing inconsistency where `city` was LLM-only forever.                                                                                                                                                                                                        |
+| `not-found` rows                                | Keep LLM-extracted values (the whole reason for dual-write).                                                                                                                                                                                                                                                                                |
+| LLM ambiguity sentinel                          | Empty string from the LLM; stored as NULL in the DB.                                                                                                                                                                                                                                                                                        |
+| Format enforcement                              | **Lenient per-place coercion**, not strict rejection: at the worker and the client, any non-conforming `country_code` becomes empty string (→ NULL downstream). A single bad place never fails the whole batch. Downstream code can assume uppercase ISO-2 or NULL. Google's `shortText` defensively normalised to uppercase in the Worker. |
+| Dedup-match write                               | Asymmetric fill: replace NULL with non-empty values; never overwrite a non-NULL existing value.                                                                                                                                                                                                                                             |
+| Cross-country same-name+same-city collisions    | Acknowledged pre-existing limitation of `normalized_key = name                                                                                                                                                                                                                                                                              | city`. Affects `country_code` exactly as it affects every other Google-Places-derived column. Out of scope to fix here. |
+| Per-source provenance for country               | Out of scope. `place_sources` does not gain an `extracted_country_code` column.                                                                                                                                                                                                                                                             |
+| Migration shape                                 | Edit `0001_init.ts` in place; dev DB wipe (matches the existing comment in that file).                                                                                                                                                                                                                                                      |
+| Backfill                                        | None. Pre-launch.                                                                                                                                                                                                                                                                                                                           |
+| Trip-Places SQL grouping                        | Group at render time, not in SQL. Small N.                                                                                                                                                                                                                                                                                                  |
+| Trip-Places layout                              | Stay on the existing flex-wrap 2-column grid; insert section headers between country groups when >1 country. No `SectionList` migration.                                                                                                                                                                                                    |
+| `regionCode` hint to Google Places `searchText` | **Optional** follow-up. Adding `regionCode: <country_code>` to the searchText body, when LLM provided one, would disambiguate "Cambridge" globally. Defer until evidence it matters.                                                                                                                                                        |
 
 Deferred:
 

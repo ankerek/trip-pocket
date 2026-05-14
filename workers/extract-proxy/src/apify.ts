@@ -121,11 +121,7 @@ export async function fetchInstagramViaApify(
     } catch {
       // ignore
     }
-    console.error(
-      'extract-proxy/apify: non-2xx',
-      resp.status,
-      detail || '(empty body)',
-    );
+    console.error('extract-proxy/apify: non-2xx', resp.status, detail || '(empty body)');
     throw new ApifyError(502, 'apify-upstream');
   }
 
@@ -156,21 +152,14 @@ export async function fetchInstagramViaApify(
   return mapped;
 }
 
-export function mapApifyItem(
-  raw: ApifyRawItem,
-  fallbackPermalink: string,
-): ApifyInstagramPost {
+export function mapApifyItem(raw: ApifyRawItem, fallbackPermalink: string): ApifyInstagramPost {
   const imageUrls: string[] = [];
   if (typeof raw.displayUrl === 'string' && raw.displayUrl.length > 0) {
     imageUrls.push(raw.displayUrl);
   }
   if (Array.isArray(raw.childPosts)) {
     for (const child of raw.childPosts) {
-      if (
-        child &&
-        typeof child.displayUrl === 'string' &&
-        child.displayUrl.length > 0
-      ) {
+      if (child && typeof child.displayUrl === 'string' && child.displayUrl.length > 0) {
         imageUrls.push(child.displayUrl);
       }
     }
@@ -182,9 +171,6 @@ export function mapApifyItem(
       typeof raw.ownerUsername === 'string' && raw.ownerUsername.length > 0
         ? `@${raw.ownerUsername}`
         : null,
-    permalink:
-      typeof raw.url === 'string' && raw.url.length > 0
-        ? raw.url
-        : fallbackPermalink,
+    permalink: typeof raw.url === 'string' && raw.url.length > 0 ? raw.url : fallbackPermalink,
   };
 }

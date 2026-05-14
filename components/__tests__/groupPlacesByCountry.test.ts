@@ -35,12 +35,7 @@ describe('groupPlacesByCountry', () => {
   });
 
   it('always sorts the null-coded bucket last, regardless of size', () => {
-    const places: T[] = [
-      p('n1', null),
-      p('n2', null),
-      p('n3', null),
-      p('jp', 'JP'),
-    ];
+    const places: T[] = [p('n1', null), p('n2', null), p('n3', null), p('jp', 'JP')];
     const groups = groupPlacesByCountry<T>(places);
     expect(groups.map((g) => g.code)).toEqual(['JP', null]);
   });

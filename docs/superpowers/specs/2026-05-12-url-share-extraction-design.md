@@ -5,7 +5,7 @@
 
 ## Why
 
-PRODUCT.md's capture path is "see something on Instagram or TikTok, tap Share → Trip Pocket." Today that only works when the user taps Instagram's *screenshot* option — sharing the post URL itself is rejected by the share extension (Info.plist activation rule is image-only, and `ShareViewController` only reads `UTType.image`).
+PRODUCT.md's capture path is "see something on Instagram or TikTok, tap Share → Trip Pocket." Today that only works when the user taps Instagram's _screenshot_ option — sharing the post URL itself is rejected by the share extension (Info.plist activation rule is image-only, and `ShareViewController` only reads `UTType.image`).
 
 That extra step ("take a screenshot first, then share") is friction we promised not to add. Sharing the link directly is the natural muscle motion on iOS: tap Share → Trip Pocket. Today nothing happens. This spec wires that path end-to-end.
 
@@ -14,6 +14,7 @@ The schema has anticipated this since v0.2: `sources.kind` already has `'url'` a
 ## Scope
 
 **In scope:**
+
 - iOS share extension accepts URLs (in addition to images).
 - New worker endpoint `POST /fetch-post` that fetches Instagram and TikTok post metadata.
 - New on-phone processing stage that downloads cover/slide images, OCRs them, and feeds the extractor.
@@ -21,6 +22,7 @@ The schema has anticipated this since v0.2: `sources.kind` already has `'url'` a
 - One schema migration: `sources.platform` column.
 
 **Not in scope:**
+
 - YouTube support (deferred to v1.x parking lot).
 - Instagram Stories (no public embed exists).
 - Author handle / timestamp / like-count storage and UI surfacing.
@@ -30,10 +32,10 @@ The schema has anticipated this since v0.2: `sources.kind` already has `'url'` a
 
 ## Platforms supported
 
-| Platform | Fetcher | Notes |
-|---|---|---|
-| Instagram | Parse `og:*` meta tags from the **canonical post URL** (`https://www.instagram.com/p/<id>/`) | Free, no auth. Returns caption (`og:description`) + cover image (`og:image`). Carousel slides 2..N **not available** — IG loads them client-side. Stories not supported (different URL shape, no public preview). |
-| TikTok | Parse `og:*` meta tags from the canonical post URL (`https://www.tiktok.com/@user/video/<id>`); fall back to TikTok oEmbed if og tags are missing | Free, no auth. Same pattern as IG for shape consistency. Validate during worker implementation. |
+| Platform  | Fetcher                                                                                                                                           | Notes                                                                                                                                                                                                             |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Instagram | Parse `og:*` meta tags from the **canonical post URL** (`https://www.instagram.com/p/<id>/`)                                                      | Free, no auth. Returns caption (`og:description`) + cover image (`og:image`). Carousel slides 2..N **not available** — IG loads them client-side. Stories not supported (different URL shape, no public preview). |
+| TikTok    | Parse `og:*` meta tags from the canonical post URL (`https://www.tiktok.com/@user/video/<id>`); fall back to TikTok oEmbed if og tags are missing | Free, no auth. Same pattern as IG for shape consistency. Validate during worker implementation.                                                                                                                   |
 
 YouTube is explicitly **deferred** to the v1.x parking lot in `docs/ROADMAP.md` — it would have needed a separate Data API path and adds maintenance surface.
 
@@ -115,11 +117,13 @@ Writes a JSON file in the existing App Group container alongside today's image i
 New endpoint on `workers/extract-proxy`.
 
 **Request:**
+
 ```json
 { "url": "https://www.instagram.com/p/ABC123/" }
 ```
 
 **Success response:**
+
 ```json
 {
   "platform": "instagram",
@@ -133,6 +137,7 @@ New endpoint on `workers/extract-proxy`.
 `imageUrls` is normally a non-empty array — length 1 for single posts and for TikTok responses, length > 1 for IG carousels — **but may be empty** when the platform returned a usable caption but no image URL (e.g. a TikTok with a null `thumbnail_url`, or an IG post where the embed exposed the caption but no `og:image` or carousel slides). When `imageUrls` is empty and `caption` is non-empty, the phone proceeds with the caption-only path (see Processing pipeline failure handling).
 
 **Error response:** `{ "error": "<code>" }` with HTTP status:
+
 - `400 unsupported_url` — hostname not in the allowlist (should not occur given share-extension prefilter; defence in depth).
 - `404 not_found` — post doesn't exist or was deleted.
 - `403 private` — post requires auth.
@@ -204,18 +209,18 @@ ALTER TABLE sources ADD COLUMN platform TEXT NULL;
 
 **Field usage for a URL source:**
 
-| Column | Value |
-|---|---|
-| `kind` | `'url'` |
-| `platform` | `'instagram'` or `'tiktok'` |
-| `url` | Canonical post URL (TikTok short links resolved to long form) |
-| `file_path` | Local path to the downloaded **cover image** (slide 1) |
-| `content_hash` | SHA-256 of the normalized URL |
-| `ocr_text` | On-device OCR of the cover image + `\n---\n` + caption text from `og:description`, stored as one concatenated blob |
-| `ocr_status` / `extraction_status` | `pending` → `done` / `failed` as the pipeline progresses |
-| `captured_at` | Time of share |
-| `trip_id` | From the share-extension trip picker |
-| `origin` | `'share'` |
+| Column                             | Value                                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `kind`                             | `'url'`                                                                                                            |
+| `platform`                         | `'instagram'` or `'tiktok'`                                                                                        |
+| `url`                              | Canonical post URL (TikTok short links resolved to long form)                                                      |
+| `file_path`                        | Local path to the downloaded **cover image** (slide 1)                                                             |
+| `content_hash`                     | SHA-256 of the normalized URL                                                                                      |
+| `ocr_text`                         | On-device OCR of the cover image + `\n---\n` + caption text from `og:description`, stored as one concatenated blob |
+| `ocr_status` / `extraction_status` | `pending` → `done` / `failed` as the pipeline progresses                                                           |
+| `captured_at`                      | Time of share                                                                                                      |
+| `trip_id`                          | From the share-extension trip picker                                                                               |
+| `origin`                           | `'share'`                                                                                                          |
 
 `ocr_text` carries both OCR'd image text **and** caption text. The column name is now slightly imprecise but the downstream wiring (`/extract` input, `place_sources.raw_text` FTS indexing, search) already keys off it. A separate `caption_text` column would force every downstream consumer to learn about it. A one-line schema comment documents the revised meaning.
 
@@ -254,27 +259,27 @@ In v0.2.1 the worker always returns at most one image URL per source (carousels 
 
 ### Status state machine
 
-| Stage | `ocr_status` | `extraction_status` | Persisted |
-|---|---|---|---|
-| Ingested | `pending` | `pending` | `url`, `platform`, `content_hash`, `trip_id` |
-| Worker fetched | `pending` | `pending` | (caption held in memory) |
-| Cover persisted | `pending` | `pending` | + `file_path` |
-| OCR + caption concat done | `done` | `pending` | + final `ocr_text` |
-| Extracted | `done` | `done` | + `places` + `place_sources` |
+| Stage                     | `ocr_status` | `extraction_status` | Persisted                                    |
+| ------------------------- | ------------ | ------------------- | -------------------------------------------- |
+| Ingested                  | `pending`    | `pending`           | `url`, `platform`, `content_hash`, `trip_id` |
+| Worker fetched            | `pending`    | `pending`           | (caption held in memory)                     |
+| Cover persisted           | `pending`    | `pending`           | + `file_path`                                |
+| OCR + caption concat done | `done`       | `pending`           | + final `ocr_text`                           |
+| Extracted                 | `done`       | `done`              | + `places` + `place_sources`                 |
 
 ### Per-stage failure handling
 
-| Stage fails | Outcome |
-|---|---|
-| `/fetch-post` returns `not_found` / `private` / `unsupported_url` | `ocr_status='failed'`, `extraction_status='failed'`. No `file_path`. UI shows platform placeholder tile. |
-| `/fetch-post` returns `502` / `504` / network error | One automatic retry with 30s backoff. If retry also fails → `failed`. User can re-share to retry. |
-| Worker succeeds but `imageUrls` is empty (caption present) | Skip image-download + OCR. `ocr_text = caption`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder; extraction runs on caption alone. |
-| Cover image download fails (`imageUrls[0]`) | Continue with caption-only: skip OCR, `ocr_text = caption`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder; places may still extract from caption. |
-| OCR fails on cover image | `ocr_text = caption` (caption-only fallback), `ocr_status='done'`, keep `file_path` since image is fine for display. |
-| `/extract` returns empty | `extraction_status='done'`, 0 places. Same as screenshot path today. |
-| `/extract` returns error | `extraction_status='failed'`. Same as screenshot path today. |
-| WebView playback fails on detail screen | n/a — data is fine. Toast + collapse to cover image; deep-link button stays available. |
-| Network unavailable at share time | Source inserted as `pending`. Existing screenshot offline-resume logic resumes the URL pipeline on next online window. |
+| Stage fails                                                       | Outcome                                                                                                                                                          |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/fetch-post` returns `not_found` / `private` / `unsupported_url` | `ocr_status='failed'`, `extraction_status='failed'`. No `file_path`. UI shows platform placeholder tile.                                                         |
+| `/fetch-post` returns `502` / `504` / network error               | One automatic retry with 30s backoff. If retry also fails → `failed`. User can re-share to retry.                                                                |
+| Worker succeeds but `imageUrls` is empty (caption present)        | Skip image-download + OCR. `ocr_text = caption`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder; extraction runs on caption alone.                 |
+| Cover image download fails (`imageUrls[0]`)                       | Continue with caption-only: skip OCR, `ocr_text = caption`, `ocr_status='done'`, `file_path=NULL`. Tile uses placeholder; places may still extract from caption. |
+| OCR fails on cover image                                          | `ocr_text = caption` (caption-only fallback), `ocr_status='done'`, keep `file_path` since image is fine for display.                                             |
+| `/extract` returns empty                                          | `extraction_status='done'`, 0 places. Same as screenshot path today.                                                                                             |
+| `/extract` returns error                                          | `extraction_status='failed'`. Same as screenshot path today.                                                                                                     |
+| WebView playback fails on detail screen                           | n/a — data is fine. Toast + collapse to cover image; deep-link button stays available.                                                                           |
+| Network unavailable at share time                                 | Source inserted as `pending`. Existing screenshot offline-resume logic resumes the URL pipeline on next online window.                                           |
 
 The pipeline persists only the single cover image (`imageUrls[0]`) — the multi-slide temp-file cleanup invariant from earlier drafts is no longer needed because we never download more than one image per URL source in v0.2.1.
 
@@ -310,7 +315,7 @@ URL sources reuse existing surfaces. The design intent is "a source that happens
   - The IG embed iframe natively renders carousel slides with swipe controls. No extra code needed for carousel playback.
   - **Required iOS `react-native-webview` props for inline playback:**
     - `allowsInlineMediaPlayback={true}` — without this, iOS defaults to fullscreen-on-play, breaking the inline-hero intent.
-    - `mediaPlaybackRequiresUserAction={false}` — IG/TikTok embeds attempt autoplay on load; this allows it. (Both platforms require user gesture for *audio*, so this won't blast sound out — just enables silent autoplay of muted preview, which matches the platform's own behavior.)
+    - `mediaPlaybackRequiresUserAction={false}` — IG/TikTok embeds attempt autoplay on load; this allows it. (Both platforms require user gesture for _audio_, so this won't blast sound out — just enables silent autoplay of muted preview, which matches the platform's own behavior.)
     - `scalesPageToFit={false}` — embed iframes handle their own sizing; letting RN scale them causes layout drift.
     - `injectedJavaScriptBeforeContentLoaded` — inject a tiny snippet that hides IG/TikTok's "follow" / "like" overlays if they prove distracting (deferred to polish unless they're clearly intrusive in QA).
 - **Below hero:**
@@ -381,6 +386,7 @@ Update the inbox empty-state copy from "Share a screenshot to get started" → "
 Headline: `/embed/captioned` no longer carries post data in static HTML (became a JS shell). The **canonical post URL** (`https://www.instagram.com/p/<id>/`) still serves a full social-share preview via `og:*` meta tags (caption + cover image), readable by any `fetch()` with a non-Chrome User-Agent. Carousel slides 2..N are not server-side reachable from the canonical URL either, so they are **descoped** from v0.2.1; the spec above already reflects this. Implementation may proceed against the amended design.
 
 Follow-up validation (not blocking, captured in spike results follow-ups):
+
 - TikTok canonical-URL og-tag pattern to be validated during worker implementation against 2–3 real public URLs.
 - Worker tests should snapshot a recorded HTML fixture so they don't hit IG every run.
 - Sentry instrumentation around `og:description` being absent — the canary for IG changing the og-tag generation pipeline.

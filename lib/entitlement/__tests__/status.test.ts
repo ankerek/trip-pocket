@@ -4,9 +4,7 @@ import { entitlementStatus, ENTITLEMENT_KEY } from '../status';
 function customer(activeEntitlements: string[]): CustomerInfo {
   return {
     entitlements: {
-      active: Object.fromEntries(
-        activeEntitlements.map((k) => [k, { identifier: k } as never]),
-      ),
+      active: Object.fromEntries(activeEntitlements.map((k) => [k, { identifier: k } as never])),
       all: {},
     },
   } as unknown as CustomerInfo;

@@ -1,6 +1,6 @@
 # Trip Pocket
 
-**Working name** · *Your pocket for travel ideas*
+**Working name** · _Your pocket for travel ideas_
 
 ## The one-liner
 
@@ -16,13 +16,13 @@ This is a digital junk drawer problem, not a travel-planning problem. The ideas 
 
 ## The insight
 
-People don't need a better travel planner. There are dozens of those. What's missing is something one step earlier: a way to *catch* travel ideas when they appear, before they vanish into the camera roll.
+People don't need a better travel planner. There are dozens of those. What's missing is something one step earlier: a way to _catch_ travel ideas when they appear, before they vanish into the camera roll.
 
 Trip Pocket is the layer in between social media and any planner you eventually use. It's where ideas land and stay findable.
 
 ## What it is
 
-Trip Pocket is a dedicated inbox for travel ideas — screenshots *and* the Instagram and TikTok posts you'd otherwise lose inside those apps — with an AI layer that turns each one into a place you can actually use.
+Trip Pocket is a dedicated inbox for travel ideas — screenshots _and_ the Instagram and TikTok posts you'd otherwise lose inside those apps — with an AI layer that turns each one into a place you can actually use.
 
 The capture path is the iOS share sheet, and it works on whatever you're looking at. Open a post in Instagram or TikTok and tap Share → Trip Pocket — we pull the post itself (image, video, caption) so you don't even need to screenshot it. See something elsewhere and screenshot it the old way? Share the screenshot from Photos the same way. Pick a trip, done — one extra tap on top of what you were going to do anyway. If you've already got a backlog of screenshots in Photos, you can also pull them in from inside the app.
 
@@ -34,7 +34,7 @@ Capture should feel as fast as taking a screenshot. Browsing should feel as clea
 
 - **Apple Photos albums?** Screenshots mix in with everything else, there's no concept of a trip, and nothing is tagged. Photos is for memories, not future plans.
 - **Instagram or TikTok's Saved tab?** Saves are trapped inside each app, can't be grouped by trip, can't be searched by place, and you have to remember which app you saved it in. Trip Pocket pulls the post out and turns it into a place you can actually act on.
-- **Pinterest?** Pinterest is for discovering other people's content. Trip Pocket is for keeping the things *you've* already found, in the format you found them in — the screenshot or the original post.
+- **Pinterest?** Pinterest is for discovering other people's content. Trip Pocket is for keeping the things _you've_ already found, in the format you found them in — the screenshot or the original post.
 - **A travel planner like Wanderlog or a Notion doc?** Too much friction. They want structured input — names, addresses, dates. Trip Pocket only asks for a share and a trip name.
 
 ## Who it's for
@@ -68,20 +68,20 @@ The first user is anyone with a camera roll full of screenshots — or a hidden 
 - Itinerary generation from saved ideas
 - Cloud sync across devices
 
-*(Technical architecture and roadmap live in separate documents.)*
+_(Technical architecture and roadmap live in separate documents.)_
 
 ## How we win
 
 Speed. Simplicity. The lowest possible friction between seeing a thing and saving it well — and an AI layer that takes care of the boring step you would have skipped.
 
-What we are deliberately *not* building, at least not early:
+What we are deliberately _not_ building, at least not early:
 
 - A complex itinerary planner
 - Server-side product logic (the AI extraction proxy is a stateless passthrough; the app's source of truth stays on the device)
 - Social or sharing features
 - Booking integrations
 
-Each of those is a tarpit. The wedge is *save it before it's lost*, and that's where focus stays.
+Each of those is a tarpit. The wedge is _save it before it's lost_, and that's where focus stays.
 
 ## Business model
 

@@ -30,10 +30,7 @@ export async function initFirehose(db?: Database): Promise<void> {
   firehoseEnabled = row?.value === '1';
 }
 
-export async function setFirehoseEnabled(
-  enabled: boolean,
-  db?: Database,
-): Promise<void> {
+export async function setFirehoseEnabled(enabled: boolean, db?: Database): Promise<void> {
   // Update memory first so any track() in-flight sees the new state without
   // waiting for SQLite.
   firehoseEnabled = enabled;
@@ -68,9 +65,7 @@ export function logToFirehose(args: {
   if (typeof __DEV__ !== 'undefined' && !__DEV__) return;
   if (!firehoseEnabled) return;
 
-  const parts: string[] = [
-    `[pipeline] ${args.stage} ${args.status} in ${args.durationMs}ms`,
-  ];
+  const parts: string[] = [`[pipeline] ${args.stage} ${args.status} in ${args.durationMs}ms`];
   if (args.sourceId !== null) parts.push(`source=${args.sourceId}`);
   for (const [key, value] of Object.entries(args.extra)) {
     const rendered = renderValue(value);
@@ -96,8 +91,7 @@ function renderValue(value: unknown): string | null {
 }
 
 function quote(s: string): string {
-  const truncated =
-    s.length > MAX_STR_VALUE_LEN ? s.slice(0, MAX_STR_VALUE_LEN) + '…' : s;
+  const truncated = s.length > MAX_STR_VALUE_LEN ? s.slice(0, MAX_STR_VALUE_LEN) + '…' : s;
   return `"${truncated.replace(/"/g, '\\"')}"`;
 }
 

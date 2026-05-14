@@ -73,7 +73,7 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
   return (
     <PressableScale
       onPress={() => router.push(`/places/${place.id}`)}
-      className="flex-row items-center gap-3 border-b border-hairline px-4 py-3"
+      className="border-hairline flex-row items-center gap-3 border-b px-4 py-3"
       haptic={false}
       accessibilityRole="button"
       accessibilityLabel={`Open ${place.name}`}
@@ -86,13 +86,13 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
           transition={150}
         />
       ) : (
-        <View className="h-11 w-11 items-center justify-center rounded-lg bg-surface">
+        <View className="bg-surface h-11 w-11 items-center justify-center rounded-lg">
           <Icon name={CATEGORY_ICON[place.category]} size={20} tintColor={colors.text} />
         </View>
       )}
       <View className="flex-1">
         <View className="flex-row items-center gap-2">
-          <Text className="flex-shrink text-base font-medium text-text" numberOfLines={1}>
+          <Text className="text-text flex-shrink text-base font-medium" numberOfLines={1}>
             {place.name}
           </Text>
           {place.rating !== null ? (
@@ -100,11 +100,11 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
           ) : null}
         </View>
         {place.description ? (
-          <Text className="text-sm text-text-muted" numberOfLines={2}>
+          <Text className="text-text-muted text-sm" numberOfLines={2}>
             {place.description}
           </Text>
         ) : subtitle ? (
-          <Text className="text-sm text-text-muted" numberOfLines={1}>
+          <Text className="text-text-muted text-sm" numberOfLines={1}>
             {subtitle}
           </Text>
         ) : null}
@@ -114,16 +114,11 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
   );
 }
 
-function RatingBadge({
-  rating,
-  priceLevel,
-}: {
-  rating: number;
-  priceLevel: number | null;
-}) {
-  const priceStr = priceLevel !== null && priceLevel > 0 ? ' · '.concat('$'.repeat(priceLevel)) : '';
+function RatingBadge({ rating, priceLevel }: { rating: number; priceLevel: number | null }) {
+  const priceStr =
+    priceLevel !== null && priceLevel > 0 ? ' · '.concat('$'.repeat(priceLevel)) : '';
   return (
-    <Text className="text-xs text-text-muted" numberOfLines={1}>
+    <Text className="text-text-muted text-xs" numberOfLines={1}>
       ★ {rating.toFixed(1)}
       {priceStr}
     </Text>
@@ -156,7 +151,6 @@ function buildSubtitle(place: PlaceRowData): string {
       : null;
   // Preference order: enriched formatted_address (filled by enrichment),
   // OCR-extracted street address, plain city. The first non-empty wins.
-  const locationFragment =
-    place.formatted_address || place.address?.trim() || place.city || null;
+  const locationFragment = place.formatted_address || place.address?.trim() || place.city || null;
   return [locationFragment, sourceFragment].filter(Boolean).join(' · ');
 }

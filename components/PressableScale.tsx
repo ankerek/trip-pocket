@@ -1,13 +1,6 @@
 import { useCallback, type ComponentProps, type ReactNode } from 'react';
-import type {
-  GestureResponderEvent,
-  PressableProps as RNPressableProps,
-} from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import type { GestureResponderEvent, PressableProps as RNPressableProps } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { Pressable, View } from '@/tw';
 

@@ -88,7 +88,11 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function errorResponse(error: string, status: number, extra: Record<string, string> = {}): Response {
+function errorResponse(
+  error: string,
+  status: number,
+  extra: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify({ error }), {
     status,
     headers: { ...JSON_HEADERS, ...extra },
@@ -190,7 +194,10 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
 // --- Google Places client ---
 
 class PlacesError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
     super(message);
     this.name = 'PlacesError';
   }
@@ -239,8 +246,8 @@ type PlaceDetails = {
   displayName: string | null;
   types: string[];
   editorialSummary: string | null;
-  city: string | null;            // addressComponents[type=locality].longText
-  countryCode: string | null;     // addressComponents[type=country].shortText, uppercased
+  city: string | null; // addressComponents[type=locality].longText
+  countryCode: string | null; // addressComponents[type=country].shortText, uppercased
 };
 
 async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails> {
@@ -259,13 +266,16 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
     'addressComponents',
   ].join(',');
 
-  const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-    method: 'GET',
-    headers: {
-      'X-Goog-Api-Key': env.GOOGLE_PLACES_API_KEY,
-      'X-Goog-FieldMask': fields,
+  const resp = await fetch(
+    `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
+    {
+      method: 'GET',
+      headers: {
+        'X-Goog-Api-Key': env.GOOGLE_PLACES_API_KEY,
+        'X-Goog-FieldMask': fields,
+      },
     },
-  });
+  );
 
   if (!resp.ok) {
     throw new PlacesError(resp.status, `placeDetails ${resp.status}`);
@@ -300,12 +310,9 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
 
   return {
     id: obj.id,
-    latitude:
-      typeof obj.location?.latitude === 'number' ? obj.location.latitude : null,
-    longitude:
-      typeof obj.location?.longitude === 'number' ? obj.location.longitude : null,
-    formattedAddress:
-      typeof obj.formattedAddress === 'string' ? obj.formattedAddress : null,
+    latitude: typeof obj.location?.latitude === 'number' ? obj.location.latitude : null,
+    longitude: typeof obj.location?.longitude === 'number' ? obj.location.longitude : null,
+    formattedAddress: typeof obj.formattedAddress === 'string' ? obj.formattedAddress : null,
     photoName:
       Array.isArray(obj.photos) && typeof obj.photos[0]?.name === 'string'
         ? obj.photos[0].name
@@ -314,15 +321,19 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
     priceLevel: priceLevelToInt(obj.priceLevel),
     googleMapsUri: typeof obj.googleMapsUri === 'string' ? obj.googleMapsUri : null,
     displayName: typeof obj.displayName?.text === 'string' ? obj.displayName.text : null,
-    types: Array.isArray(obj.types) ? obj.types.filter((t): t is string => typeof t === 'string') : [],
+    types: Array.isArray(obj.types)
+      ? obj.types.filter((t): t is string => typeof t === 'string')
+      : [],
     editorialSummary:
       typeof obj.editorialSummary?.text === 'string' ? obj.editorialSummary.text : null,
-    city: typeof locality?.longText === 'string' && locality.longText.length > 0
-      ? locality.longText
-      : null,
-    countryCode: typeof country?.shortText === 'string' && country.shortText.length > 0
-      ? country.shortText.toUpperCase()
-      : null,
+    city:
+      typeof locality?.longText === 'string' && locality.longText.length > 0
+        ? locality.longText
+        : null,
+    countryCode:
+      typeof country?.shortText === 'string' && country.shortText.length > 0
+        ? country.shortText.toUpperCase()
+        : null,
   };
 }
 
@@ -371,10 +382,7 @@ Use the structured Google Places facts AND the user's OCR caption from the scree
 
 Output only the blurb text. No leading label, no quotes, no formatting.`;
 
-type BlurbOutcome = Extract<
-  EnrichDebug['blurbOutcome'],
-  'ok' | 'empty' | 'failed'
->;
+type BlurbOutcome = Extract<EnrichDebug['blurbOutcome'], 'ok' | 'empty' | 'failed'>;
 
 // Class of blurb failure. Used by the in-call retry to decide whether to
 // take a second attempt: transient = yes (network blip, Gemini 5xx);
@@ -384,7 +392,10 @@ type BlurbOutcome = Extract<
 type BlurbFailureClass = 'transient' | 'permanent' | 'rate_limited';
 
 class BlurbError extends Error {
-  constructor(public readonly failureClass: BlurbFailureClass, message: string) {
+  constructor(
+    public readonly failureClass: BlurbFailureClass,
+    message: string,
+  ) {
     super(message);
     this.name = 'BlurbError';
   }
@@ -480,11 +491,7 @@ async function buildBlurb(
     // a 500ms in-call backoff would just hit the same limit. 5xx is the
     // upstream having a transient problem — the case retry is for.
     const cls: BlurbFailureClass =
-      resp.status === 429
-        ? 'rate_limited'
-        : resp.status >= 500
-          ? 'transient'
-          : 'permanent';
+      resp.status === 429 ? 'rate_limited' : resp.status >= 500 ? 'transient' : 'permanent';
     throw new BlurbError(cls, `gemini-${resp.status}`);
   }
 

@@ -25,9 +25,7 @@ function jsonError(error: string, status: number): Response {
   });
 }
 
-export type EntitlementResult =
-  | { ok: true; userId: string }
-  | { ok: false; response: Response };
+export type EntitlementResult = { ok: true; userId: string } | { ok: false; response: Response };
 
 export async function requireEntitlement(
   request: Request,

@@ -199,7 +199,7 @@ Layout (top to bottom):
    - **Empty input:** centered hint "Search your screenshots".
    - **Has input, has results:** `FlatList` of result rows.
    - **Has input, zero results:** centered "No matches for '<query>'".
-5. **Result row:** thumbnail (left, 64×64), then a column of (a) trip badge (small pill: trip name or "Inbox"), (b) the highlighted snippet. Tapping pushes `places/[id]` — that's the existing screenshot-detail route (the `places/` name is historical and will eventually need disambiguation when v0.2's *extracted-places* feature lands, but renaming is not in scope of this spec).
+5. **Result row:** thumbnail (left, 64×64), then a column of (a) trip badge (small pill: trip name or "Inbox"), (b) the highlighted snippet. Tapping pushes `places/[id]` — that's the existing screenshot-detail route (the `places/` name is historical and will eventually need disambiguation when v0.2's _extracted-places_ feature lands, but renaming is not in scope of this spec).
 
 Behavior:
 
@@ -225,6 +225,7 @@ Behavior:
   ```
 
   We pass `char(2)` / `char(3)` (`STX` / `ETX`) as match markers because they're guaranteed not to appear in OCR text. The TS layer splits on those bytes to render a `<Text>` with bold runs, no HTML parsing needed.
+
 - `{trip_filter_clause}` is empty when "All trips" is selected, otherwise `AND s.trip_id = ?` with the selected trip's id bound.
 - The query is `useLiveQuery`-backed so a screenshot whose OCR completes while the user has the search screen open will appear without a re-issue.
 - A 50-row hard limit covers the v0.2 dataset comfortably; pagination is not in scope.
@@ -294,24 +295,24 @@ Both paths feed the same module-level queue, and the queue dedupes on `screensho
 
 ## State & retry policy
 
-| State | Semantics | Transitions |
-|---|---|---|
-| `pending` | OCR not yet attempted (or attempt in flight). | → `done` on success. → `failed` after 3 in-memory retries within the current app session. |
-| `done` | `ocr_text` populated, FTS row exists. | → `pending` only via `ocr_text = NULL` (we don't do this in v0.2). |
-| `failed` | 3 in-session retries exhausted. | → `pending` on next process start (via `runStartupRecovery`), once. Mid-session foreground sweeps **do not** re-pick `failed` rows. |
+| State     | Semantics                                     | Transitions                                                                                                                         |
+| --------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `pending` | OCR not yet attempted (or attempt in flight). | → `done` on success. → `failed` after 3 in-memory retries within the current app session.                                           |
+| `done`    | `ocr_text` populated, FTS row exists.         | → `pending` only via `ocr_text = NULL` (we don't do this in v0.2).                                                                  |
+| `failed`  | 3 in-session retries exhausted.               | → `pending` on next process start (via `runStartupRecovery`), once. Mid-session foreground sweeps **do not** re-pick `failed` rows. |
 
 3 in-memory retries comes from ARCHITECTURE.md's open question ("start at 3"). Once-per-launch retry of `failed` rows is intentional: a screenshot that genuinely can't be OCR'd (corrupted file, unsupported format) cycles silently after each cold start and never burns CPU/battery on every foreground in between. A transient fault (low memory, file not yet on disk) self-heals on the next launch.
 
 ## UI states
 
-| Screen | State | Behavior |
-|---|---|---|
-| Inbox / Trip detail | `ocr_status='pending'` | Thumbnail shimmers (`animate-pulse` + `bg-black/10` overlay). Everything else (tap to open, drag to reorder if any, etc.) works normally. |
-| Inbox / Trip detail | `'done'` or `'failed'` | Normal thumbnail. No visible difference between done and failed. |
-| Search screen | empty input | Centered "Search your screenshots" hint. |
-| Search screen | input + zero rows | Centered "No matches for '<query>'". |
-| Search screen | input + rows | `FlatList` of result rows with snippet highlighting. |
-| Header right (Inbox + Trip detail) | always | Magnifier icon → push `search`. |
+| Screen                             | State                  | Behavior                                                                                                                                  |
+| ---------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbox / Trip detail                | `ocr_status='pending'` | Thumbnail shimmers (`animate-pulse` + `bg-black/10` overlay). Everything else (tap to open, drag to reorder if any, etc.) works normally. |
+| Inbox / Trip detail                | `'done'` or `'failed'` | Normal thumbnail. No visible difference between done and failed.                                                                          |
+| Search screen                      | empty input            | Centered "Search your screenshots" hint.                                                                                                  |
+| Search screen                      | input + zero rows      | Centered "No matches for '<query>'".                                                                                                      |
+| Search screen                      | input + rows           | `FlatList` of result rows with snippet highlighting.                                                                                      |
+| Header right (Inbox + Trip detail) | always                 | Magnifier icon → push `search`.                                                                                                           |
 
 OCR failures are silent in user-visible UI — same posture as ARCHITECTURE.md's "OCR failures: silent in UI." Sentry is not yet wired (it lands in v0.3); when it is, `processing` calls `telemetry.captureError(err, { screenshotId })` on each failure, but adding that hook is not part of this spec.
 
@@ -326,32 +327,32 @@ Implication: search returns nothing on first launch and gradually populates as t
 
 ## Failure modes
 
-| Case | Behavior |
-|---|---|
-| Vision throws (decode error, missing file). | Treated as failure; retry per policy. The screenshot itself is still browsable. |
-| Image file deleted between insert and OCR (storage-full eviction; user manually clears app data). | Vision throws "file not found". Lifecycle marks `failed`. Soft-delete on the screenshot row removes it from FTS via the `AFTER DELETE` trigger. |
-| App killed mid-OCR. | Row stays `pending`. Next foreground sweep re-queues it. No persisted in-flight state. |
-| Two captures arrive within milliseconds (e.g. a shared item ingested at the same time as a manual import). | Both get enqueued. Queue is serial — one waits. No race. |
-| FTS row inserted twice (defensive trigger fires unexpectedly). | The triggers always `DELETE` before `INSERT`, so duplicates are impossible. |
-| User searches a query like `O'Brien` containing punctuation. | All tokens are unconditionally double-quoted by the escaper, so `MATCH '"O''Brien"'` is well-formed and the trigram tokenizer treats the apostrophe as a literal character. Match success depends on whether the OCR text contains the same literal apostrophe. |
-| User types a query, then immediately taps Cancel before the 200ms debounce fires. | The pending query is cancelled by `useLiveQuery`'s teardown when the screen unmounts. |
+| Case                                                                                                       | Behavior                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vision throws (decode error, missing file).                                                                | Treated as failure; retry per policy. The screenshot itself is still browsable.                                                                                                                                                                                 |
+| Image file deleted between insert and OCR (storage-full eviction; user manually clears app data).          | Vision throws "file not found". Lifecycle marks `failed`. Soft-delete on the screenshot row removes it from FTS via the `AFTER DELETE` trigger.                                                                                                                 |
+| App killed mid-OCR.                                                                                        | Row stays `pending`. Next foreground sweep re-queues it. No persisted in-flight state.                                                                                                                                                                          |
+| Two captures arrive within milliseconds (e.g. a shared item ingested at the same time as a manual import). | Both get enqueued. Queue is serial — one waits. No race.                                                                                                                                                                                                        |
+| FTS row inserted twice (defensive trigger fires unexpectedly).                                             | The triggers always `DELETE` before `INSERT`, so duplicates are impossible.                                                                                                                                                                                     |
+| User searches a query like `O'Brien` containing punctuation.                                               | All tokens are unconditionally double-quoted by the escaper, so `MATCH '"O''Brien"'` is well-formed and the trigram tokenizer treats the apostrophe as a literal character. Match success depends on whether the OCR text contains the same literal apostrophe. |
+| User types a query, then immediately taps Cancel before the 200ms debounce fires.                          | The pending query is cancelled by `useLiveQuery`'s teardown when the screen unmounts.                                                                                                                                                                           |
 
 ## Open questions / decisions made
 
 Resolved (recorded here so the implementation plan doesn't reopen them):
 
-| Question | Decision |
-|---|---|
-| Trigger model for OCR (Q1) | Hybrid: import-time kickoff + foreground sweep. |
-| Locale handling (Q2) | `automaticallyDetectsLanguage = true`. Overrides ARCHITECTURE.md's "start with device locale" lean. |
-| UI feedback while pending (Q3) | List shimmer on the thumbnail. No detail-view pill. |
-| Spec scope (Q4) | OCR plumbing + full search UX (highlighting + trip filter chip). |
-| Search nav placement (Q5) | Magnifier in Inbox + Trip detail headers → dedicated `search` screen. |
-| Retry count | 3 in-memory, resets per app launch. `failed` rows promoted back to `pending` once per launch via `runStartupRecovery`; mid-session sweeps don't re-process them. |
-| FTS document content | `ocr_text` only. Trip name reached via `JOIN trips`. Tags / extracted places folded in by their own specs. |
-| FTS tokenizer | `trigram` (replaces day-one `porter unicode61`, which couldn't substring-match CJK). 3-character minimum query length. |
-| Result list cap | 50, no pagination. |
-| Snippet length | 16 tokens, ellipsis-trimmed. |
+| Question                       | Decision                                                                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trigger model for OCR (Q1)     | Hybrid: import-time kickoff + foreground sweep.                                                                                                                  |
+| Locale handling (Q2)           | `automaticallyDetectsLanguage = true`. Overrides ARCHITECTURE.md's "start with device locale" lean.                                                              |
+| UI feedback while pending (Q3) | List shimmer on the thumbnail. No detail-view pill.                                                                                                              |
+| Spec scope (Q4)                | OCR plumbing + full search UX (highlighting + trip filter chip).                                                                                                 |
+| Search nav placement (Q5)      | Magnifier in Inbox + Trip detail headers → dedicated `search` screen.                                                                                            |
+| Retry count                    | 3 in-memory, resets per app launch. `failed` rows promoted back to `pending` once per launch via `runStartupRecovery`; mid-session sweeps don't re-process them. |
+| FTS document content           | `ocr_text` only. Trip name reached via `JOIN trips`. Tags / extracted places folded in by their own specs.                                                       |
+| FTS tokenizer                  | `trigram` (replaces day-one `porter unicode61`, which couldn't substring-match CJK). 3-character minimum query length.                                           |
+| Result list cap                | 50, no pagination.                                                                                                                                               |
+| Snippet length                 | 16 tokens, ellipsis-trimmed.                                                                                                                                     |
 
 Deferred to later specs:
 

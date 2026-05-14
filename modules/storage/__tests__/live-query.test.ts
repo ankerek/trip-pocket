@@ -15,11 +15,7 @@ describe('useLiveQuery', () => {
 
   it('returns the initial query result', async () => {
     const { result } = renderHook(() =>
-      useLiveQuery<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM sources',
-        [],
-        ['sources'],
-      ),
+      useLiveQuery<{ count: number }>('SELECT COUNT(*) AS count FROM sources', [], ['sources']),
     );
     await waitFor(() => expect(result.current).not.toBeNull());
     expect(result.current?.[0]?.count).toBe(0);
@@ -27,11 +23,7 @@ describe('useLiveQuery', () => {
 
   it('re-runs the query after notifyChange("sources")', async () => {
     const { result } = renderHook(() =>
-      useLiveQuery<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM sources',
-        [],
-        ['sources'],
-      ),
+      useLiveQuery<{ count: number }>('SELECT COUNT(*) AS count FROM sources', [], ['sources']),
     );
     await waitFor(() => expect(result.current?.[0]?.count).toBe(0));
     await act(async () => {

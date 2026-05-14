@@ -115,11 +115,13 @@ export async function deleteTrip(
     await db.withTransactionAsync(async () => {
       await db.runAsync(
         `UPDATE sources SET trip_id = NULL, updated_at = ? WHERE trip_id = ?`,
-        now, id,
+        now,
+        id,
       );
       await db.runAsync(
         `UPDATE places SET trip_id = NULL, updated_at = ? WHERE trip_id = ?`,
-        now, id,
+        now,
+        id,
       );
       await db.runAsync(`DELETE FROM trips WHERE id = ?`, id);
     });
@@ -136,9 +138,7 @@ export async function deleteTrip(
       `SELECT file_path FROM sources WHERE trip_id = ? AND file_path IS NOT NULL`,
       id,
     );
-    filePaths = fileRows
-      .map((r) => r.file_path)
-      .filter((p): p is string => p !== null);
+    filePaths = fileRows.map((r) => r.file_path).filter((p): p is string => p !== null);
 
     const affectedPlaceRows = await db.getAllAsync<{ place_id: string }>(
       `SELECT DISTINCT place_id FROM place_sources
@@ -168,7 +168,8 @@ export async function deleteTrip(
     }
     await db.runAsync(
       `UPDATE places SET trip_id = NULL, updated_at = ? WHERE trip_id = ?`,
-      now, id,
+      now,
+      id,
     );
     await db.runAsync(`DELETE FROM sources WHERE trip_id = ?`, id);
     await db.runAsync(`DELETE FROM trips WHERE id = ?`, id);

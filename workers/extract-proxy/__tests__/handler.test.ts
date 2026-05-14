@@ -158,12 +158,14 @@ describe('handleExtract', () => {
   });
 
   it('returns 200 with parsed places when Gemini succeeds', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(async () =>
-      geminiOkResponse([
-        { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
-        { name: 'Tsukiji Market', city: 'Tokyo', category: 'place' },
-      ]),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () =>
+        geminiOkResponse([
+          { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
+          { name: 'Tsukiji Market', city: 'Tokyo', category: 'place' },
+        ]),
+      ) as unknown as typeof fetch,
+    );
 
     const res = await handleExtract(
       postJson({ ocr_text: 'Maru Tonkatsu in Shibuya. Visit Tsukiji.' }),
@@ -176,7 +178,9 @@ describe('handleExtract', () => {
   });
 
   it('returns 200 with empty places when Gemini classifies as noise', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch,
+    );
     const res = await handleExtract(postJson({ ocr_text: 'just a meme' }), makeEnv());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { places: unknown[] };
@@ -184,33 +188,39 @@ describe('handleExtract', () => {
   });
 
   it('returns 502 when Gemini returns malformed JSON in candidates[0]', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: '{ "places": [' }] } }],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              candidates: [{ content: { parts: [{ text: '{ "places": [' }] } }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ) as unknown as typeof fetch,
+    );
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(502);
   });
 
   it('returns 502 when Gemini response fails Zod validation', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(async () =>
-      geminiOkResponse([{ name: 'X', city: 'Y', category: 'unknown-cat' as 'food' }]),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () =>
+        geminiOkResponse([{ name: 'X', city: 'Y', category: 'unknown-cat' as 'food' }]),
+      ) as unknown as typeof fetch,
+    );
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(502);
   });
 
   it('coerces lowercase country_code to uppercase (keeps the place rather than failing the batch)', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(async () =>
-      geminiOkResponse([{ name: 'X', city: 'Y', category: 'food', country_code: 'jp' }]),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () =>
+        geminiOkResponse([{ name: 'X', city: 'Y', category: 'food', country_code: 'jp' }]),
+      ) as unknown as typeof fetch,
+    );
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(200);
@@ -219,27 +229,29 @@ describe('handleExtract', () => {
   });
 
   it('coerces missing country_code to empty (keeps the place — model omission is non-fatal)', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            candidates: [
-              {
-                content: {
-                  parts: [
-                    {
-                      text: JSON.stringify({
-                        places: [{ name: 'X', city: 'Y', address: '', category: 'food' }],
-                      }),
-                    },
-                  ],
+    globalThis.fetch = withRcFetch(
+      jest.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        text: JSON.stringify({
+                          places: [{ name: 'X', city: 'Y', address: '', category: 'food' }],
+                        }),
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-    ) as unknown as typeof fetch);
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ) as unknown as typeof fetch,
+    );
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(200);
@@ -248,12 +260,14 @@ describe('handleExtract', () => {
   });
 
   it('keeps good places when one place in the batch has a bad country_code (per-place coercion)', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(async () =>
-      geminiOkResponse([
-        { name: 'Good', city: 'Tokyo', category: 'food', country_code: 'JP' },
-        { name: 'Bad', city: 'Tokyo', category: 'food', country_code: 'JPN' },
-      ]),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () =>
+        geminiOkResponse([
+          { name: 'Good', city: 'Tokyo', category: 'food', country_code: 'JP' },
+          { name: 'Bad', city: 'Tokyo', category: 'food', country_code: 'JPN' },
+        ]),
+      ) as unknown as typeof fetch,
+    );
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(200);
@@ -264,21 +278,25 @@ describe('handleExtract', () => {
   });
 
   it('returns 502 when Gemini upstream returns 5xx', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(
-      async () => new Response('upstream burning', { status: 500 }),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(
+        async () => new Response('upstream burning', { status: 500 }),
+      ) as unknown as typeof fetch,
+    );
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(502);
   });
 
   it('passes upstream Retry-After through on 429', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(
-      async () =>
-        new Response('rate limited upstream', {
-          status: 429,
-          headers: { 'retry-after': '42' },
-        }),
-    ) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(
+        async () =>
+          new Response('rate limited upstream', {
+            status: 429,
+            headers: { 'retry-after': '42' },
+          }),
+      ) as unknown as typeof fetch,
+    );
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(429);
     expect(res.headers.get('retry-after')).toBe('42');
@@ -291,7 +309,9 @@ describe('handleExtract', () => {
   });
 
   it('does not echo OCR text in any response body', async () => {
-    globalThis.fetch = withRcFetch(jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch,
+    );
     const ocrText = 'This is private OCR text 12345';
     const res = await handleExtract(postJson({ ocr_text: ocrText }), makeEnv());
     const text = await res.text();
@@ -301,16 +321,16 @@ describe('handleExtract', () => {
   it('rate-limit binding is keyed by CF-Connecting-IP', async () => {
     const limiter = rateLimit(true);
     const env = makeEnv({ RATE_LIMIT: limiter as unknown as Env['RATE_LIMIT'] });
-    globalThis.fetch = withRcFetch(jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch);
+    globalThis.fetch = withRcFetch(
+      jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch,
+    );
     await handleExtract(postJson({ ocr_text: 'hi' }), env);
     expect(limiter.limit).toHaveBeenCalledWith({ key: '1.2.3.4' });
   });
 
   describe('AI Gateway integration', () => {
     it('targets the AI Gateway URL (account / gateway / google-ai-studio / generateContent)', async () => {
-      const fetchSpy = jest.fn(async () =>
-        geminiOkResponse([]),
-      ) as unknown as typeof fetch;
+      const fetchSpy = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
       globalThis.fetch = withRcFetch(fetchSpy);
 
       const env = makeEnv({
@@ -321,14 +341,14 @@ describe('handleExtract', () => {
 
       // fetchSpy receives only non-RC calls (RC is intercepted by withRcFetch).
       const url = (fetchSpy as unknown as jest.Mock).mock.calls[0][0] as string;
-      expect(url).toContain('https://gateway.ai.cloudflare.com/v1/acct-abc123/trip-pocket/google-ai-studio/');
+      expect(url).toContain(
+        'https://gateway.ai.cloudflare.com/v1/acct-abc123/trip-pocket/google-ai-studio/',
+      );
       expect(url).toContain('models/gemini-2.5-flash-lite:generateContent');
     });
 
     it('sends cf-aig-authorization Bearer header', async () => {
-      const fetchSpy = jest.fn(async () =>
-        geminiOkResponse([]),
-      ) as unknown as typeof fetch;
+      const fetchSpy = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
       globalThis.fetch = withRcFetch(fetchSpy);
 
       const env = makeEnv({ CF_AIG_TOKEN: 'tok-xyz' });
@@ -341,9 +361,7 @@ describe('handleExtract', () => {
     });
 
     it('still passes the Gemini API key to the upstream provider', async () => {
-      const fetchSpy = jest.fn(async () =>
-        geminiOkResponse([]),
-      ) as unknown as typeof fetch;
+      const fetchSpy = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
       globalThis.fetch = withRcFetch(fetchSpy);
 
       const env = makeEnv({ GEMINI_API_KEY: 'gemini-secret' });

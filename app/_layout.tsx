@@ -132,10 +132,9 @@ function RootLayoutInner() {
         downloadImage: async (imageUrl) => {
           // Persist cover images alongside screenshots inside the App Group
           // so they survive dev reinstalls and the file_path stays valid.
-          const screenshotsDir =
-            getAppGroupContainerUri()
-              ? new Directory(getAppGroupContainerUri()!, 'screenshots')
-              : new Directory(Paths.document, 'screenshots');
+          const screenshotsDir = getAppGroupContainerUri()
+            ? new Directory(getAppGroupContainerUri()!, 'screenshots')
+            : new Directory(Paths.document, 'screenshots');
           if (!screenshotsDir.exists) screenshotsDir.create({ intermediates: true });
           const downloaded = await File.downloadFileAsync(imageUrl, screenshotsDir);
           return downloaded.uri;
@@ -261,15 +260,21 @@ function RootLayoutInner() {
   useEffect(() => {
     if (!ctx) return;
     const unsubs: Array<() => void> = [];
-    unsubs.push(registerResumeHandler(async () => {
-      await ctx.extractor.resumeEntitlementPaused();
-    }));
-    unsubs.push(registerResumeHandler(async () => {
-      await ctx.enricher.resumeEntitlementPaused();
-    }));
-    unsubs.push(registerResumeHandler(async () => {
-      await ctx.processor.resumeUrlFetchEntitlementPaused();
-    }));
+    unsubs.push(
+      registerResumeHandler(async () => {
+        await ctx.extractor.resumeEntitlementPaused();
+      }),
+    );
+    unsubs.push(
+      registerResumeHandler(async () => {
+        await ctx.enricher.resumeEntitlementPaused();
+      }),
+    );
+    unsubs.push(
+      registerResumeHandler(async () => {
+        await ctx.processor.resumeUrlFetchEntitlementPaused();
+      }),
+    );
     return () => unsubs.forEach((u) => u());
   }, [ctx, registerResumeHandler]);
 

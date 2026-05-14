@@ -43,8 +43,7 @@ export default function PipelineLogScreen() {
   const [limit, setLimit] = useState(PAGE_SIZE);
 
   // Live-subscribe so new events appear without a manual refresh.
-  const rows =
-    useLiveQuery<Row>(SQL, [limit], ['pipeline_events', 'sources']) ?? [];
+  const rows = useLiveQuery<Row>(SQL, [limit], ['pipeline_events', 'sources']) ?? [];
 
   // Group consecutive rows that share the same source_id (DESC order from
   // SQL). Within each group, reverse the stage order so the pipeline reads
@@ -76,16 +75,14 @@ export default function PipelineLogScreen() {
               accessibilityLabel="Clear pipeline log"
               hitSlop={12}
             >
-              <Text style={{ fontSize: 15, color: '#dc2626', fontWeight: '600' }}>
-                Clear
-              </Text>
+              <Text style={{ fontSize: 15, color: '#dc2626', fontWeight: '600' }}>Clear</Text>
             </RNPressable>
           ),
         }}
       />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        className="flex-1 bg-bg"
+        className="bg-bg flex-1"
         contentContainerClassName="px-4 py-4"
       >
         {groups.length === 0 ? (
@@ -107,7 +104,9 @@ export default function PipelineLogScreen() {
                 className="mt-4 rounded-2xl px-4 py-3"
                 style={{ backgroundColor: 'rgba(20, 184, 166, 0.1)' }}
               >
-                <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6', textAlign: 'center' }}>
+                <Text
+                  style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6', textAlign: 'center' }}
+                >
                   Load older
                 </Text>
               </Pressable>
@@ -122,7 +121,7 @@ export default function PipelineLogScreen() {
 function EmptyState() {
   return (
     <View className="mt-16 items-center">
-      <Text className="text-center text-text-muted" style={{ fontSize: 14 }}>
+      <Text className="text-text-muted text-center" style={{ fontSize: 14 }}>
         No pipeline activity yet. Share something or import a screenshot to see events here.
       </Text>
     </View>
@@ -157,13 +156,7 @@ function groupBySource(rows: Row[]): GroupView[] {
   return out;
 }
 
-function Group({
-  group,
-  onOpenSource,
-}: {
-  group: GroupView;
-  onOpenSource: (id: string) => void;
-}) {
+function Group({ group, onOpenSource }: { group: GroupView; onOpenSource: (id: string) => void }) {
   const headerLabel = group.sourceId
     ? `source: ${shortId(group.sourceId)}${group.alive ? '' : ' (deleted)'}`
     : '(no source)';
@@ -190,7 +183,7 @@ function Group({
           </Text>
         </Pressable>
       ) : (
-        <Text className="mt-1 text-text" style={{ fontSize: 13, fontWeight: '600' }}>
+        <Text className="text-text mt-1" style={{ fontSize: 13, fontWeight: '600' }}>
           {headerLabel}
         </Text>
       )}
@@ -208,16 +201,10 @@ function EventRow({ event }: { event: Row }) {
   return (
     <View className="mb-1">
       <View className="flex-row">
-        <Text
-          className="text-text-muted"
-          style={{ fontSize: 12, fontFamily: 'Menlo', width: 70 }}
-        >
+        <Text className="text-text-muted" style={{ fontSize: 12, fontFamily: 'Menlo', width: 70 }}>
           {formatTime(event.occurred_at)}
         </Text>
-        <Text
-          className="text-text"
-          style={{ fontSize: 12, fontFamily: 'Menlo', width: 130 }}
-        >
+        <Text className="text-text" style={{ fontSize: 12, fontFamily: 'Menlo', width: 130 }}>
           {event.stage}
         </Text>
         <Text
@@ -231,17 +218,12 @@ function EventRow({ event }: { event: Row }) {
         >
           {event.status}
         </Text>
-        <Text
-          className="text-text-muted"
-          style={{ fontSize: 12, fontFamily: 'Menlo' }}
-        >
+        <Text className="text-text-muted" style={{ fontSize: 12, fontFamily: 'Menlo' }}>
           {formatDuration(event.duration_ms)}
         </Text>
       </View>
       {failed && event.error_summary && (
-        <Text
-          style={{ fontSize: 12, fontFamily: 'Menlo', color: '#dc2626', marginLeft: 70 }}
-        >
+        <Text style={{ fontSize: 12, fontFamily: 'Menlo', color: '#dc2626', marginLeft: 70 }}>
           {event.error_summary}
         </Text>
       )}

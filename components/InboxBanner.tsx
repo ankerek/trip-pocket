@@ -25,24 +25,20 @@ export function InboxBanner({ count, onPress }: InboxBannerProps) {
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint="Opens the triage flow"
-      className="mx-3.5 mb-2 mt-1 flex-row items-center gap-3 rounded-2xl bg-info-bg px-3 py-3"
+      className="bg-info-bg mx-3.5 mt-1 mb-2 flex-row items-center gap-3 rounded-2xl px-3 py-3"
       style={{
         borderWidth: 1,
         borderColor: 'rgba(17, 94, 89, 0.10)',
       }}
     >
-      <View
-        className="h-8 min-w-[32px] items-center justify-center rounded-lg bg-accent-strong px-2"
-      >
+      <View className="bg-accent-strong h-8 min-w-[32px] items-center justify-center rounded-lg px-2">
         <Text className="text-sm font-bold text-white" style={{ fontVariant: ['tabular-nums'] }}>
           {count}
         </Text>
       </View>
       <View className="flex-1">
-        <Text className="text-[15px] font-semibold text-info-text">
-          New sources
-        </Text>
-        <Text className="text-xs text-info-text" style={{ opacity: 0.85 }}>
+        <Text className="text-info-text text-[15px] font-semibold">New sources</Text>
+        <Text className="text-info-text text-xs" style={{ opacity: 0.85 }}>
           Tap to triage
         </Text>
       </View>

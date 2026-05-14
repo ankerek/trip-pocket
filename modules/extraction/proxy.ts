@@ -1,9 +1,5 @@
 import { z } from 'zod';
-import {
-  ExtractionError,
-  type ExtractionErrorKind,
-  type ExtractionResult,
-} from './extraction';
+import { ExtractionError, type ExtractionErrorKind, type ExtractionResult } from './extraction';
 import { getEntitlementUserId } from '@/lib/entitlement/userId';
 
 const responseSchema = z.object({

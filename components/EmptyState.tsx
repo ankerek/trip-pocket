@@ -15,7 +15,7 @@ type EmptyStateProps = {
 
 export function EmptyState({ icon, title, body, cta }: EmptyStateProps) {
   return (
-    <View className="flex-1 items-center justify-center bg-bg px-8">
+    <View className="bg-bg flex-1 items-center justify-center px-8">
       <View
         className="h-14 w-14 items-center justify-center rounded-full"
         style={{ backgroundColor: 'rgba(20, 184, 166, 0.1)' }}
@@ -23,14 +23,14 @@ export function EmptyState({ icon, title, body, cta }: EmptyStateProps) {
         <Icon name={icon} size={26} tintColor="#14b8a6" />
       </View>
       <Text
-        className="mt-4 text-center text-text"
+        className="text-text mt-4 text-center"
         style={{ fontSize: 17, fontWeight: '600', letterSpacing: -0.2 }}
       >
         {title}
       </Text>
       {body ? (
         <Text
-          className="mt-2 text-center text-text-muted"
+          className="text-text-muted mt-2 text-center"
           style={{ fontSize: 14, lineHeight: 20, maxWidth: 320 }}
         >
           {body}
@@ -45,9 +45,7 @@ export function EmptyState({ icon, title, body, cta }: EmptyStateProps) {
           className="mt-5 rounded-2xl px-5 py-3"
           style={{ backgroundColor: '#14b8a6' }}
         >
-          <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }}>
-            {cta.label}
-          </Text>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: '#ffffff' }}>{cta.label}</Text>
         </Pressable>
       ) : null}
     </View>

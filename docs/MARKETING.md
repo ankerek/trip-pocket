@@ -22,13 +22,13 @@ Establish a recognizable Trip Pocket brand presence on Instagram and TikTok that
 
 ### 12-month hard metrics
 
-| Channel | Metric | Target |
-|---|---|---|
-| Instagram | Followers | 10,000 |
-| Instagram | Saves-per-post (of reach) | ≥ 10% |
-| TikTok | Followers | 15,000 |
-| Pinterest (bonus channel) | Monthly impressions | 50,000 |
-| Brand | Visual recognition test | Audience identifies posts without seeing the handle |
+| Channel                   | Metric                    | Target                                              |
+| ------------------------- | ------------------------- | --------------------------------------------------- |
+| Instagram                 | Followers                 | 10,000                                              |
+| Instagram                 | Saves-per-post (of reach) | ≥ 10%                                               |
+| TikTok                    | Followers                 | 15,000                                              |
+| Pinterest (bonus channel) | Monthly impressions       | 50,000                                              |
+| Brand                     | Visual recognition test   | Audience identifies posts without seeing the handle |
 
 ### What we explicitly do not optimize for
 
@@ -45,7 +45,7 @@ Establish a recognizable Trip Pocket brand presence on Instagram and TikTok that
 
 ### Positioning line (internal compass — not a tagline)
 
-*The travel account that helps you remember the places worth going — and gives you an app to keep them in.*
+_The travel account that helps you remember the places worth going — and gives you an app to keep them in._
 
 ### Niche
 
@@ -63,7 +63,7 @@ Establish a recognizable Trip Pocket brand presence on Instagram and TikTok that
 The brand's visual identity mirrors a Trip Pocket place card. Every video uses the same template frame at the open and close:
 
 - Neighborhood label, small caps (e.g. `KIYOSUMI · TOKYO`).
-- Place name, large display serif (e.g. *Blue Bottle Kiyosumi*).
+- Place name, large display serif (e.g. _Blue Bottle Kiyosumi_).
 - Category chip: `▣ Place` / `◍ Food` / `▲ Activity`.
 - Cost row + best-time row.
 
@@ -86,17 +86,17 @@ Music: cinematic but understated. Instrumentals or ambient. **No spoken-word vir
 
 ### Hub-and-spoke plan
 
-| Phase | Action |
-|---|---|
-| Month 0 (now) | Lock `@trippocket.app` as hub. Park country handles defensively (see below). |
-| Months 1–6 | Run only the hub. Tag content by country. Use TikTok playlists / IG highlights / Pinterest boards for per-country browsing. |
-| Month 6 data review | Review saves/follows by country tag. A country earns a spoke only if it produces ~3–5× the engagement of the rest of the hub combined. |
+| Phase                        | Action                                                                                                                                                                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Month 0 (now)                | Lock `@trippocket.app` as hub. Park country handles defensively (see below).                                                                                                                                           |
+| Months 1–6                   | Run only the hub. Tag content by country. Use TikTok playlists / IG highlights / Pinterest boards for per-country browsing.                                                                                            |
+| Month 6 data review          | Review saves/follows by country tag. A country earns a spoke only if it produces ~3–5× the engagement of the rest of the hub combined.                                                                                 |
 | Month 6+ (if data justifies) | Spin up the first spoke (likely `@trippocket.japan`). Cross-promote from hub on launch day so the spoke starts with audience, not zero. Hub keeps 2/3 cadence; spoke takes the 3rd slot plus its own original content. |
-| Future spokes | Only spun up with proven data. Never speculatively. |
+| Future spokes                | Only spun up with proven data. Never speculatively.                                                                                                                                                                    |
 
 ### Defensive handle parking (Week 0)
 
-Claim and park these handles on Instagram + TikTok now, even with no intent to use them soon. Each gets one intro post: *"Follow `@trippocket.app` — country-specific content coming soon."*
+Claim and park these handles on Instagram + TikTok now, even with no intent to use them soon. Each gets one intro post: _"Follow `@trippocket.app` — country-specific content coming soon."_
 
 - `@trippocket.japan`
 - `@trippocket.korea`
@@ -173,12 +173,12 @@ Stylized AI vignette of a place, paired with concrete real-world tips.
 
 ### Weekly workflow (target: 6–8 hrs total)
 
-| Day | Task | Time |
-|---|---|---|
-| Monday | Pick 3 subjects, gather references, real tips, addresses, prices | 1–1.5 hr |
-| Tue–Wed | Edit all 3 posts in one batch (templates fill-in-the-blank, not from-scratch) | 3–4 hr |
-| Thursday | Captions, build IG carousel version, build Pinterest pins | 1 hr |
-| Fri–Sun | Post one per day, engage in the first hour | 0.5–1 hr |
+| Day      | Task                                                                          | Time     |
+| -------- | ----------------------------------------------------------------------------- | -------- |
+| Monday   | Pick 3 subjects, gather references, real tips, addresses, prices              | 1–1.5 hr |
+| Tue–Wed  | Edit all 3 posts in one batch (templates fill-in-the-blank, not from-scratch) | 3–4 hr   |
+| Thursday | Captions, build IG carousel version, build Pinterest pins                     | 1 hr     |
+| Fri–Sun  | Post one per day, engage in the first hour                                    | 0.5–1 hr |
 
 **Realism check:** 3 posts/week of faceless cinematic content is real work. If after 4 weeks the time-budget consistently spills past 10 hrs/week, drop to 2 posts/week (1× Saved Place + 1× alternating List/Imagined) rather than letting cadence become unreliable. Algorithm consistency > pillar variety.
 
@@ -195,7 +195,7 @@ Stylized AI vignette of a place, paired with concrete real-world tips.
 
 - Pillar 3 AI footage is **always explicitly labeled** — `illustrative` watermark in-frame + the AI-content disclosure toggle on at upload (IG + TikTok both have this).
 - Pillars 1 and 2 use **real footage only** — your own clips or licensed UGC with credit. **No AI footage of real-place specifics, ever.**
-- AI-assisted *text* (captions, hooks) is fine and needs no disclosure.
+- AI-assisted _text_ (captions, hooks) is fine and needs no disclosure.
 - This is a brand-safety rule, not a stylistic preference. One "you AI'd a real place and called it real" exposé sets the account back six months.
 
 ### UGC rights
@@ -219,7 +219,7 @@ Stylized AI vignette of a place, paired with concrete real-world tips.
 ### TikTok
 
 - Same vertical asset as Reels, but **swap the music** — TikTok's algorithm rewards native TikTok sounds. Use trending-but-evergreen instrumentals or ambient. Never spoken-word viral audio.
-- **Cover frame** must work standalone — TikTok profiles are judged by cover thumbnails. Use the visual-signature card frame as the post hook *and* the cover.
+- **Cover frame** must work standalone — TikTok profiles are judged by cover thumbnails. Use the visual-signature card frame as the post hook _and_ the cover.
 - **Captions** front-load 2–3 specific keywords (e.g. `kyoto café kiyomizu`) for in-app search.
 - **Hooks are harder on TikTok** — assume 1-second judgment. Cold opens with the signature visual frame outperform "Hey guys, today I'm sharing …".
 
@@ -234,7 +234,7 @@ Stylized AI vignette of a place, paired with concrete real-world tips.
 
 Listed from most-passive to most-explicit. Default posture is restraint.
 
-1. **Visual signature frame** — every post. The app's design language *is* the brand. Earns passive app-equity.
+1. **Visual signature frame** — every post. The app's design language _is_ the brand. Earns passive app-equity.
 2. **End-frame on every video** (1.5 sec, soft): `Save to your [trip] · trippocket.app`.
 3. **Caption CTA every 3rd post:** `Save this for your Japan trip → link in bio.`
 4. **Bio:** app link + one-liner (always present).
@@ -248,6 +248,7 @@ Listed from most-passive to most-explicit. Default posture is restraint.
 ### Track weekly (one spreadsheet, one screenshot Sunday night)
 
 Per post:
+
 - Views
 - Saves
 - Shares
@@ -258,17 +259,19 @@ Per post:
 - Follows-from-post
 
 Per pillar (rolling 4-week):
+
 - Which pillar drives the most saves?
 - Which drives the most follows?
 - Which drives the most profile visits?
 
 Cross-platform:
+
 - Which posts cross-pollinate (TikTok → IG follow, IG → Pinterest pin saves)?
 
 ### Decision rules
 
 - **First 4 weeks:** do not change format even if posts flop. Algorithms need consistency to learn the account.
-- **Week 8 review:** if one pillar is bottom-quartile on both saves *and* shares, drop it. Double-down on the strongest pillar.
+- **Week 8 review:** if one pillar is bottom-quartile on both saves _and_ shares, drop it. Double-down on the strongest pillar.
 - **Week 12 review:** settle on the single strongest hook style and use it 70% of the time.
 - **Anytime:** if a post overperforms, follow up on the same place or theme within 7 days to learn what's working.
 
@@ -314,15 +317,15 @@ Cross-platform:
 
 ## 10. Risks & known constraints
 
-| Risk | Mitigation |
-|---|---|
-| 3 posts/week is unsustainable alongside app dev | Drop to 2/week before missing a week. Consistency > variety. |
-| AI footage gets flagged or backfires | Strict "illustrative only" rule (§6). Always-on AI disclosure. Watermark in-frame. |
-| Audience reads the account as promo | "Quiet about the app" voice (§2). Restraint ladder for app mentions (§7). |
-| Premature country-account split | Hub-and-spoke discipline (§3) — no spoke without 6 months of hub data. |
-| One viral post sets unrealistic expectations | First 4 weeks: don't change format. Algorithms need consistency to learn the account. |
-| Faceless cinematic is saturated on Asia travel | Visual-signature frame is the differentiator. No frame, no post. |
-| Pillar 3 (AI) underperforms | Pre-committed: if bottom-quartile saves+shares at week 8, drop Pillar 3 and run 2× Saved Place + 1× List per week. |
+| Risk                                            | Mitigation                                                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 3 posts/week is unsustainable alongside app dev | Drop to 2/week before missing a week. Consistency > variety.                                                       |
+| AI footage gets flagged or backfires            | Strict "illustrative only" rule (§6). Always-on AI disclosure. Watermark in-frame.                                 |
+| Audience reads the account as promo             | "Quiet about the app" voice (§2). Restraint ladder for app mentions (§7).                                          |
+| Premature country-account split                 | Hub-and-spoke discipline (§3) — no spoke without 6 months of hub data.                                             |
+| One viral post sets unrealistic expectations    | First 4 weeks: don't change format. Algorithms need consistency to learn the account.                              |
+| Faceless cinematic is saturated on Asia travel  | Visual-signature frame is the differentiator. No frame, no post.                                                   |
+| Pillar 3 (AI) underperforms                     | Pre-committed: if bottom-quartile saves+shares at week 8, drop Pillar 3 and run 2× Saved Place + 1× List per week. |
 
 ---
 

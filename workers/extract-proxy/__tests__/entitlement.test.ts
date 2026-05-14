@@ -77,10 +77,7 @@ describe('requireEntitlement', () => {
 
   test('400 when header shape is invalid', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': 'not-an-rc-id' }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': 'not-an-rc-id' }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(400);
@@ -91,10 +88,7 @@ describe('requireEntitlement', () => {
   test('200 when RC reports active pro entitlement', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(rcResponse(activeBody()));
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.userId).toBe(VALID_ID);
   });
@@ -102,10 +96,7 @@ describe('requireEntitlement', () => {
   test('401 entitlement-required when RC reports expired pro', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(rcResponse(expiredBody()));
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(401);
@@ -115,13 +106,10 @@ describe('requireEntitlement', () => {
 
   test('401 entitlement-required when RC returns empty entitlements map', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      rcResponse({ subscriber: { entitlements: {} } } as any),
-    );
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(rcResponse({ subscriber: { entitlements: {} } } as any));
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(401);
@@ -131,13 +119,12 @@ describe('requireEntitlement', () => {
 
   test('401 entitlement-required when RC returns pro with null expires_date', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      rcResponse({ subscriber: { entitlements: { pro: { expires_date: null } } } }),
-    );
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        rcResponse({ subscriber: { entitlements: { pro: { expires_date: null } } } }),
+      );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(401);
@@ -147,12 +134,11 @@ describe('requireEntitlement', () => {
 
   test('503 entitlement-check-failed when RC fetch times out (AbortError)', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    const abortError = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    const abortError = Object.assign(new Error('The operation was aborted'), {
+      name: 'AbortError',
+    });
     jest.spyOn(globalThis, 'fetch').mockRejectedValueOnce(abortError);
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(503);
@@ -162,7 +148,9 @@ describe('requireEntitlement', () => {
 
   test('cache hit on second call within TTL — single fetch to RC', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
-    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(rcResponse(activeBody()));
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(rcResponse(activeBody()));
     await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -171,10 +159,7 @@ describe('requireEntitlement', () => {
   test('503 entitlement-check-failed when RC returns 5xx', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('boom', { status: 502 }));
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(503);
@@ -184,10 +169,7 @@ describe('requireEntitlement', () => {
 
   test('500 server-misconfigured when RC_REST_API_KEY is empty', async () => {
     const env = { RC_REST_API_KEY: '' };
-    const result = await requireEntitlement(
-      makeRequest({ 'X-RC-User-Id': VALID_ID }),
-      env,
-    );
+    const result = await requireEntitlement(makeRequest({ 'X-RC-User-Id': VALID_ID }), env);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.response.status).toBe(500);

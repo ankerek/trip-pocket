@@ -4,10 +4,7 @@ import * as Sentry from '@sentry/react-native';
 import { Alert, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from '@/tw';
-import {
-  isFirehoseEnabled,
-  setFirehose,
-} from '@/modules/pipeline-log';
+import { isFirehoseEnabled, setFirehose } from '@/modules/pipeline-log';
 import { resetOnboarding } from '@/lib/onboarding/storage';
 
 // Settings is now a modal sheet (presentation: 'formSheet') registered
@@ -29,12 +26,12 @@ export default function Settings() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      className="flex-1 bg-bg"
+      className="bg-bg flex-1"
       contentContainerClassName="p-6"
     >
       <View>
-        <Text className="text-lg font-semibold text-text">Trip Pocket</Text>
-        <Text className="mt-1 text-sm text-text-muted">
+        <Text className="text-text text-lg font-semibold">Trip Pocket</Text>
+        <Text className="text-text-muted mt-1 text-sm">
           Version {Constants.expoConfig?.version ?? 'dev'}
         </Text>
       </View>
@@ -46,15 +43,13 @@ export default function Settings() {
         >
           DIAGNOSTICS
         </Text>
-        <Text className="mt-1 text-xs text-text-muted">
+        <Text className="text-text-muted mt-1 text-xs">
           Verifies the crash-reporting pipeline. Safe to tap.
         </Text>
 
         <Pressable
           onPress={() => {
-            Sentry.captureException(
-              new Error('Trip Pocket diagnostics: test event'),
-            );
+            Sentry.captureException(new Error('Trip Pocket diagnostics: test event'));
             Alert.alert('Sent', 'Test event dispatched to Sentry.');
           }}
           accessibilityRole="button"
@@ -62,10 +57,8 @@ export default function Settings() {
           className="mt-4 rounded-2xl px-4 py-3"
           style={{ backgroundColor: 'rgba(20, 184, 166, 0.1)' }}
         >
-          <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>
-            Send test event
-          </Text>
-          <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>Send test event</Text>
+          <Text className="text-text-muted mt-1" style={{ fontSize: 12 }}>
             Non-destructive — just dispatches a captureException call.
           </Text>
         </Pressable>
@@ -80,7 +73,7 @@ export default function Settings() {
           <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>
             Throw render error
           </Text>
-          <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+          <Text className="text-text-muted mt-1" style={{ fontSize: 12 }}>
             Triggers the branded ErrorBoundary fallback.
           </Text>
         </Pressable>
@@ -108,7 +101,7 @@ export default function Settings() {
           <Text style={{ fontSize: 15, fontWeight: '600', color: '#dc2626' }}>
             Force native crash
           </Text>
-          <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+          <Text className="text-text-muted mt-1" style={{ fontSize: 12 }}>
             Closes the app. Crash arrives in Sentry on next launch.
           </Text>
         </Pressable>
@@ -122,10 +115,8 @@ export default function Settings() {
           className="mt-4 rounded-2xl px-4 py-3"
           style={{ backgroundColor: 'rgba(20, 184, 166, 0.1)' }}
         >
-          <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>
-            Pipeline log
-          </Text>
-          <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>Pipeline log</Text>
+          <Text className="text-text-muted mt-1" style={{ fontSize: 12 }}>
             Per-source stage history for capture, OCR, extraction, enrichment.
           </Text>
         </Pressable>
@@ -158,7 +149,7 @@ export default function Settings() {
           <Text style={{ fontSize: 15, fontWeight: '600', color: '#14b8a6' }}>
             Replay onboarding
           </Text>
-          <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+          <Text className="text-text-muted mt-1" style={{ fontSize: 12 }}>
             Re-runs the welcome flow from the top. Useful for QA.
           </Text>
         </Pressable>
@@ -172,7 +163,7 @@ export default function Settings() {
               <Text style={{ fontSize: 15, fontWeight: '600' }} className="text-text">
                 Pipeline firehose
               </Text>
-              <Text className="mt-1 text-text-muted" style={{ fontSize: 12 }}>
+              <Text className="text-text-muted mt-1" style={{ fontSize: 12 }}>
                 Verbose pipeline logs in Metro (dev builds only).
               </Text>
             </View>

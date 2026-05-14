@@ -3,12 +3,7 @@ import { Alert, ScrollView } from 'react-native';
 import { Pressable, Text, TextInput, View } from '@/tw';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import {
-  getTrip,
-  renameTrip,
-  deleteTrip,
-  type Trip,
-} from '@/modules/storage';
+import { getTrip, renameTrip, deleteTrip, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { useThemeColors } from '@/tw/theme';
 
@@ -60,7 +55,8 @@ export default function EditTrip() {
                WHERE ps.place_id = p.id
                  AND ps.source_id NOT IN (SELECT id FROM sources WHERE trip_id = ?)
             )`,
-        id, id,
+        id,
+        id,
       );
       // Places that survive cascade because they have other-trip sources too.
       const cascadeSharedRow = await db.getFirstAsync<{ n: number }>(
@@ -73,7 +69,9 @@ export default function EditTrip() {
                WHERE ps.place_id = p.id
                  AND ps.source_id NOT IN (SELECT id FROM sources WHERE trip_id = ?)
             )`,
-        id, id, id,
+        id,
+        id,
+        id,
       );
       if (cancelled) return;
       setLoad({
@@ -108,14 +106,16 @@ export default function EditTrip() {
                 accessibilityLabel="Cancel"
                 hitSlop={8}
               >
-                <Text className="text-text-muted" style={{ fontSize: 16 }}>Cancel</Text>
+                <Text className="text-text-muted" style={{ fontSize: 16 }}>
+                  Cancel
+                </Text>
               </Pressable>
             ),
             headerRight: () => null,
           }}
         />
-        <View className="flex-1 items-center justify-center bg-bg">
-          <Text className="text-base text-text-muted">Trip not found.</Text>
+        <View className="bg-bg flex-1 items-center justify-center">
+          <Text className="text-text-muted text-base">Trip not found.</Text>
         </View>
       </>
     );
@@ -146,29 +146,25 @@ export default function EditTrip() {
       n === 0 && m === 0
         ? "This can't be undone."
         : `${n} source${n === 1 ? '' : 's'} and ${m} place${m === 1 ? '' : 's'} will move back to your Inbox.`;
-    Alert.alert(
-      `Delete '${trip.name}'?`,
-      body,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (process.env.EXPO_OS === 'ios') {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-              }
-              await deleteTrip(db, id, 'untriage');
-              router.back();
-              setTimeout(() => router.back(), 0);
-            } catch (err) {
-              Alert.alert('Could not delete trip', String(err));
+    Alert.alert(`Delete '${trip.name}'?`, body, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            if (process.env.EXPO_OS === 'ios') {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
-          },
+            await deleteTrip(db, id, 'untriage');
+            router.back();
+            setTimeout(() => router.back(), 0);
+          } catch (err) {
+            Alert.alert('Could not delete trip', String(err));
+          }
         },
-      ],
-    );
+      },
+    ]);
   };
 
   const onDeleteCascade = () => {
@@ -177,32 +173,30 @@ export default function EditTrip() {
     const title = `Delete '${trip.name}' and ${n} source${n === 1 ? '' : 's'}, ${m} place${m === 1 ? '' : 's'}?`;
     const lines: string[] = [];
     if (s > 0) {
-      lines.push(`${s} place${s === 1 ? '' : 's'} shared with other trips will be moved to your Inbox.`);
+      lines.push(
+        `${s} place${s === 1 ? '' : 's'} shared with other trips will be moved to your Inbox.`,
+      );
     }
     lines.push("This can't be undone.");
-    Alert.alert(
-      title,
-      lines.join('\n\n'),
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete everything',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (process.env.EXPO_OS === 'ios') {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-              }
-              await deleteTrip(db, id, 'cascade');
-              router.back();
-              setTimeout(() => router.back(), 0);
-            } catch (err) {
-              Alert.alert('Could not delete trip', String(err));
+    Alert.alert(title, lines.join('\n\n'), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete everything',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            if (process.env.EXPO_OS === 'ios') {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             }
-          },
+            await deleteTrip(db, id, 'cascade');
+            router.back();
+            setTimeout(() => router.back(), 0);
+          } catch (err) {
+            Alert.alert('Could not delete trip', String(err));
+          }
         },
-      ],
-    );
+      },
+    ]);
   };
 
   const cascadeAvailable =
@@ -220,7 +214,9 @@ export default function EditTrip() {
               accessibilityLabel="Cancel"
               hitSlop={8}
             >
-              <Text className="text-text-muted" style={{ fontSize: 16 }}>Cancel</Text>
+              <Text className="text-text-muted" style={{ fontSize: 16 }}>
+                Cancel
+              </Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -244,14 +240,19 @@ export default function EditTrip() {
         }}
       />
       <ScrollView
-        className="flex-1 bg-bg"
+        className="bg-bg flex-1"
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: 16, paddingTop: 24, paddingBottom: 32 }}
       >
         <Text
           className="text-text-muted mb-2"
-          style={{ fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' }}
+          style={{
+            fontSize: 12,
+            fontWeight: '600',
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
+          }}
         >
           Trip name
         </Text>

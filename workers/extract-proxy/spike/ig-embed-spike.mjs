@@ -25,10 +25,7 @@ function shortcodeFrom(url) {
 }
 
 function findOg(html, prop) {
-  const re = new RegExp(
-    `<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']*)["']`,
-    'i'
-  );
+  const re = new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']*)["']`, 'i');
   const m = html.match(re);
   return m ? m[1] : null;
 }
@@ -116,16 +113,9 @@ function findInlineGraphQL(html) {
 
 function extractFromAdditionalData(blobs) {
   for (const blob of blobs) {
-    const media =
-      blob?.shortcode_media ??
-      blob?.media ??
-      blob?.graphql?.shortcode_media ??
-      null;
+    const media = blob?.shortcode_media ?? blob?.media ?? blob?.graphql?.shortcode_media ?? null;
     if (!media) continue;
-    const caption =
-      media?.edge_media_to_caption?.edges?.[0]?.node?.text ??
-      media?.caption ??
-      null;
+    const caption = media?.edge_media_to_caption?.edges?.[0]?.node?.text ?? media?.caption ?? null;
     const displayUrl = media?.display_url ?? null;
     const isCarousel =
       Array.isArray(media?.edge_sidecar_to_children?.edges) &&
@@ -148,13 +138,9 @@ function extractFromInlineGraphQL(blob) {
   if (!blob) return null;
   if (blob.__raw) return { source: 'inline-graphql-raw', preview: blob.__raw };
   const media =
-    blob?.shortcode_media ??
-    blob?.graphql?.shortcode_media ??
-    blob?.data?.shortcode_media ??
-    null;
+    blob?.shortcode_media ?? blob?.graphql?.shortcode_media ?? blob?.data?.shortcode_media ?? null;
   if (!media) return null;
-  const caption =
-    media?.edge_media_to_caption?.edges?.[0]?.node?.text ?? null;
+  const caption = media?.edge_media_to_caption?.edges?.[0]?.node?.text ?? null;
   const displayUrl = media?.display_url ?? null;
   const isCarousel =
     Array.isArray(media?.edge_sidecar_to_children?.edges) &&
@@ -252,7 +238,9 @@ function summary(r) {
 
   if (r.og) {
     lines.push(`  og:title       = ${r.og.title ? '✓ ' + r.og.title.slice(0, 70) : '✗ missing'}`);
-    lines.push(`  og:description = ${r.og.description ? '✓ (' + r.og.description.length + ' chars)' : '✗ missing'}`);
+    lines.push(
+      `  og:description = ${r.og.description ? '✓ (' + r.og.description.length + ' chars)' : '✗ missing'}`,
+    );
     lines.push(`  og:image       = ${r.og.image ? '✓' : '✗ missing'}`);
     lines.push(`  og:type        = ${r.og.type || '✗ missing'}`);
   }
@@ -267,24 +255,28 @@ function summary(r) {
     lines.push(`    owner:       ${parsed.owner || '✗'}`);
     lines.push(
       `    caption:     ${
-        parsed.caption ? '✓ (' + parsed.caption.length + ' chars) ' + parsed.caption.slice(0, 60).replace(/\n/g, ' ') + '…' : '✗ missing'
-      }`
+        parsed.caption
+          ? '✓ (' +
+            parsed.caption.length +
+            ' chars) ' +
+            parsed.caption.slice(0, 60).replace(/\n/g, ' ') +
+            '…'
+          : '✗ missing'
+      }`,
     );
     lines.push(
       `    slides:      ${
         parsed.slideUrls && parsed.slideUrls.length
           ? `✓ ${parsed.slideUrls.length} url(s)`
           : '✗ none'
-      }`
+      }`,
     );
   } else {
     lines.push(`  ✗ no structured caption/slide data parsed`);
   }
 
   if (r.loginWallSignals.hasLoginButton || r.loginWallSignals.isErrorPage) {
-    lines.push(
-      `  ⚠ login-wall signals: ${JSON.stringify(r.loginWallSignals)}`
-    );
+    lines.push(`  ⚠ login-wall signals: ${JSON.stringify(r.loginWallSignals)}`);
   }
 
   return lines.join('\n');
@@ -309,15 +301,16 @@ async function main() {
     const parsed = r.parsedFromAdditional || r.parsedFromInline;
     const slides = parsed?.slideUrls?.length ?? 0;
     const captionLen = parsed?.caption?.length ?? 0;
-    const verdict =
-      !r.ok ? '✗ NON-OK'
-      : !parsed ? '✗ NO DATA'
-      : slides === 0 ? '⚠ no slides'
-      : captionLen === 0 ? '⚠ no caption'
-      : '✓ ok';
-    console.log(
-      `  ${verdict.padEnd(12)} ${slides}slide(s)  ${captionLen}cap  ${r.url}`
-    );
+    const verdict = !r.ok
+      ? '✗ NON-OK'
+      : !parsed
+        ? '✗ NO DATA'
+        : slides === 0
+          ? '⚠ no slides'
+          : captionLen === 0
+            ? '⚠ no caption'
+            : '✓ ok';
+    console.log(`  ${verdict.padEnd(12)} ${slides}slide(s)  ${captionLen}cap  ${r.url}`);
   }
 
   // Dump raw findings to ./spike-output.json for inspection

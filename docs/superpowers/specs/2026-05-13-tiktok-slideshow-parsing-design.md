@@ -16,11 +16,11 @@ TikTok's web page embeds the full post payload as a `<script id="__UNIVERSAL_DAT
 
 Three fetches with the worker's existing iPhone Safari User-Agent against live public TikTok URLs:
 
-| URL shape | Body size | Rehydration blob | `imagePost` field | Slides recovered |
-|---|---|---|---|---|
-| `/photo/<id>` (6 slides) | 232 KB | yes (3/3 reproducible) | yes | 6/6 |
-| `/video/<id>` (live) | 223 KB | yes | no | n/a (`video.cover` present) |
-| `/video/<id>` (occasional) | 13 KB | no | no | n/a (anti-bot stub) |
+| URL shape                  | Body size | Rehydration blob       | `imagePost` field | Slides recovered            |
+| -------------------------- | --------- | ---------------------- | ----------------- | --------------------------- |
+| `/photo/<id>` (6 slides)   | 232 KB    | yes (3/3 reproducible) | yes               | 6/6                         |
+| `/video/<id>` (live)       | 223 KB    | yes                    | no                | n/a (`video.cover` present) |
+| `/video/<id>` (occasional) | 13 KB     | no                     | no                | n/a (anti-bot stub)         |
 
 Findings driving the design:
 
@@ -34,6 +34,7 @@ The script-tag-and-field-path approach is the same field shape that ScrapeCreato
 ## Scope
 
 **In scope:**
+
 - New worker function `fetchTikTokRehydration(canonical)` that fetches the canonical TikTok URL, extracts the rehydration JSON, and maps it to the existing `FetchPostResponse`.
 - Replacement of the TikTok branch in `handleFetchPost()` (file: `workers/extract-proxy/src/fetch-post.ts`): rehydration parse as primary, oEmbed as fallback. The dead `fetchTikTokOg` code is removed.
 - One-line fix to `extractAuthorFromTikTokUrl` so its regex matches `/@<handle>/(?:video|photo)/<id>` instead of `/video/` only — still needed on the oEmbed fallback path.
@@ -43,6 +44,7 @@ The script-tag-and-field-path approach is the same field shape that ScrapeCreato
 - Unit tests on the pure parser and mapper; integration tests on the dispatch flow against captured HTML fixtures.
 
 **Not in scope:**
+
 - Instagram changes. IG continues to use og: + Apify exactly as today.
 - Extracting TikTok video `playAddr` or any video file URL. We only store the cover for video posts, same as oEmbed produces today.
 - Persisting slides 2..N to disk for TikTok any differently from how IG carousels are persisted. The phone already handles multi-image responses for IG; TikTok slideshows reuse that path verbatim.
@@ -72,15 +74,15 @@ Stage 2: fetchTikTokOEmbed(canonical) (unchanged code)
 
 **Dispatch matrix:**
 
-| Stage 1 outcome | Stage 2 fires? | `_debug.route` |
-|---|---|---|
-| parser ok, `imagePost` present, ≥1 slide | no | `tiktok_rehyd_photo` |
-| parser ok, no `imagePost`, `video.cover` present | no | `tiktok_rehyd_video` |
-| parser ok, no images extractable | no | `tiktok_rehyd_photo` or `_video` (whichever branch ran) with `imageUrls: []` |
-| anti-bot stub (no rehydration script tag) | **yes** | `tiktok_oembed_fallback` if oEmbed ok |
-| rehydration JSON malformed | **yes** | `tiktok_oembed_fallback` if oEmbed ok |
-| HTTP 404 / 403 / 429 / 5xx / timeout / network | **yes** | `tiktok_oembed_fallback` if oEmbed ok; otherwise error |
-| short-link resolution failed (HEAD threw on `vm./vt.tiktok.com`) | **yes** | Stage 1 fetches the original short URL unchanged; almost certainly fails the rehydration parse; oEmbed fires and gets the canonical URL via its own redirect-follow. `_debug.route` value depends on what fired. |
+| Stage 1 outcome                                                  | Stage 2 fires? | `_debug.route`                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| parser ok, `imagePost` present, ≥1 slide                         | no             | `tiktok_rehyd_photo`                                                                                                                                                                                             |
+| parser ok, no `imagePost`, `video.cover` present                 | no             | `tiktok_rehyd_video`                                                                                                                                                                                             |
+| parser ok, no images extractable                                 | no             | `tiktok_rehyd_photo` or `_video` (whichever branch ran) with `imageUrls: []`                                                                                                                                     |
+| anti-bot stub (no rehydration script tag)                        | **yes**        | `tiktok_oembed_fallback` if oEmbed ok                                                                                                                                                                            |
+| rehydration JSON malformed                                       | **yes**        | `tiktok_oembed_fallback` if oEmbed ok                                                                                                                                                                            |
+| HTTP 404 / 403 / 429 / 5xx / timeout / network                   | **yes**        | `tiktok_oembed_fallback` if oEmbed ok; otherwise error                                                                                                                                                           |
+| short-link resolution failed (HEAD threw on `vm./vt.tiktok.com`) | **yes**        | Stage 1 fetches the original short URL unchanged; almost certainly fails the rehydration parse; oEmbed fires and gets the canonical URL via its own redirect-follow. `_debug.route` value depends on what fired. |
 
 The "parser ok but 0 images" rows return a successful response with an empty `imageUrls` array — same as the IG no-cover case. The phone already handles this.
 
@@ -89,11 +91,13 @@ The "parser ok but 0 images" rows return a successful response with an empty `im
 ## Rehydration parser
 
 **Function signature:**
+
 ```ts
-async function fetchTikTokRehydration(canonical: URL): Promise<FetchPostResponse>
+async function fetchTikTokRehydration(canonical: URL): Promise<FetchPostResponse>;
 ```
 
 **Extraction:**
+
 1. `fetchHtml(canonical.toString(), IG_UA)` — reuses the existing helper, so 404/403/429/5xx mapping is already correct via `UpstreamError`.
 2. Find the script tag: regex `/id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]+?)<\/script>/`. Throw `UpstreamError(502, 'tiktok-no-rehydration')` when absent (anti-bot stub case).
 3. `JSON.parse` the captured group. On failure: `UpstreamError(502, 'tiktok-rehyd-non-json')`.
@@ -103,17 +107,18 @@ All three thrown errors are caught at the dispatch level and trigger the oEmbed 
 
 **Mapping rules** (one item → one `FetchPostResponse`):
 
-| Output field | Source |
-|---|---|
-| `platform` | `'tiktok'` (constant) |
-| `permalink` | `canonical.toString()` |
-| `caption` | `item.desc ?? ''` |
-| `author` | `'@' + item.author.uniqueId` if `uniqueId` is a non-empty string, else `null` |
-| `imageUrls` | **if `item.imagePost` present:** `item.imagePost.images[].imageURL.urlList[0]` for each slide, skipping entries where `urlList[0]` is missing/empty. **else if `item.video?.cover` is a non-empty string:** `[item.video.cover]`. **else:** `[]` |
+| Output field | Source                                                                                                                                                                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `platform`   | `'tiktok'` (constant)                                                                                                                                                                                                                            |
+| `permalink`  | `canonical.toString()`                                                                                                                                                                                                                           |
+| `caption`    | `item.desc ?? ''`                                                                                                                                                                                                                                |
+| `author`     | `'@' + item.author.uniqueId` if `uniqueId` is a non-empty string, else `null`                                                                                                                                                                    |
+| `imageUrls`  | **if `item.imagePost` present:** `item.imagePost.images[].imageURL.urlList[0]` for each slide, skipping entries where `urlList[0]` is missing/empty. **else if `item.video?.cover` is a non-empty string:** `[item.video.cover]`. **else:** `[]` |
 
 **Type-safety posture.** The rehydration JSON enters as `unknown`. All field access is via narrow runtime type guards (`typeof === 'string'`, `Array.isArray`, etc.), not casts. Same approach as `mapApifyItem` in `apify.ts`.
 
 **Helpers exported for unit tests:**
+
 - `extractTikTokRehydrationJson(html: string): unknown` — regex extracts and parses. No network. Throws the three error codes above.
 - `mapTikTokRehydrationItem(raw: unknown, canonical: string): FetchPostResponse & { _route: 'photo' | 'video' }` — pure mapper. Returns the route discriminator alongside the response so the dispatch layer can label `_debug.route` without re-checking the shape.
 
@@ -127,12 +132,12 @@ Unchanged from the existing schema in `fetchPostResponseSchema`. The phone code 
 
 `_debug.route` enum changes are **strictly additive** in the phone Zod schema during the rollout window. Old values stay; new values are added; the worker decides which values to emit:
 
-| Phase | Worker emits | Phone Zod accepts (union) |
-|---|---|---|
-| pre-deploy (today) | `tiktok_og`, `tiktok_oembed` | `tiktok_og`, `tiktok_oembed` |
-| step 1: phone update lands | `tiktok_og`, `tiktok_oembed` (unchanged) | `tiktok_og`, `tiktok_oembed`, `tiktok_rehyd_photo`, `tiktok_rehyd_video`, `tiktok_oembed_fallback` |
-| step 2: worker deploy lands | `tiktok_rehyd_photo`, `tiktok_rehyd_video`, `tiktok_oembed_fallback` | (same superset as step 1) |
-| cleanup follow-up (after worker stable) | (same as step 2) | drop `tiktok_og`, `tiktok_oembed` |
+| Phase                                   | Worker emits                                                         | Phone Zod accepts (union)                                                                          |
+| --------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| pre-deploy (today)                      | `tiktok_og`, `tiktok_oembed`                                         | `tiktok_og`, `tiktok_oembed`                                                                       |
+| step 1: phone update lands              | `tiktok_og`, `tiktok_oembed` (unchanged)                             | `tiktok_og`, `tiktok_oembed`, `tiktok_rehyd_photo`, `tiktok_rehyd_video`, `tiktok_oembed_fallback` |
+| step 2: worker deploy lands             | `tiktok_rehyd_photo`, `tiktok_rehyd_video`, `tiktok_oembed_fallback` | (same superset as step 1)                                                                          |
+| cleanup follow-up (after worker stable) | (same as step 2)                                                     | drop `tiktok_og`, `tiktok_oembed`                                                                  |
 
 **Implementer note:** in step 1, do **not** replace the existing enum values — append the new ones. Replacing them would Zod-reject every TikTok response served by the not-yet-updated worker. The cleanup PR that removes the old values is a separate, mechanical change after the worker has been on the new dispatch for at least a week with no regressions.
 
@@ -140,26 +145,26 @@ The new value `tiktok_rehyd_video` fires when the parser succeeds with `video.co
 
 `_debug.ogOutcome` semantics for TikTok — the enum is reused as "primary path outcome":
 
-| Outcome | Value |
-|---|---|
-| parser produced ≥1 usable field | `ok` |
-| HTTP 200, no rehyd blob or blob with no item or JSON.parse threw | `empty` |
-| HTTP 404 | `not_found` |
-| HTTP 403 or 401 | `private` |
-| HTTP 429 | `rate_limited` |
-| timeout | `timeout` |
-| network exception | `network` |
-| HTTP 5xx | `upstream_5xx` |
+| Outcome                                                          | Value          |
+| ---------------------------------------------------------------- | -------------- |
+| parser produced ≥1 usable field                                  | `ok`           |
+| HTTP 200, no rehyd blob or blob with no item or JSON.parse threw | `empty`        |
+| HTTP 404                                                         | `not_found`    |
+| HTTP 403 or 401                                                  | `private`      |
+| HTTP 429                                                         | `rate_limited` |
+| timeout                                                          | `timeout`      |
+| network exception                                                | `network`      |
+| HTTP 5xx                                                         | `upstream_5xx` |
 
 `_debug.apifyOutcome` for TikTok: `not_called` always (unchanged).
 
 ## Caching
 
-| Outcome | `Cache-Control` |
-|---|---|
+| Outcome                                              | `Cache-Control`                  |
+| ---------------------------------------------------- | -------------------------------- |
 | `tiktok_rehyd_photo` or `tiktok_rehyd_video` success | `public, s-maxage=86400` (1 day) |
-| `tiktok_oembed_fallback` success | `public, s-maxage=86400` (1 day) |
-| Any error | `no-store` (unchanged) |
+| `tiktok_oembed_fallback` success                     | `public, s-maxage=86400` (1 day) |
+| Any error                                            | `no-store` (unchanged)           |
 
 Rationale: TikTok signed image URLs expire ~47 hours after issue (verified via spike). A 7-day cache would serve a stale URL to a returning client and produce 403s on image fetch. 1 day keeps the worker response usable through the URL's lifetime.
 
@@ -167,11 +172,11 @@ Rationale: TikTok signed image URLs expire ~47 hours after issue (verified via s
 
 When both stages fail, the worker surfaces one of:
 
-| Final condition | Status | `error` |
-|---|---|---|
-| oEmbed 404 | 404 | `not-found` |
-| oEmbed 403 | 403 | `private` |
-| otherwise | 502 | `fetch-failed` |
+| Final condition | Status | `error`        |
+| --------------- | ------ | -------------- |
+| oEmbed 404      | 404    | `not-found`    |
+| oEmbed 403      | 403    | `private`      |
+| otherwise       | 502    | `fetch-failed` |
 
 Same shape as today's worker. Phone-side error handling is unchanged on the wire.
 
@@ -198,9 +203,9 @@ There are two failure modes the design has to distinguish, and they need two dif
 
 The worker returns a 4xx/5xx error, the phone's `url_fetch` stage throws, and `pipeline-log.ts` calls `Sentry.captureException`. Today this fires unfiltered. This spec adds two tags via the new `stage.fail(err, { tags })` API:
 
-| Tag | Value source |
-|---|---|
-| `platform` | derived from the input URL before the worker call: `'tiktok'` or `'instagram'` |
+| Tag                 | Value source                                                                                                                                                                                                                                                                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform`          | derived from the input URL before the worker call: `'tiktok'` or `'instagram'`                                                                                                                                                                                                                                                                      |
 | `worker_error_code` | the worker's response `error` field — one of `'fetch-failed' \| 'not-found' \| 'private' \| 'rate-limited' \| 'unsupported-url'` (only values the worker actually emits; upstream TikTok rate-limits collapse to `fetch-failed` per §Client-facing error codes, so the `rate-limited` tag only appears when the worker's own CF rate limiter trips) |
 
 Sentry query: `pipeline_stage:url_fetch AND platform:tiktok` counts total TikTok extraction failures. Per-error-code splits via `AND worker_error_code:fetch-failed`. This catches the loudest failure mode but **does not** detect silent degradation where the rehydration parser stops working and oEmbed keeps the success rate at 100%.
@@ -247,6 +252,7 @@ Analytics Engine bindings, synthetic monitoring, Sentry alert rules. Sentry's bu
 - `modules/capture/__tests__/fetchPostFromProxy.test.ts` — Worker returns an error response → caller invokes `stage.fail` with tags `{ platform: 'tiktok', worker_error_code: '<code>' }` for known `worker_error_code` values. Assert via the mocked `stage.fail` (or by spying on the mocked Sentry SDK).
 
 **Fixtures** under `workers/extract-proxy/__tests__/fixtures/tiktok/`:
+
 - `photo-6slides.html` — sanitized spike capture, trimmed to the script tag plus minimum HTML scaffold (~5–10 KB).
 - `video.html` — same treatment.
 - `antibot-stub.html` — the 13 KB stub case.
@@ -254,10 +260,12 @@ Analytics Engine bindings, synthetic monitoring, Sentry alert rules. Sentry's bu
 Signed URLs inside fixtures will expire; tests don't fetch them, only assert string shape — that's fine.
 
 **Not tested:**
+
 - Live TikTok requests from CI. Flaky, anti-bot-sensitive, region-dependent.
 - Image URL signature validity. The phone surfaces image-load failures through the existing render error path.
 
 **Dogfood checklist** (manual, post-deploy to staging):
+
 1. Share a real `/photo/` URL with ≥3 slides → all slides appear in triage.
 2. Share a real `/video/` URL → cover image appears.
 3. Share a `vm.tiktok.com` short link to a photo → resolves and extracts.

@@ -49,7 +49,9 @@ export default function NewTrip() {
               accessibilityLabel="Cancel"
               hitSlop={8}
             >
-              <Text className="text-text-muted" style={{ fontSize: 16 }}>Cancel</Text>
+              <Text className="text-text-muted" style={{ fontSize: 16 }}>
+                Cancel
+              </Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -73,14 +75,19 @@ export default function NewTrip() {
         }}
       />
       <ScrollView
-        className="flex-1 bg-bg"
+        className="bg-bg flex-1"
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: 16, paddingTop: 24 }}
       >
         <Text
           className="text-text-muted mb-2"
-          style={{ fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase' }}
+          style={{
+            fontSize: 12,
+            fontWeight: '600',
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
+          }}
         >
           Trip name
         </Text>

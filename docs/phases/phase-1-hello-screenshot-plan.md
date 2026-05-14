@@ -13,7 +13,7 @@
 ## Verified library notes (Context7, 2026-05-04)
 
 - **App Group access from JS is built in.** `Paths.appleSharedContainers['group.com.trippocket.shared'].uri` (from `expo-file-system`) returns the container path on iOS. No custom Expo Module needed for this.
-- **Main-app App Group entitlement** is set declaratively in `app.json` under `ios.entitlements`. The Expo build pipeline writes the entitlements file. The config plugin we still need is only for adding the *extension target itself*, not for entitlements on the main app.
+- **Main-app App Group entitlement** is set declaratively in `app.json` under `ios.entitlements`. The Expo build pipeline writes the entitlements file. The config plugin we still need is only for adding the _extension target itself_, not for entitlements on the main app.
 - **`expo-sqlite` accepts a `directory`** for the database. Combined with the App Group path, this lets the main app and the share extension read the same `trip-pocket.db` file with no extra plumbing.
 - **`expo-file-system` modern API is class-based:** `new File(parent, 'name')`, `file.create()`, `file.move(target)`, `file.copy(target)`, `file.exists`, `file.uri`, `Paths.document`, `Paths.cache`. The legacy `FileSystem.documentDirectory` / `FileSystem.moveAsync` API is still importable from `expo-file-system/legacy` if needed.
 - **NativeWind v4** pins are `tailwindcss@^3.4.17`, `prettier-plugin-tailwindcss@^0.5.11`.
@@ -24,15 +24,18 @@
 This plan creates the following files (paths relative to repo root):
 
 **Configuration:**
+
 - `package.json`, `app.json`, `tsconfig.json`, `eas.json`, `babel.config.js`, `metro.config.js`, `tailwind.config.js`, `global.css`
 - `.eslintrc.cjs`, `.prettierrc`, `.gitignore`
 - `jest.config.js`, `jest.setup.ts`
 
 **App / screens (Expo Router):**
+
 - `app/_layout.tsx` — root layout
 - `app/index.tsx` — the list screen (only screen in Phase 1)
 
 **Modules:**
+
 - `modules/storage/db.ts` — `expo-sqlite` singleton + migration runner
 - `modules/storage/migrations/0001_init.ts` — full schema migration (every column from ARCHITECTURE.md)
 - `modules/storage/screenshots.ts` — repository: `insertScreenshot`, `listScreenshots`
@@ -43,6 +46,7 @@ This plan creates the following files (paths relative to repo root):
 - `modules/capture/__tests__/ingest.test.ts`
 
 **Native iOS:**
+
 - `plugins/with-share-extension.js` — Expo config plugin
 - `native/ShareExtension/Info.plist`
 - `native/ShareExtension/TripPocketShare.entitlements`
@@ -50,7 +54,7 @@ This plan creates the following files (paths relative to repo root):
 - `native/ShareExtension/SaveButtonView.swift`
 - `native/ShareExtension/PendingImportWriter.swift`
 
-Each module file has one clear responsibility. The storage module is the *only* place that touches SQL — every other module asks it for typed objects.
+Each module file has one clear responsibility. The storage module is the _only_ place that touches SQL — every other module asks it for typed objects.
 
 ---
 
@@ -138,6 +142,7 @@ Open Xcode → Settings → Accounts → `+` → Apple ID. Sign in. Confirm "Per
 **Why:** Need a working Expo + Expo Router + TypeScript project before any feature code.
 
 **Files:**
+
 - Create: many (Expo template generates the standard set).
 
 - [ ] **Step 1: Scaffold the project into the existing repo**
@@ -241,6 +246,7 @@ Expected: no errors (warnings on default Expo template are acceptable).
 **Why:** Architecture locks in NativeWind for styling. Setting it up now means every screen uses Tailwind classes from the start.
 
 **Files:**
+
 - Create: `tailwind.config.js`, `global.css`, `metro.config.js`, `nativewind-env.d.ts`
 - Modify: `babel.config.js`, `app/_layout.tsx`
 
@@ -289,10 +295,7 @@ Edit `babel.config.js`:
 module.exports = function (api) {
   api.cache(true);
   return {
-    presets: [
-      ['babel-preset-expo', { jsxImportSource: 'nativewind' }],
-      'nativewind/babel',
-    ],
+    presets: [['babel-preset-expo', { jsxImportSource: 'nativewind' }], 'nativewind/babel'],
   };
 };
 ```
@@ -356,6 +359,7 @@ Expected: simulator shows centered "Trip Pocket" text on white. `Ctrl-C` to stop
 **Why:** Need a dev build profile to install on a real iPhone. Phase 1 only has a `dev` profile; preview/production come at v0.3 / v1.0.
 
 **Files:**
+
 - Create: `eas.json`
 - Modify: `app.json`
 
@@ -379,7 +383,7 @@ Edit `app.json` and set:
 }
 ```
 
-The `ios.entitlements` block makes the main app a member of the App Group at build time — no config plugin needed for *this* part. (The extension target itself still needs a config plugin; that's Task 14.)
+The `ios.entitlements` block makes the main app a member of the App Group at build time — no config plugin needed for _this_ part. (The extension target itself still needs a config plugin; that's Task 14.)
 
 - [ ] **Step 2: Run `eas init`**
 
@@ -469,6 +473,7 @@ Expected: app appears on the iPhone home screen and runs.
 **Why:** Need a working Jest setup before the storage module's TDD steps land.
 
 **Files:**
+
 - Create: `jest.config.js`, `jest.setup.ts`, `__mocks__/expo-sqlite.ts`
 - Modify: `package.json` (add `test` script)
 
@@ -545,6 +550,7 @@ Expected: 1 test passing.
 **Why:** Every other storage feature depends on having a managed DB connection and a way to apply migrations linearly.
 
 **Files:**
+
 - Create: `modules/storage/db.ts`, `modules/storage/migrations/index.ts`, `modules/storage/__tests__/db.test.ts`
 
 - [ ] **Step 1: Install expo-sqlite**
@@ -682,6 +688,7 @@ Expected: 3 tests passing.
 **Why:** Lock in the full ARCHITECTURE.md schema in one migration so we never have to migrate the same tables twice as features land in v0.2.
 
 **Files:**
+
 - Create: `modules/storage/migrations/0001_init.ts`, `modules/storage/migrations/index.ts`
 - Modify: `modules/storage/__tests__/db.test.ts`
 
@@ -858,6 +865,7 @@ Expected: all tests passing.
 **Why:** Phase 1 needs `insertScreenshot` (called by ingestion) and `listScreenshots` (called by the list screen). These are the only two methods the rest of Phase 1 needs.
 
 **Files:**
+
 - Create: `modules/storage/screenshots.ts`, `modules/storage/__tests__/screenshots.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -987,10 +995,7 @@ export type InsertScreenshotInput = {
   ownerId: string;
 };
 
-export async function insertScreenshot(
-  db: Database,
-  input: InsertScreenshotInput,
-): Promise<void> {
+export async function insertScreenshot(db: Database, input: InsertScreenshotInput): Promise<void> {
   const now = new Date().toISOString();
   await db.runAsync(
     `INSERT INTO screenshots (
@@ -1083,6 +1088,7 @@ Expected: 3 tests passing.
 **Why:** The list screen needs to re-render when ingestion writes new rows. We use `expo-sqlite`'s update hook if available; the architecture allows the event-bus fallback if it's flaky.
 
 **Files:**
+
 - Create: `modules/storage/live-query.ts`, `modules/storage/__tests__/live-query.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -1187,11 +1193,7 @@ function subscribe(tables: string[], fn: () => void): () => void {
   };
 }
 
-export function useLiveQuery<Row>(
-  sql: string,
-  params: unknown[],
-  tables: string[],
-): Row[] | null {
+export function useLiveQuery<Row>(sql: string, params: unknown[], tables: string[]): Row[] | null {
   const [rows, setRows] = useState<Row[] | null>(null);
 
   useEffect(() => {
@@ -1237,6 +1239,7 @@ Expected: 2 tests passing.
 **Why:** Phase 1's only screen — shows what's been saved.
 
 **Files:**
+
 - Create: `modules/storage/index.ts` (barrel for the module)
 - Modify: `app/_layout.tsx`, `app/index.tsx`
 
@@ -1316,7 +1319,7 @@ export default function Index() {
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <Text className="px-4 pb-2 pt-4 text-2xl font-semibold text-slate-900">Inbox</Text>
+      <Text className="px-4 pt-4 pb-2 text-2xl font-semibold text-slate-900">Inbox</Text>
       <FlatList
         data={rows}
         keyExtractor={(item) => item.id}
@@ -1359,6 +1362,7 @@ Open the dev build on simulator. Expected: empty-state copy "No screenshots yet 
 **Why:** Cross-process handoff. The share extension writes a row to `pending_imports`; this function (called on app foreground) drains the table into real `screenshots` rows.
 
 **Files:**
+
 - Create: `modules/capture/ingest.ts`, `modules/capture/__tests__/ingest.test.ts`, `modules/capture/index.ts`
 
 - [ ] **Step 1: Install expo-file-system + uuid**
@@ -1476,10 +1480,7 @@ export type IngestOptions = {
   fs: FsLike;
 };
 
-export async function ingestPendingImports(
-  db: Database,
-  opts: IngestOptions,
-): Promise<void> {
+export async function ingestPendingImports(db: Database, opts: IngestOptions): Promise<void> {
   const pending = await db.getAllAsync<{
     id: string;
     app_group_path: string;
@@ -1543,9 +1544,10 @@ export { ingestPendingImports } from './ingest';
 
 ### Task 13: Wire ingestion + App Group SQLite into the root layout
 
-**Why:** `ingestPendingImports` needs a real caller. App foreground is the only trigger in Phase 1. The main app's SQLite must also point at the *same* file the share extension writes — both live in the App Group container at `group.com.trippocket.shared/trip-pocket.db`. `Paths.appleSharedContainers` from `expo-file-system` resolves the container directly, so no custom Expo Module is needed.
+**Why:** `ingestPendingImports` needs a real caller. App foreground is the only trigger in Phase 1. The main app's SQLite must also point at the _same_ file the share extension writes — both live in the App Group container at `group.com.trippocket.shared/trip-pocket.db`. `Paths.appleSharedContainers` from `expo-file-system` resolves the container directly, so no custom Expo Module is needed.
 
 **Files:**
+
 - Modify: `app/_layout.tsx`
 - Create: `modules/capture/owner.ts`, `modules/capture/paths.ts`
 
@@ -1628,7 +1630,9 @@ import { getAppGroupContainerUri, getSandboxDirectory } from '@/modules/capture/
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
-  const [ctx, setCtx] = useState<{ db: Database; ownerId: string; sandboxDirUri: string } | null>(null);
+  const [ctx, setCtx] = useState<{ db: Database; ownerId: string; sandboxDirUri: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     (async () => {
@@ -1686,10 +1690,7 @@ export type Migration = {
   up: (db: Database) => Promise<void>;
 };
 
-export async function openDatabase(
-  name = 'trip-pocket.db',
-  directory?: string,
-): Promise<Database> {
+export async function openDatabase(name = 'trip-pocket.db', directory?: string): Promise<Database> {
   const db = await SQLite.openDatabaseAsync(name, undefined, directory);
   await db.execAsync('PRAGMA journal_mode = WAL;');
   await db.execAsync('PRAGMA foreign_keys = ON;');
@@ -1748,6 +1749,7 @@ Expected: tests pass; empty-state screen renders on the dev build; no crashes.
 **Why:** Expo doesn't ship a built-in way to add a Share Extension target. A config plugin runs at `prebuild` time, edits `ios/Podfile` and the Xcode project to add the new target, and copies in our Swift sources.
 
 **Files:**
+
 - Create: `plugins/with-share-extension.js`, `native/ShareExtension/Info.plist`, `native/ShareExtension/TripPocketShare.entitlements`
 - Modify: `app.json`
 
@@ -1757,7 +1759,7 @@ Expected: tests pass; empty-state screen renders on the dev build; no crashes.
 npm install --save-dev @expo/config-plugins xcode plist
 ```
 
-> **Note:** The main app's App Group entitlement was already added declaratively in Task 5's `app.json`. This config plugin only adds the *extension target itself* — it does not touch the main app's entitlements.
+> **Note:** The main app's App Group entitlement was already added declaratively in Task 5's `app.json`. This config plugin only adds the _extension target itself_ — it does not touch the main app's entitlements.
 
 - [ ] **Step 2: Stub Swift source files**
 
@@ -2118,7 +2120,7 @@ If the extension does NOT appear: revisit the config plugin (Task 14) — `prebu
 
 - [ ] **Step 5: Commit any prebuild artifacts that should not be in `.gitignore`**
 
-By default Expo's `.gitignore` excludes `ios/`. We don't need to commit native project files. Confirm there are no untracked items that *should* be tracked.
+By default Expo's `.gitignore` excludes `ios/`. We don't need to commit native project files. Confirm there are no untracked items that _should_ be tracked.
 
 ```sh
 /opt/homebrew/bin/git status
@@ -2197,7 +2199,7 @@ Spec coverage:
 - ✅ Closing/reopening still shows it — Task 13 (real shared DB, not in-memory)
 - ✅ Repeats reliably 3+ times — Task 16
 
-What this plan does *not* do (intentional, in spec):
+What this plan does _not_ do (intentional, in spec):
 
 - No trip picker in the share extension (defer to Phase 2)
 - No trips table writes (defer to Phase 2)

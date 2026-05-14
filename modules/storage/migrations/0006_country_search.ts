@@ -26,11 +26,7 @@ export const countrySearch: Migration = {
     `);
 
     for (const [code, name] of Object.entries(COUNTRY_NAMES)) {
-      await db.runAsync(
-        'INSERT INTO country_names (code, name) VALUES (?, ?)',
-        code,
-        name,
-      );
+      await db.runAsync('INSERT INTO country_names (code, name) VALUES (?, ?)', code, name);
     }
 
     await db.execAsync(`

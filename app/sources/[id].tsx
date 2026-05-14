@@ -33,11 +33,7 @@ export default function SourceDetail() {
   >({ kind: 'loading' });
 
   // Refresh when OCR or extraction completes in the background.
-  const tick = useLiveQuery<{ v: number }>(
-    `SELECT 0 AS v`,
-    [],
-    ['sources', 'place_sources'],
-  );
+  const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['sources', 'place_sources']);
 
   // Live place count drives the toolbar icon (mappin.circle.fill vs
   // mappin.slash) so the button flips state the moment extraction commits.
@@ -125,7 +121,8 @@ export default function SourceDetail() {
                  WHERE ps2.place_id = ps1.place_id
                    AND ps2.source_id != ?
               )`,
-      source.id, source.id,
+      source.id,
+      source.id,
     );
     const orphanCount = countRow?.n ?? 0;
     const body =
@@ -181,14 +178,8 @@ export default function SourceDetail() {
                     gap: 8,
                   }}
                 >
-                  <Icon
-                    name="arrow.up.right.square.fill"
-                    size={18}
-                    tintColor="#ffffff"
-                  />
-                  <Text
-                    style={{ color: '#ffffff', fontSize: 15, fontWeight: '600' }}
-                  >
+                  <Icon name="arrow.up.right.square.fill" size={18} tintColor="#ffffff" />
+                  <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '600' }}>
                     Open in {prettyPlatform(source.platform)}
                   </Text>
                 </View>
@@ -204,7 +195,7 @@ export default function SourceDetail() {
             className="flex-1 items-center justify-center px-8"
           >
             <View
-              className="items-center justify-center rounded-full mb-4"
+              className="mb-4 items-center justify-center rounded-full"
               style={{
                 width: 72,
                 height: 72,
@@ -222,10 +213,7 @@ export default function SourceDetail() {
                 {source.caption}
               </Text>
             ) : null}
-            <Text
-              className="text-center mt-4 text-slate-400"
-              style={{ fontSize: 13 }}
-            >
+            <Text className="mt-4 text-center text-slate-400" style={{ fontSize: 13 }}>
               Tap to open in {prettyPlatform(source.platform)}
             </Text>
             <PlatformBadge platform={source.platform} />
@@ -252,10 +240,7 @@ export default function SourceDetail() {
           />
           <Stack.Toolbar.Menu icon="ellipsis" tintColor="#fff">
             {isUrlSource ? (
-              <Stack.Toolbar.MenuAction
-                icon="arrow.up.right.square"
-                onPress={openInApp}
-              >
+              <Stack.Toolbar.MenuAction icon="arrow.up.right.square" onPress={openInApp}>
                 Open in {prettyPlatform(source.platform)}
               </Stack.Toolbar.MenuAction>
             ) : null}
@@ -266,10 +251,7 @@ export default function SourceDetail() {
               {inTrip ? 'Move to trip' : 'Add to trip'}
             </Stack.Toolbar.MenuAction>
             {inTrip ? (
-              <Stack.Toolbar.MenuAction
-                icon="folder.badge.minus"
-                onPress={onRemoveFromTrip}
-              >
+              <Stack.Toolbar.MenuAction icon="folder.badge.minus" onPress={onRemoveFromTrip}>
                 Remove from trip
               </Stack.Toolbar.MenuAction>
             ) : null}
@@ -295,7 +277,9 @@ export default function SourceDetail() {
           if (process.env.EXPO_OS === 'ios') {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           }
-          toast(pickerMode === 'assign' ? `Added to ${result.tripName}` : `Moved to ${result.tripName}`);
+          toast(
+            pickerMode === 'assign' ? `Added to ${result.tripName}` : `Moved to ${result.tripName}`,
+          );
         }}
       />
     </>
@@ -319,11 +303,7 @@ function prettyPlatform(platform: Source['platform']): string {
 function PlatformBadge({ platform }: { platform: Source['platform'] }) {
   if (!platform) return null;
   return (
-    <View
-      className="absolute"
-      style={{ top: 12, right: 12 }}
-      pointerEvents="none"
-    >
+    <View className="absolute" style={{ top: 12, right: 12 }} pointerEvents="none">
       <View
         className="flex-row items-center rounded-full"
         style={{

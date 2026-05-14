@@ -170,7 +170,7 @@ Zero in either column = the archive will crash on launch with `Cannot find nativ
 
 ### L4. Archive in Xcode
 
-Before archiving, prove `Info.plist` agrees with `app.json` — Xcode and sentry-cli both read `CFBundleVersion`, not `app.json`. If they drift, the archive ships with the *old* build number, ASC rejects the upload as a duplicate, and the Sentry source-map artifact gets tagged with the wrong release/dist.
+Before archiving, prove `Info.plist` agrees with `app.json` — Xcode and sentry-cli both read `CFBundleVersion`, not `app.json`. If they drift, the archive ships with the _old_ build number, ASC rejects the upload as a duplicate, and the Sentry source-map artifact gets tagged with the wrong release/dist.
 
 ```sh
 EXPECTED=$(node -e "console.log(require('./app.json').expo.ios.buildNumber)")

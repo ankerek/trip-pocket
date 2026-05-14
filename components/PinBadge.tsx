@@ -12,7 +12,7 @@ export function PinBadge() {
     <View
       pointerEvents="none"
       testID="pin-badge"
-      className="absolute bottom-1.5 right-1.5 h-6 w-6 items-center justify-center rounded-full bg-blue-500/90"
+      className="absolute right-1.5 bottom-1.5 h-6 w-6 items-center justify-center rounded-full bg-blue-500/90"
     >
       <Icon name="mappin" size={14} tintColor="#ffffff" />
     </View>

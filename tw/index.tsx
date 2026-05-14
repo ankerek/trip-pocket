@@ -1,7 +1,4 @@
-import {
-  useCssElement,
-  useNativeVariable as useFunctionalVariable,
-} from 'react-native-css';
+import { useCssElement, useNativeVariable as useFunctionalVariable } from 'react-native-css';
 import {
   FlatList as RNFlatList,
   Pressable as RNPressable,
@@ -28,9 +25,7 @@ const styleAndContentMap = {
 } as never;
 
 export const useCSSVariable =
-  process.env.EXPO_OS !== 'web'
-    ? useFunctionalVariable
-    : (variable: string) => `var(${variable})`;
+  process.env.EXPO_OS !== 'web' ? useFunctionalVariable : (variable: string) => `var(${variable})`;
 
 export type ViewProps = React.ComponentProps<typeof RNView> & {
   className?: string;
@@ -48,9 +43,7 @@ export const SafeAreaView = (
 };
 SafeAreaView.displayName = 'CSS(SafeAreaView)';
 
-export const Text = (
-  props: React.ComponentProps<typeof RNText> & { className?: string },
-) => {
+export const Text = (props: React.ComponentProps<typeof RNText> & { className?: string }) => {
   return useCssElement(RNText, props, { className: 'style' });
 };
 Text.displayName = 'CSS(Text)';
@@ -58,11 +51,7 @@ Text.displayName = 'CSS(Text)';
 export const Pressable = (
   props: React.ComponentProps<typeof RNPressable> & { className?: string },
 ): React.ReactElement => {
-  return useCssElement(
-    RNPressable as unknown as React.ComponentType<unknown>,
-    props,
-    styleMap,
-  );
+  return useCssElement(RNPressable as unknown as React.ComponentType<unknown>, props, styleMap);
 };
 Pressable.displayName = 'CSS(Pressable)';
 
@@ -87,9 +76,7 @@ export const TextInput = (
 };
 TextInput.displayName = 'CSS(TextInput)';
 
-export const Image = (
-  props: React.ComponentProps<typeof ExpoImage> & { className?: string },
-) => {
+export const Image = (props: React.ComponentProps<typeof ExpoImage> & { className?: string }) => {
   return useCssElement(ExpoImage, props, { className: 'style' });
 };
 Image.displayName = 'CSS(Image)';

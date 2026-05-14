@@ -240,7 +240,9 @@ describe('handleEnrich', () => {
         match: isPlaceDetails,
         response: () =>
           placesDetailsOk({
-            addressComponents: [{ types: ['country', 'political'], longText: 'Japan', shortText: 'JP' }],
+            addressComponents: [
+              { types: ['country', 'political'], longText: 'Japan', shortText: 'JP' },
+            ],
           }),
       },
       { match: isGemini, response: () => geminiOk() },
@@ -259,7 +261,9 @@ describe('handleEnrich', () => {
         match: isPlaceDetails,
         response: () =>
           placesDetailsOk({
-            addressComponents: [{ types: ['locality', 'political'], longText: 'Tokyo', shortText: 'Tokyo' }],
+            addressComponents: [
+              { types: ['locality', 'political'], longText: 'Tokyo', shortText: 'Tokyo' },
+            ],
           }),
       },
       { match: isGemini, response: () => geminiOk() },
@@ -602,7 +606,10 @@ describe('handleEnrich', () => {
       globalThis.fetch = fetchSpy;
 
       const res = await handleEnrich(postJson(validBody), makeEnv());
-      const body = (await res.json()) as { description: string | null; _debug?: { blurbOutcome: string } };
+      const body = (await res.json()) as {
+        description: string | null;
+        _debug?: { blurbOutcome: string };
+      };
       expect(body.description).toBeNull();
       expect(body._debug?.blurbOutcome).toBe('failed');
       expect(geminiCallCount(fetchSpy)).toBe(1);
@@ -617,7 +624,10 @@ describe('handleEnrich', () => {
       globalThis.fetch = fetchSpy;
 
       const res = await handleEnrich(postJson(validBody), makeEnv());
-      const body = (await res.json()) as { description: string | null; _debug?: { blurbOutcome: string } };
+      const body = (await res.json()) as {
+        description: string | null;
+        _debug?: { blurbOutcome: string };
+      };
       expect(body.description).toBeNull();
       expect(body._debug?.blurbOutcome).toBe('failed');
       expect(geminiCallCount(fetchSpy)).toBe(1);
@@ -632,7 +642,10 @@ describe('handleEnrich', () => {
       globalThis.fetch = fetchSpy;
 
       const res = await handleEnrich(postJson(validBody), makeEnv());
-      const body = (await res.json()) as { description: string | null; _debug?: { blurbOutcome: string } };
+      const body = (await res.json()) as {
+        description: string | null;
+        _debug?: { blurbOutcome: string };
+      };
       expect(body.description).toBeNull();
       expect(body._debug?.blurbOutcome).toBe('failed');
       expect(geminiCallCount(fetchSpy)).toBe(2);

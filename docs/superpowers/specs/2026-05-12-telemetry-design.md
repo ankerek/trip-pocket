@@ -6,7 +6,7 @@
 
 ## Why
 
-Today the app is observable for *failures* — Sentry catches crashes and the pipeline breadcrumbs trace where a failure happened (`lib/observability/breadcrumbs.ts`). It is not observable for *success or use*. We can't answer: "how many testers got past first import?", "which paywall trigger converts?", "do people use triage or assign trips manually?", "is OCR latency a problem in the wild?". Without these answers, every product decision from v0.4 → v1.0 is a guess.
+Today the app is observable for _failures_ — Sentry catches crashes and the pipeline breadcrumbs trace where a failure happened (`lib/observability/breadcrumbs.ts`). It is not observable for _success or use_. We can't answer: "how many testers got past first import?", "which paywall trigger converts?", "do people use triage or assign trips manually?", "is OCR latency a problem in the wild?". Without these answers, every product decision from v0.4 → v1.0 is a guess.
 
 `docs/ARCHITECTURE.md` already commits to **PostHog for product events, Sentry for crashes**, wrapped by a `modules/telemetry/` module that doesn't exist yet. This sub-project builds that module and wires the minimum event vocabulary that makes the activation funnel and pipeline health legible. It also turns on a small slice of Sentry performance tracing so latency questions don't require a one-off instrumentation pass later.
 
@@ -168,10 +168,10 @@ export function captureError(err: unknown, ctx?: { stage?: PipelineStage }): voi
 `TelemetryEvent` is the discriminated union from `events.ts`, so:
 
 ```ts
-track({ type: 'import_started', source: 'share' });        // ok
-track({ type: 'import_started', source: 'photo' });        // type error — 'photo' not in source enum
-track({ type: 'extraction_completed' });                   // type error — missing props
-track({ type: 'fish' });                                   // type error — unknown event
+track({ type: 'import_started', source: 'share' }); // ok
+track({ type: 'import_started', source: 'photo' }); // type error — 'photo' not in source enum
+track({ type: 'extraction_completed' }); // type error — missing props
+track({ type: 'fish' }); // type error — unknown event
 ```
 
 `captureError` re-exports the Sentry helper so the rest of the app has one telemetry import surface. The optional `stage` arg attaches `pipeline_stage` as a Sentry tag — matching the existing `pipelineError` semantics in `lib/observability/breadcrumbs.ts`, but routed through `modules/telemetry` so the eslint rule banning direct `@sentry/react-native` imports can hold project-wide.
@@ -197,7 +197,7 @@ Settings UI: a single `<Switch>` under `Settings → Privacy → Help improve Tr
 
 In-process gating: every `track()` and `captureError()` early-returns if `isOptedOut() === true`. The opt-out check is cheap (in-memory boolean); the SQLite write only happens when the user toggles. Sentry is **also** disabled by opt-out — calling `Sentry.init` is fine; we route through `captureError` which checks consent.
 
-(Open question — see "Open questions": do we want opt-out to also kill *crash* reporting, or only product events? Current design: kills both. Argument for splitting: crash reporting is more defensible without consent because crashes are about the app, not the user. Argument against: a single toggle is simpler and more honest. Leaning towards single toggle; flagging for review.)
+(Open question — see "Open questions": do we want opt-out to also kill _crash_ reporting, or only product events? Current design: kills both. Argument for splitting: crash reporting is more defensible without consent because crashes are about the app, not the user. Argument against: a single toggle is simpler and more honest. Leaning towards single toggle; flagging for review.)
 
 ## Sentry performance traces
 
@@ -247,7 +247,7 @@ Phase 1 unblocks PostHog dashboards even if nothing else lands. Phases 2–4 are
 ## Open questions
 
 1. **Does opt-out kill crashes too, or only product events?** Current design: kills both. Splitting would mean two toggles in Settings ("Help improve Trip Pocket" + "Send crash reports"). Leaning: keep one toggle. Confirming.
-2. **Do we route paywall events through PostHog *and* RevenueCat's own webhooks, or only PostHog?** RevenueCat will be the source of truth for `subscribed` server-side. The client `subscribed` event in PostHog is useful for client-side funnels (paywall → trial → subscribed on the same device) and is what feeds in-app dashboards before RevenueCat→PostHog server-side integration is wired. Both is fine; flagging that they'll need to be reconciled when RevenueCat lands.
+2. **Do we route paywall events through PostHog _and_ RevenueCat's own webhooks, or only PostHog?** RevenueCat will be the source of truth for `subscribed` server-side. The client `subscribed` event in PostHog is useful for client-side funnels (paywall → trial → subscribed on the same device) and is what feeds in-app dashboards before RevenueCat→PostHog server-side integration is wired. Both is fine; flagging that they'll need to be reconciled when RevenueCat lands.
 3. **PostHog session replay?** Off by default in this design. Worth revisiting if user complaints land that are hard to repro from breadcrumbs alone. Privacy posture would need a stricter pass (mask-everything mode + consent prompt).
 4. **Marketing-site analytics tool?** Out of scope here. Likely Umami or Plausible when the marketing site exists.
 

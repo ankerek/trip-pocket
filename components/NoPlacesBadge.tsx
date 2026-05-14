@@ -18,7 +18,7 @@ export function NoPlacesBadge() {
     <View
       pointerEvents="none"
       testID="no-places-badge"
-      className="absolute bottom-1.5 right-1.5 h-6 w-6 items-center justify-center rounded-full bg-slate-500/60"
+      className="absolute right-1.5 bottom-1.5 h-6 w-6 items-center justify-center rounded-full bg-slate-500/60"
     >
       <Icon name="mappin.slash" size={14} tintColor="#ffffff" />
     </View>

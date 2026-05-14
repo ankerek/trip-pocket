@@ -60,10 +60,7 @@ export function _setSocialDetectionForTests(
  * otherwise falls back to SFSafariViewController so the user stays inside
  * Trip Pocket.
  */
-export async function openSourceUrl(
-  url: string,
-  platform: SocialPlatform,
-): Promise<void> {
+export async function openSourceUrl(url: string, platform: SocialPlatform): Promise<void> {
   await warmSocialAppDetection();
   const appInstalled =
     platform === 'instagram'

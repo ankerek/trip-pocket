@@ -13,7 +13,11 @@ export interface MockSQLiteDatabase {
   withTransactionAsync(fn: () => Promise<void>): Promise<void>;
 }
 
-export async function openDatabaseAsync(_name: string, _options?: unknown, _directory?: string): Promise<MockSQLiteDatabase> {
+export async function openDatabaseAsync(
+  _name: string,
+  _options?: unknown,
+  _directory?: string,
+): Promise<MockSQLiteDatabase> {
   // Always use :memory: in tests; real paths are not needed in the Node env
   const db = new BetterSqlite3(':memory:');
 

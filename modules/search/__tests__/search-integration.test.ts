@@ -13,11 +13,7 @@ async function freshDb(): Promise<Database> {
 }
 
 async function seedFts(db: Database, id: string, content: string): Promise<void> {
-  await db.runAsync(
-    'INSERT INTO sources_fts (source_id, content) VALUES (?, ?)',
-    id,
-    content,
-  );
+  await db.runAsync('INSERT INTO sources_fts (source_id, content) VALUES (?, ?)', id, content);
 }
 
 async function searchIds(db: Database, input: string): Promise<string[]> {
@@ -123,12 +119,7 @@ async function placeSearch(
 ): Promise<PlaceResultRow[]> {
   const match = buildFtsMatch(input);
   if (match === null) return [];
-  return db.getAllAsync<PlaceResultRow>(
-    PLACE_SEARCH_SQL,
-    match,
-    tripFilter,
-    tripFilter,
-  );
+  return db.getAllAsync<PlaceResultRow>(PLACE_SEARCH_SQL, match, tripFilter, tripFilter);
 }
 
 const OWNER = 'owner-1';
@@ -201,8 +192,18 @@ describe('search integration: places_fts MATCH (places-first)', () => {
     await seedSource(db, 'src-fr', 'trip-fr');
     await seedPlace(db, { id: 'p-jp', tripId: 'trip-jp', name: 'Maru Tonkatsu' });
     await seedPlace(db, { id: 'p-fr', tripId: 'trip-fr', name: 'Café Tonkin' });
-    await linkPlaceSource(db, { placeId: 'p-jp', sourceId: 'src-jp', extractionModel: 't', ownerId: OWNER });
-    await linkPlaceSource(db, { placeId: 'p-fr', sourceId: 'src-fr', extractionModel: 't', ownerId: OWNER });
+    await linkPlaceSource(db, {
+      placeId: 'p-jp',
+      sourceId: 'src-jp',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
+    await linkPlaceSource(db, {
+      placeId: 'p-fr',
+      sourceId: 'src-fr',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
 
     expect((await placeSearch(db, 'tonk', null)).map((r) => r.id).sort()).toEqual(['p-fr', 'p-jp']);
     expect((await placeSearch(db, 'tonk', 'trip-jp')).map((r) => r.id)).toEqual(['p-jp']);
@@ -214,7 +215,12 @@ describe('search integration: places_fts MATCH (places-first)', () => {
     await seedTrip(db, 'trip-1', 'Japan');
     await seedSource(db, 'src-orphan', null);
     await seedPlace(db, { id: 'orphan', tripId: null, name: 'Orphan Tonkatsu' });
-    await linkPlaceSource(db, { placeId: 'orphan', sourceId: 'src-orphan', extractionModel: 't', ownerId: OWNER });
+    await linkPlaceSource(db, {
+      placeId: 'orphan',
+      sourceId: 'src-orphan',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
 
     expect((await placeSearch(db, 'tonk', null)).map((r) => r.id)).toEqual(['orphan']);
     expect((await placeSearch(db, 'tonk', 'trip-1')).map((r) => r.id)).toEqual([]);
@@ -224,7 +230,12 @@ describe('search integration: places_fts MATCH (places-first)', () => {
     const db = await freshDb();
     await seedSource(db, 'src-1', null);
     await seedPlace(db, { id: 'p1', tripId: null, name: 'Tonkatsu Place' });
-    await linkPlaceSource(db, { placeId: 'p1', sourceId: 'src-1', extractionModel: 't', ownerId: OWNER });
+    await linkPlaceSource(db, {
+      placeId: 'p1',
+      sourceId: 'src-1',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
     expect((await placeSearch(db, 'tonk', null)).map((r) => r.id)).toEqual(['p1']);
 
     await deletePlace(db, 'p1', { unlinkFile: () => {} });
@@ -244,7 +255,7 @@ describe('search integration: places_fts MATCH (places-first)', () => {
       ownerId: OWNER,
     });
     expect((await placeSearch(db, 'ramen', null)).map((r) => r.id)).toEqual(['p1']);
-    expect((await placeSearch(db, 'biryani', null))).toEqual([]);
+    expect(await placeSearch(db, 'biryani', null)).toEqual([]);
 
     await linkPlaceSource(db, {
       placeId: 'p1',
@@ -286,8 +297,18 @@ describe('search integration: country name resolves via country_names join', () 
     await seedSource(db, 'src-fr', null);
     await seedPlace(db, { id: 'jp', tripId: null, name: 'Some Ramen Shop', countryCode: 'JP' });
     await seedPlace(db, { id: 'fr', tripId: null, name: 'Paris Ramen', countryCode: 'FR' });
-    await linkPlaceSource(db, { placeId: 'jp', sourceId: 'src-jp', extractionModel: 't', ownerId: OWNER });
-    await linkPlaceSource(db, { placeId: 'fr', sourceId: 'src-fr', extractionModel: 't', ownerId: OWNER });
+    await linkPlaceSource(db, {
+      placeId: 'jp',
+      sourceId: 'src-jp',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
+    await linkPlaceSource(db, {
+      placeId: 'fr',
+      sourceId: 'src-fr',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
 
     expect((await placeSearch(db, 'japan ramen', null)).map((r) => r.id)).toEqual(['jp']);
   });

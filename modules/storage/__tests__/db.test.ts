@@ -78,12 +78,8 @@ describe('url-share migration (0002)', () => {
     await runMigrations(db, [init, urlShare]);
 
     const srcCols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(sources)`);
-    expect(srcCols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(['platform', 'caption']),
-    );
-    const piCols = await db.getAllAsync<{ name: string }>(
-      `PRAGMA table_info(pending_imports)`,
-    );
+    expect(srcCols.map((c) => c.name)).toEqual(expect.arrayContaining(['platform', 'caption']));
+    const piCols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(pending_imports)`);
     expect(piCols.map((c) => c.name)).toEqual(expect.arrayContaining(['kind', 'url']));
   });
 
@@ -94,9 +90,7 @@ describe('url-share migration (0002)', () => {
     // throw. Bumping version above all migrations and re-applying tests
     // the idempotency guard directly.
     const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(sources)`);
-    expect(cols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(['platform', 'caption']),
-    );
+    expect(cols.map((c) => c.name)).toEqual(expect.arrayContaining(['platform', 'caption']));
     expect(await getMigrationVersion(db)).toBe(7);
   });
 });
@@ -156,7 +150,11 @@ describe('pending_imports nullable-path migration (0003)', () => {
     await db.runAsync(
       `INSERT INTO pending_imports (id, kind, app_group_path, url, suggested_trip_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      'u1', 'url', null, 'https://instagram.com/p/ABC/', null,
+      'u1',
+      'url',
+      null,
+      'https://instagram.com/p/ABC/',
+      null,
       '2026-05-12T10:00:00Z',
     );
     const rows = await db.getAllAsync<{ id: string; kind: string }>(
@@ -170,17 +168,22 @@ describe('pending_imports nullable-path migration (0003)', () => {
     await db.runAsync(
       `INSERT INTO pending_imports (id, kind, app_group_path, url, suggested_trip_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      'i1', 'image', 'file:///x.jpg', null, null, '2026-05-11T10:00:00Z',
+      'i1',
+      'image',
+      'file:///x.jpg',
+      null,
+      null,
+      '2026-05-11T10:00:00Z',
     );
 
     await runMigrations(db, [init, urlShare, pendingImportsNullablePath]);
 
     const rows = await db.getAllAsync<{
-      id: string; kind: string; app_group_path: string | null;
+      id: string;
+      kind: string;
+      app_group_path: string | null;
     }>(`SELECT id, kind, app_group_path FROM pending_imports`);
-    expect(rows).toEqual([
-      { id: 'i1', kind: 'image', app_group_path: 'file:///x.jpg' },
-    ]);
+    expect(rows).toEqual([{ id: 'i1', kind: 'image', app_group_path: 'file:///x.jpg' }]);
   });
 
   it('is a no-op when app_group_path is already nullable (fresh installs)', async () => {
@@ -216,13 +219,17 @@ describe('image-kind rename migration (0004)', () => {
     await db.runAsync(
       `INSERT INTO sources (id, kind, content_hash, origin, captured_at, owner_id, created_at, updated_at)
        VALUES (?, 'screenshot', 'h1', 'share', ?, 'o1', ?, ?)`,
-      'src1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+      'src1',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
     );
 
     await runMigrations(db, migrations);
 
     const row = await db.getFirstAsync<{ kind: string }>(
-      `SELECT kind FROM sources WHERE id = ?`, 'src1',
+      `SELECT kind FROM sources WHERE id = ?`,
+      'src1',
     );
     expect(row?.kind).toBe('image');
 
@@ -231,7 +238,11 @@ describe('image-kind rename migration (0004)', () => {
       db.runAsync(
         `INSERT INTO sources (id, kind, content_hash, origin, captured_at, owner_id, created_at, updated_at)
          VALUES (?, 'screenshot', ?, 'share', ?, 'o1', ?, ?)`,
-        'src2', 'h2', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z',
+        'src2',
+        'h2',
+        '2026-05-13T00:00:00Z',
+        '2026-05-13T00:00:00Z',
+        '2026-05-13T00:00:00Z',
       ),
     ).rejects.toThrow();
 
@@ -239,7 +250,11 @@ describe('image-kind rename migration (0004)', () => {
     await db.runAsync(
       `INSERT INTO sources (id, kind, content_hash, origin, captured_at, owner_id, created_at, updated_at)
        VALUES (?, 'image', ?, 'share', ?, 'o1', ?, ?)`,
-      'src3', 'h3', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z',
+      'src3',
+      'h3',
+      '2026-05-13T00:00:00Z',
+      '2026-05-13T00:00:00Z',
+      '2026-05-13T00:00:00Z',
     );
   });
 
@@ -248,11 +263,15 @@ describe('image-kind rename migration (0004)', () => {
     await db.runAsync(
       `INSERT INTO sources (id, kind, content_hash, origin, ocr_text, captured_at, owner_id, created_at, updated_at)
        VALUES (?, 'screenshot', 'h1', 'share', 'sushi restaurant tokyo', ?, 'o1', ?, ?)`,
-      'src1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+      'src1',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
     );
 
     const before = await db.getAllAsync<{ source_id: string }>(
-      `SELECT source_id FROM sources_fts WHERE content MATCH ?`, 'sushi',
+      `SELECT source_id FROM sources_fts WHERE content MATCH ?`,
+      'sushi',
     );
     expect(before).toEqual([{ source_id: 'src1' }]);
 
@@ -260,7 +279,8 @@ describe('image-kind rename migration (0004)', () => {
 
     // Existing FTS rows survive — INSERT … SELECT preserved the source ids.
     const after = await db.getAllAsync<{ source_id: string }>(
-      `SELECT source_id FROM sources_fts WHERE content MATCH ?`, 'sushi',
+      `SELECT source_id FROM sources_fts WHERE content MATCH ?`,
+      'sushi',
     );
     expect(after).toEqual([{ source_id: 'src1' }]);
 
@@ -268,10 +288,14 @@ describe('image-kind rename migration (0004)', () => {
     await db.runAsync(
       `INSERT INTO sources (id, kind, content_hash, origin, ocr_text, captured_at, owner_id, created_at, updated_at)
        VALUES (?, 'image', 'h2', 'share', 'ramen shop osaka', ?, 'o1', ?, ?)`,
-      'src2', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z',
+      'src2',
+      '2026-05-13T00:00:00Z',
+      '2026-05-13T00:00:00Z',
+      '2026-05-13T00:00:00Z',
     );
     const ramen = await db.getAllAsync<{ source_id: string }>(
-      `SELECT source_id FROM sources_fts WHERE content MATCH ?`, 'ramen',
+      `SELECT source_id FROM sources_fts WHERE content MATCH ?`,
+      'ramen',
     );
     expect(ramen).toEqual([{ source_id: 'src2' }]);
   });
@@ -282,22 +306,42 @@ describe('image-kind rename migration (0004)', () => {
     await db.runAsync(
       `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)`,
-      't1', 'Japan', 'o1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+      't1',
+      'Japan',
+      'o1',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
     );
     await db.runAsync(
       `INSERT INTO sources (id, kind, trip_id, content_hash, origin, captured_at, owner_id, created_at, updated_at)
        VALUES (?, 'screenshot', ?, 'h1', 'share', ?, 'o1', ?, ?)`,
-      'src1', 't1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+      'src1',
+      't1',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
     );
     await db.runAsync(
       `INSERT INTO places (id, trip_id, name, normalized_key, owner_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      'p1', 't1', 'Sushi Bar', 'sushi-bar', 'o1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+      'p1',
+      't1',
+      'Sushi Bar',
+      'sushi-bar',
+      'o1',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
     );
     await db.runAsync(
       `INSERT INTO place_sources (place_id, source_id, extracted_at, extraction_model, owner_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      'p1', 'src1', '2026-05-01T00:00:00Z', 'test', 'o1', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+      'p1',
+      'src1',
+      '2026-05-01T00:00:00Z',
+      'test',
+      'o1',
+      '2026-05-01T00:00:00Z',
+      '2026-05-01T00:00:00Z',
     );
 
     await runMigrations(db, migrations);
@@ -383,7 +427,9 @@ describe('schema shape — post-soft-delete-removal', () => {
                            enrichment_status, owner_id, created_at, updated_at)
        VALUES ('p1', NULL, 'Sushi Bar', 'Tokyo', 'sushi-bar|tokyo',
                'pending', ?, ?, ?)`,
-      ownerId, '2026-05-10T10:00:00Z', '2026-05-10T10:00:00Z',
+      ownerId,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
     );
     let row = await db.getFirstAsync<{ content: string }>(
       `SELECT content FROM places_fts WHERE place_id = 'p1'`,

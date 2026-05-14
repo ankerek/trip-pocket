@@ -10,10 +10,10 @@ Per the spec's Phase 0 requirement, I probed Instagram's embed surface from a lo
 
 **URLs probed:**
 
-| ID | Type | Source |
-|---|---|---|
+| ID            | Type                                              | Source                  |
+| ------------- | ------------------------------------------------- | ----------------------- |
 | `DP5p9sRjGoT` | Carousel (6 Mt Fuji spots, `@nataliaandkarolina`) | User-supplied, Oct 2025 |
-| `DSUuRC-EjTA` | Single image (`@triptojapan_`) | User-supplied, Dec 2025 |
+| `DSUuRC-EjTA` | Single image (`@triptojapan_`)                    | User-supplied, Dec 2025 |
 
 Two URLs is **less than the spec asked for (~15)**, but the result is decisive enough that scaling up is unnecessary at this stage — see "Why two was enough" below.
 
@@ -40,26 +40,26 @@ The same was true for plain `/embed/` (no `captioned` suffix). Tested across fiv
 
 Tested response for `DP5p9sRjGoT` (carousel):
 
-| Field | Value |
-|---|---|
-| HTTP status | `200 OK` |
-| Body size | 1.25 MB (full-page HTML, not just preview) |
-| `og:type` | `article` |
-| `og:title` | 1617 raw chars · *"Natalia & Karolina ... on Instagram: '[⤵️🇵🇱] 6 must visit Mt Fuji spots🗻 ...'"* |
-| `og:description` | 1620 raw chars / **1265 decoded chars** · contains the full caption including all 6 numbered place names, the Polish translation, hashtags, and trailing brand copy |
-| `og:image` | Direct `scontent-*.cdninstagram.com` JPEG URL, ~640×640. Includes `efg=...` query param whose base64-decoded value contains a post-type tag (`CAROUSEL_ITEM`, `CLIPS`, etc.) |
+| Field            | Value                                                                                                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP status      | `200 OK`                                                                                                                                                                     |
+| Body size        | 1.25 MB (full-page HTML, not just preview)                                                                                                                                   |
+| `og:type`        | `article`                                                                                                                                                                    |
+| `og:title`       | 1617 raw chars · _"Natalia & Karolina ... on Instagram: '[⤵️🇵🇱] 6 must visit Mt Fuji spots🗻 ...'"_                                                                          |
+| `og:description` | 1620 raw chars / **1265 decoded chars** · contains the full caption including all 6 numbered place names, the Polish translation, hashtags, and trailing brand copy          |
+| `og:image`       | Direct `scontent-*.cdninstagram.com` JPEG URL, ~640×640. Includes `efg=...` query param whose base64-decoded value contains a post-type tag (`CAROUSEL_ITEM`, `CLIPS`, etc.) |
 
 Tested response for `DSUuRC-EjTA` (single-image post): same pattern, 987 decoded chars of caption, direct cover image URL.
 
 **User-Agent matters.** Five UAs were tested against the canonical URL:
 
-| UA | Got og tags? | Body size | Notes |
-|---|---|---|---|
-| Safari Mac | ✅ | 1.25 MB | recommended |
-| iPhone Safari | ✅ | 282 KB | smaller payload, same og tags |
-| Facebook bot (`facebookexternalhit/1.1`) | ✅ | 1.25 MB | |
-| Twitter bot (`Twitterbot/1.0`) | ✅ | 868 KB | |
-| Chrome Mac | ❌ | 809 KB | served a different, JS-heavy bundle without og tags |
+| UA                                       | Got og tags? | Body size | Notes                                               |
+| ---------------------------------------- | ------------ | --------- | --------------------------------------------------- |
+| Safari Mac                               | ✅           | 1.25 MB   | recommended                                         |
+| iPhone Safari                            | ✅           | 282 KB    | smaller payload, same og tags                       |
+| Facebook bot (`facebookexternalhit/1.1`) | ✅           | 1.25 MB   |                                                     |
+| Twitter bot (`Twitterbot/1.0`)           | ✅           | 868 KB    |                                                     |
+| Chrome Mac                               | ❌           | 809 KB    | served a different, JS-heavy bundle without og tags |
 
 **Implication:** the worker must send a non-Chrome User-Agent. iPhone Safari has the smallest payload and is the cleanest pick.
 
@@ -72,6 +72,7 @@ For the Mt Fuji carousel, we'd extract slide 1's image, but slides 2-6 (the othe
 **However:** for the same Mt Fuji post, **all 6 place names are in the caption** (`og:description`), which extraction handles natively. List-style travel posts (the dominant use case) almost always enumerate places in the caption — that's the genre's convention. So the practical impact is smaller than "we lost 5/6 slides" suggests.
 
 **Where we'll still lose** vs. the original design:
+
 - Image-only carousels (e.g. "10 photos, 1 place per slide, no list in caption") — we get place #1 only.
 - Reels where the place name is overlaid on later video frames, not in the caption. (Note: the WebView playback still works for these — user can swipe through the embed iframe.)
 

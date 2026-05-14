@@ -19,17 +19,11 @@ export function classifyImportError(err: unknown): CaptureErrorKind {
   const obj = err as { code?: unknown; domain?: unknown; message?: unknown };
   const domain = typeof obj.domain === 'string' ? obj.domain : '';
   const code = typeof obj.code === 'number' ? obj.code : null;
-  if (
-    domain === 'NSCocoaErrorDomain' &&
-    code !== null &&
-    STORAGE_FULL_COCOA_CODES.has(code)
-  ) {
+  if (domain === 'NSCocoaErrorDomain' && code !== null && STORAGE_FULL_COCOA_CODES.has(code)) {
     return 'storage-full';
   }
 
-  const haystack = (
-    typeof obj.message === 'string' ? obj.message : String(err)
-  ).toLowerCase();
+  const haystack = (typeof obj.message === 'string' ? obj.message : String(err)).toLowerCase();
 
   for (const needle of STORAGE_FULL_SUBSTRINGS) {
     if (haystack.includes(needle)) return 'storage-full';

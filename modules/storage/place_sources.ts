@@ -29,10 +29,7 @@ export type LinkPlaceSourceInput = {
 // Idempotent: same (placeId, sourceId) pair attaches once. ON CONFLICT
 // DO NOTHING covers the "same source already attached to this place"
 // case the enrichment merge can produce.
-export async function linkPlaceSource(
-  db: Database,
-  input: LinkPlaceSourceInput,
-): Promise<void> {
+export async function linkPlaceSource(db: Database, input: LinkPlaceSourceInput): Promise<void> {
   const now = new Date().toISOString();
   await db.runAsync(
     `INSERT INTO place_sources (
@@ -69,8 +66,7 @@ type Row = {
   updated_at: string;
 };
 
-const ALL =
-  `place_id, source_id, extracted_at, raw_text, extracted_address,
+const ALL = `place_id, source_id, extracted_at, raw_text, extracted_address,
    confidence, extraction_model, owner_id, created_at, updated_at`;
 
 function rowToPlaceSource(r: Row): PlaceSource {
@@ -88,10 +84,7 @@ function rowToPlaceSource(r: Row): PlaceSource {
   };
 }
 
-export async function listSourcesForPlace(
-  db: Database,
-  placeId: string,
-): Promise<PlaceSource[]> {
+export async function listSourcesForPlace(db: Database, placeId: string): Promise<PlaceSource[]> {
   const rows = await db.getAllAsync<Row>(
     `SELECT ${ALL}
        FROM place_sources
@@ -102,10 +95,7 @@ export async function listSourcesForPlace(
   return rows.map(rowToPlaceSource);
 }
 
-export async function listPlacesForSource(
-  db: Database,
-  sourceId: string,
-): Promise<PlaceSource[]> {
+export async function listPlacesForSource(db: Database, sourceId: string): Promise<PlaceSource[]> {
   const rows = await db.getAllAsync<Row>(
     `SELECT ${ALL}
        FROM place_sources
@@ -138,18 +128,12 @@ export async function transferJunctions(
     winnerId,
     loserId,
   );
-  await db.runAsync(
-    `DELETE FROM place_sources WHERE place_id = ?`,
-    loserId,
-  );
+  await db.runAsync(`DELETE FROM place_sources WHERE place_id = ?`, loserId);
   notifyChange('place_sources');
   notifyChange('places');
 }
 
-export async function countLiveSourcesForPlace(
-  db: Database,
-  placeId: string,
-): Promise<number> {
+export async function countLiveSourcesForPlace(db: Database, placeId: string): Promise<number> {
   const row = await db.getFirstAsync<{ n: number }>(
     `SELECT COUNT(*) AS n FROM place_sources WHERE place_id = ?`,
     placeId,

@@ -1,8 +1,4 @@
-import {
-  buildMapUrl,
-  _resetDetectionForTests,
-  _setDetectionForTests,
-} from '@/lib/openInMaps';
+import { buildMapUrl, _resetDetectionForTests, _setDetectionForTests } from '@/lib/openInMaps';
 
 describe('buildMapUrl', () => {
   beforeEach(() => {
@@ -94,9 +90,7 @@ describe('buildMapUrl', () => {
         city: 'Tokyo',
         address: '1 Chome-24-23 Jiyugaoka',
       });
-      expect(url).toBe(
-        'comgooglemaps://?q=Kosoan%2C%201%20Chome-24-23%20Jiyugaoka',
-      );
+      expect(url).toBe('comgooglemaps://?q=Kosoan%2C%201%20Chome-24-23%20Jiyugaoka');
     });
   });
 

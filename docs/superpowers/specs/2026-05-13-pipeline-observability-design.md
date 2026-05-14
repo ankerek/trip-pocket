@@ -23,6 +23,7 @@ The product-analytics spec (`2026-05-12-telemetry-design.md`) handles a differen
 ## Scope
 
 **In scope:**
+
 - New module `modules/pipeline-log/` with a `startStage(stage, sourceId?)` API used by every pipeline stage.
 - New `pipeline_events` SQLite table (one migration), holding minimal per-stage outcome rows. No content.
 - Migration of the ~9 existing `pipelineStep` / `pipelineError` call sites in `modules/capture`, `modules/processing`, `modules/extraction`, `modules/enrichment` to the new API.
@@ -34,6 +35,7 @@ The product-analytics spec (`2026-05-12-telemetry-design.md`) handles a differen
 - Removal of `lib/observability/breadcrumbs.ts` once call sites are migrated.
 
 **Not in scope:**
+
 - Aggregate metrics, funnels, p95 dashboards — that's the PostHog/Sentry telemetry spec.
 - Cross-device shared pipeline history (would need a backend).
 - Persisting content alongside the events. Firehose is the only path for content, and it's local-Metro-console-only.
@@ -83,23 +85,23 @@ export function sweepPipelineEvents(): Promise<void>; // LRU trim, called from s
 
 The `Stage` handle holds the start timestamp and stage metadata. `done`/`failed` are idempotent — second call on the same handle is a no-op (so weird control flow that double-calls doesn't double-emit). Both methods are synchronous from the caller's perspective; the SQLite insert is fire-and-forget (errors are `console.warn`'d but never surface to the pipeline).
 
-**Retries are per-attempt, not per-logical-stage.** The retry loops in `processOne`/`processUrlFetch` (3-try budgets, today) call `startStage` once *per attempt*. A flaky OCR that succeeds on attempt 3 produces three `ocr` rows: two `failed` then one `done`, all sharing the same `source_id`. This is intentional — transient flakiness is exactly the kind of signal you want visible when debugging "this carousel sometimes works, sometimes doesn't." Multiple rows for the same `(source_id, stage)` pair are normal in the UI; the stream renders them in chronological order with their distinct durations and error summaries.
+**Retries are per-attempt, not per-logical-stage.** The retry loops in `processOne`/`processUrlFetch` (3-try budgets, today) call `startStage` once _per attempt_. A flaky OCR that succeeds on attempt 3 produces three `ocr` rows: two `failed` then one `done`, all sharing the same `source_id`. This is intentional — transient flakiness is exactly the kind of signal you want visible when debugging "this carousel sometimes works, sometimes doesn't." Multiple rows for the same `(source_id, stage)` pair are normal in the UI; the stream renders them in chronological order with their distinct durations and error summaries.
 
 ## Stages + call-site migration
 
 Stage list aligns with the existing `PipelineStage` union, with one addition (`image_download`) split out of `url_fetch`.
 
-| Stage | Where it lives | Why split |
-|---|---|---|
-| `share_import` | `modules/capture/importImage.ts` | unchanged |
-| `url_share_import` | `modules/capture/importUrl.ts` | unchanged |
-| `storage` | `importImage.ts` + `importUrl.ts` | unchanged |
-| `url_fetch` | `modules/processing/processing.ts` | now covers **only** the `POST /fetch-post` worker call |
-| `image_download` | `modules/processing/processing.ts` | new — covers downloading cover + slides for URL sources |
-| `ocr` | `modules/processing/processing.ts` | unchanged |
-| `extraction` | `modules/extraction/extraction.ts` | unchanged |
-| `enrichment` | `modules/enrichment/enrichment.ts` | unchanged |
-| `trip_assign` | TBD (current breadcrumb call site, will keep) | unchanged |
+| Stage              | Where it lives                                | Why split                                               |
+| ------------------ | --------------------------------------------- | ------------------------------------------------------- |
+| `share_import`     | `modules/capture/importImage.ts`              | unchanged                                               |
+| `url_share_import` | `modules/capture/importUrl.ts`                | unchanged                                               |
+| `storage`          | `importImage.ts` + `importUrl.ts`             | unchanged                                               |
+| `url_fetch`        | `modules/processing/processing.ts`            | now covers **only** the `POST /fetch-post` worker call  |
+| `image_download`   | `modules/processing/processing.ts`            | new — covers downloading cover + slides for URL sources |
+| `ocr`              | `modules/processing/processing.ts`            | unchanged                                               |
+| `extraction`       | `modules/extraction/extraction.ts`            | unchanged                                               |
+| `enrichment`       | `modules/enrichment/enrichment.ts`            | unchanged                                               |
+| `trip_assign`      | TBD (current breadcrumb call site, will keep) | unchanged                                               |
 
 The `url_fetch` split matters because for carousels the worker call and the multi-image download phase have very different failure modes. Splitting them keeps the in-app stream legible without parsing error messages.
 
@@ -134,16 +136,16 @@ The `extra` object is typed loosely (`Record<string, unknown>`). Persistence dro
 
 **Suggested `extra` per stage** (firehose-only; not persisted):
 
-| Stage | `extra` props |
-|---|---|
-| `share_import` / `url_share_import` | `kind`, `platform?`, `urlHost?` |
-| `storage` | `sourceId`, `tripId?` |
-| `url_fetch` | `httpStatus`, `imageUrlsCount`, `captionLength`, `author?`, `caption`, and the `_debug` echo from the worker (route, ogOutcome, apifyOutcome, cacheHit) — see Worker debug echo |
-| `image_download` | `requestedCount`, `downloadedCount`, `coverPath` |
-| `ocr` | `ocrLength`, `ocrText` |
-| `extraction` | `placesCount`, `placesJson`, `model` |
-| `enrichment` | `hadPhoto`, `hadAddress`, `hadRating` |
-| `trip_assign` | `tripId`, `method` |
+| Stage                               | `extra` props                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `share_import` / `url_share_import` | `kind`, `platform?`, `urlHost?`                                                                                                                                                 |
+| `storage`                           | `sourceId`, `tripId?`                                                                                                                                                           |
+| `url_fetch`                         | `httpStatus`, `imageUrlsCount`, `captionLength`, `author?`, `caption`, and the `_debug` echo from the worker (route, ogOutcome, apifyOutcome, cacheHit) — see Worker debug echo |
+| `image_download`                    | `requestedCount`, `downloadedCount`, `coverPath`                                                                                                                                |
+| `ocr`                               | `ocrLength`, `ocrText`                                                                                                                                                          |
+| `extraction`                        | `placesCount`, `placesJson`, `model`                                                                                                                                            |
+| `enrichment`                        | `hadPhoto`, `hadAddress`, `hadRating`                                                                                                                                           |
+| `trip_assign`                       | `tripId`, `method`                                                                                                                                                              |
 
 Removal: once all call sites are migrated, `lib/observability/breadcrumbs.ts` is deleted along with its re-exports from `lib/observability/index.ts`. The `PipelineStage` type moves to `modules/pipeline-log/`.
 
@@ -171,14 +173,14 @@ Success response shape becomes:
 
 **Field values** (all closed enums; no free text, no content). The enums must match the worker's existing internal `UpstreamError.code` and `ApifyError.code` taxonomies — adding a new branch in the worker requires expanding the enum and bumping the response in lock-step.
 
-| Field | Values |
-|---|---|
-| `route` | `og_only` · `og_only_apify_disabled` · `og_then_apify_carousel` · `og_then_apify_unknown_efg` · `og_failed_apify_fallback` · `tiktok_og` · `tiktok_oembed` |
-| `ogOutcome` | `ok` · `empty` · `not_found` · `private` · `unsupported_url` · `rate_limited` · `timeout` · `network` · `upstream_5xx` · `not_called` |
+| Field          | Values                                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `route`        | `og_only` · `og_only_apify_disabled` · `og_then_apify_carousel` · `og_then_apify_unknown_efg` · `og_failed_apify_fallback` · `tiktok_og` · `tiktok_oembed`                |
+| `ogOutcome`    | `ok` · `empty` · `not_found` · `private` · `unsupported_url` · `rate_limited` · `timeout` · `network` · `upstream_5xx` · `not_called`                                     |
 | `apifyOutcome` | `not_called` · `not_configured` · `ok` · `empty` · `carousel_no_children` · `auth` · `actor_not_found` · `rate_limited` · `timeout` · `network` · `upstream` · `non_json` |
-| `cacheHit` | `true` · `false` |
+| `cacheHit`     | `true` · `false`                                                                                                                                                          |
 
-The `og_only_apify_disabled` route is critical: it's the soft-degrade case where Apify *should* have fired (carousel / unknown efg / og-failed) but `APIFY_TOKEN` was unset, so the worker silently returned the og: result instead. Without a dedicated route value, a carousel that silently dropped slides 2..N would look identical to a real single-image og:-only fetch — exactly the dispatch decision the `_debug` echo is meant to surface.
+The `og_only_apify_disabled` route is critical: it's the soft-degrade case where Apify _should_ have fired (carousel / unknown efg / og-failed) but `APIFY_TOKEN` was unset, so the worker silently returned the og: result instead. Without a dedicated route value, a carousel that silently dropped slides 2..N would look identical to a real single-image og:-only fetch — exactly the dispatch decision the `_debug` echo is meant to surface.
 
 **Privacy posture unchanged.** All values are closed enums describing routing decisions — no URLs, no caption text, no actor responses. The worker's existing privacy rule (log status, latency, error class only — never URL or caption) extends naturally: `_debug` carries the same shapes Workers logs already capture, just promoted into the response.
 
@@ -213,6 +215,7 @@ CREATE INDEX idx_pipeline_events_occurred ON pipeline_events(occurred_at DESC);
 ```
 
 **Field rules:**
+
 - `source_id` is **nullable** but only as a fallback. The standard pattern is: the main-app ingest path **pre-allocates the source UUID** at the start of `share_import` / `url_share_import` and threads the same UUID through to `storage` and every downstream stage. All rows for the same import then share one `source_id`, even if `storage` itself fails — those orphans group correctly in the Diagnostics stream under the pre-allocated id (the source-detail header shows "(missing)" if no `sources` row materializes). `source_id` only stays `NULL` for pre-app activity that can't get an id yet (e.g. raw share-extension instrumentation if it's ever added — currently out of scope).
 - `occurred_at` is the **end** of the stage. Start time is computable as `occurred_at − duration_ms` if ever needed; storing it separately wastes space at no benefit.
 - `error_summary` carries **only the error class** plus, if present, a known sub-class's `code` property — never the raw `.message`. Format:
@@ -221,6 +224,7 @@ CREATE INDEX idx_pipeline_events_occurred ON pipeline_events(occurred_at DESC);
   - Truncated at 80 chars structurally so this column can never grow unbounded.
 
   Raw `err.message` is deliberately excluded because upstream library messages can carry URLs, file paths, captions, or model output. Sub-class codes are closed vocabularies defined in this codebase, so persisting them is safe. The full error (including raw message) still flows to Sentry / `console.error` independently — we just don't persist it on-device.
+
 - No content fields (`ocr_text`, `caption`, `places_json`, etc.). No outcome counts (`places_count`, `image_urls_count`, etc.). The in-app stream answers "what stages ran and which failed"; counts are firehose-only.
 
 **Retention:** LRU sweep keeping the most recent 1000 rows globally. At ~9 events per source × heaviest case 100 sources/week ≈ 900 events/week, the cap rotates weekly — long enough to investigate yesterday's bug, short enough to keep the table trivial (estimated ~50 KB at the cap).
@@ -250,6 +254,7 @@ Dev-only verbose logging gated by two conditions:
 **Settings UI:** new row under `Settings → Diagnostics` (next to the existing Sentry test buttons), a `<Switch>` labeled "Pipeline firehose" with sub-copy "Verbose pipeline logs in Metro (dev builds only)". When `!__DEV__` the row is hidden entirely.
 
 Toggle behavior:
+
 - Updates the in-memory `firehoseEnabled` flag **synchronously**, so the next stage emission honours the new state immediately — no app relaunch.
 - Schedules a write of `meta.pipeline_firehose = '1'|'0'` for persistence across launches. The returned `Promise` resolves when the SQLite write completes, but the UI doesn't need to await it before showing the toggle as flipped.
 
@@ -262,6 +267,7 @@ Toggle behavior:
 ```
 
 The formatter:
+
 - Quotes string values (escaping internal quotes).
 - Truncates string values at 500 characters with a trailing `…` so a giant OCR blob doesn't flood Metro.
 - Coerces numbers and booleans verbatim.
@@ -344,6 +350,7 @@ Each phase is independently shippable. Phase 1 lands with no behaviour change. P
 - `sweepPipelineEvents` removes rows past the 1000-row cap and keeps the most recent rows intact.
 
 Integration assertions in `modules/processing/__tests__/processing.test.ts`:
+
 - Carousel flow emits the expected sequence (`url_fetch` done → `image_download` done → N × `ocr` done).
 - Slide-N download failure emits an `image_download` done with `downloadedCount < requestedCount` (firehose-only props) and does not emit a `failed` event — partial slide loss is tolerated per the existing spec.
 

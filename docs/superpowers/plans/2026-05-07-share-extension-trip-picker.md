@@ -14,16 +14,16 @@
 
 ## File map
 
-| File | Status | Responsibility |
-|---|---|---|
-| `modules/capture/ingest.ts` | modify | Skip stale `suggested_trip_id` (soft-deleted or missing) — fall back to Inbox |
-| `modules/capture/__tests__/ingest.test.ts` | modify | New test: stale trip falls back to Inbox |
-| `native/ShareExtension/PendingImportWriter.swift` | modify | `write(imageAt:suggestedTripId:)` — bind id or NULL |
-| `native/ShareExtension/TripReader.swift` | create | Read-only `[Trip]` from App Group DB |
-| `native/ShareExtension/TripPickerView.swift` | create | SwiftUI list — "Inbox" + alphabetical trips |
-| `native/ShareExtension/ShareViewController.swift` | modify | Host `TripPickerView`, plumb tripId to writer |
-| `native/ShareExtension/SaveButtonView.swift` | delete | Replaced by `TripPickerView` |
-| `plugins/with-share-extension.js` | modify | Update `PBXSourcesBuildPhase` source list |
+| File                                              | Status | Responsibility                                                                |
+| ------------------------------------------------- | ------ | ----------------------------------------------------------------------------- |
+| `modules/capture/ingest.ts`                       | modify | Skip stale `suggested_trip_id` (soft-deleted or missing) — fall back to Inbox |
+| `modules/capture/__tests__/ingest.test.ts`        | modify | New test: stale trip falls back to Inbox                                      |
+| `native/ShareExtension/PendingImportWriter.swift` | modify | `write(imageAt:suggestedTripId:)` — bind id or NULL                           |
+| `native/ShareExtension/TripReader.swift`          | create | Read-only `[Trip]` from App Group DB                                          |
+| `native/ShareExtension/TripPickerView.swift`      | create | SwiftUI list — "Inbox" + alphabetical trips                                   |
+| `native/ShareExtension/ShareViewController.swift` | modify | Host `TripPickerView`, plumb tripId to writer                                 |
+| `native/ShareExtension/SaveButtonView.swift`      | delete | Replaced by `TripPickerView`                                                  |
+| `plugins/with-share-extension.js`                 | modify | Update `PBXSourcesBuildPhase` source list                                     |
 
 ---
 
@@ -32,6 +32,7 @@
 **Why first:** The guard is a safety net for the new code path, fully testable in Jest, and independent of any Swift work. Land it before any user can hit the picker.
 
 **Files:**
+
 - Modify: `modules/capture/ingest.ts`
 - Test: `modules/capture/__tests__/ingest.test.ts`
 
@@ -173,6 +174,7 @@ trips.deleted_at at drain time and fall back to trip_id = NULL."
 ## Task 2: Add `TripReader.swift`
 
 **Files:**
+
 - Create: `native/ShareExtension/TripReader.swift`
 
 **Read-only contract:** opens with `SQLITE_OPEN_READONLY` so the file isn't created when missing; returns `[]` on any error path. Does not throw.
@@ -263,9 +265,11 @@ so the picker degrades gracefully to Inbox-only."
 ## Task 3: Add `TripPickerView.swift`
 
 **Files:**
+
 - Create: `native/ShareExtension/TripPickerView.swift`
 
 **UX contract:**
+
 - One section titled "Save to" with an "Inbox" row at the top.
 - A second section listing trips alphabetically, only when there are trips.
 - Cancel button in the navigation bar (leading edge) calls `onCancel`.
@@ -343,6 +347,7 @@ git commit -m "feat(share): TripPickerView — Inbox + alphabetical trips list"
 **Plugin idempotence caveat:** `plugins/with-share-extension.js` early-returns when the share-extension target already exists (`if (project.pbxTargetByName(TARGET_NAME)) return cfg;`). That means an in-place edit of the source-list array is a no-op against an already-generated `ios/` project — the change only takes effect when the iOS project is regenerated from scratch. The plan handles this by running `expo prebuild --platform ios --clean` in Task 5 before the EAS build. Future plugin edits will need the same workflow until the plugin is rewritten to reconcile existing targets — out of scope for this plan.
 
 **Files:**
+
 - Modify: `native/ShareExtension/PendingImportWriter.swift`
 - Modify: `native/ShareExtension/ShareViewController.swift`
 - Delete: `native/ShareExtension/SaveButtonView.swift`

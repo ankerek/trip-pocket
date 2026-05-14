@@ -32,7 +32,13 @@ describe('extract-proxy schema', () => {
     it('accepts a valid places array', () => {
       const result = extractionResponseSchema.safeParse({
         places: [
-          { name: 'Maru Tonkatsu', city: 'Tokyo', address: '', category: 'food', country_code: 'JP' },
+          {
+            name: 'Maru Tonkatsu',
+            city: 'Tokyo',
+            address: '',
+            category: 'food',
+            country_code: 'JP',
+          },
           {
             name: 'Tsukiji Outer Market',
             city: 'Tokyo',
@@ -66,14 +72,18 @@ describe('extract-proxy schema', () => {
 
     it('accepts empty city string (LLM signaling truly ambiguous location)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Mystery Place', city: '', address: '', category: 'place', country_code: '' }],
+        places: [
+          { name: 'Mystery Place', city: '', address: '', category: 'place', country_code: '' },
+        ],
       });
       expect(result.success).toBe(true);
     });
 
     it('accepts empty address string (LLM signaling no address in OCR)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' }],
+        places: [
+          { name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' },
+        ],
       });
       expect(result.success).toBe(true);
     });
@@ -87,7 +97,9 @@ describe('extract-proxy schema', () => {
 
     it('accepts a valid uppercase ISO-2 country_code', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' }],
+        places: [
+          { name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: 'FR' },
+        ],
       });
       expect(result.success).toBe(true);
       expect(result.data?.places[0]?.country_code).toBe('FR');
@@ -103,7 +115,9 @@ describe('extract-proxy schema', () => {
 
     it('coerces lowercase country_code to uppercase (keeps the place; never splits grouping buckets)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'jp' }],
+        places: [
+          { name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'jp' },
+        ],
       });
       expect(result.success).toBe(true);
       expect(result.data?.places[0]?.country_code).toBe('JP');
@@ -111,7 +125,9 @@ describe('extract-proxy schema', () => {
 
     it('coerces 3-letter country code to empty (keeps the place, drops the bad value)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'JPN' }],
+        places: [
+          { name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'JPN' },
+        ],
       });
       expect(result.success).toBe(true);
       expect(result.data?.places[0]?.country_code).toBe('');
@@ -127,7 +143,9 @@ describe('extract-proxy schema', () => {
 
     it('coerces full country name to empty (keeps the place)', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'Japan' }],
+        places: [
+          { name: 'Cafe', city: 'Tokyo', address: '', category: 'food', country_code: 'Japan' },
+        ],
       });
       expect(result.success).toBe(true);
       expect(result.data?.places[0]?.country_code).toBe('');
@@ -143,7 +161,9 @@ describe('extract-proxy schema', () => {
 
     it('trims surrounding whitespace before validating', () => {
       const result = extractionResponseSchema.safeParse({
-        places: [{ name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: '  fr  ' }],
+        places: [
+          { name: 'Cafe', city: 'Paris', address: '', category: 'food', country_code: '  fr  ' },
+        ],
       });
       expect(result.success).toBe(true);
       expect(result.data?.places[0]?.country_code).toBe('FR');

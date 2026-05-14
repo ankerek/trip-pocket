@@ -52,7 +52,7 @@ export function OnboardingScaffold({
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View className="flex-1 bg-bg" style={{ paddingTop: insets.top }}>
+      <View className="bg-bg flex-1" style={{ paddingTop: insets.top }}>
         <View
           className="h-11 flex-row items-center justify-between px-4"
           style={{ marginBottom: 4 }}
@@ -78,30 +78,25 @@ export function OnboardingScaffold({
         <Body {...bodyProps} className={scroll ? undefined : 'flex-1 px-6 pt-2 pb-6'}>
           {headline ? (
             <Text
-              className="mt-4 text-text"
+              className="text-text mt-4"
               style={{ fontSize: 28, fontWeight: '700', letterSpacing: -0.4, lineHeight: 34 }}
             >
               {headline}
             </Text>
           ) : null}
           {sub ? (
-            <Text
-              className="mt-2 text-text-muted"
-              style={{ fontSize: 15, lineHeight: 22 }}
-            >
+            <Text className="text-text-muted mt-2" style={{ fontSize: 15, lineHeight: 22 }}>
               {sub}
             </Text>
           ) : null}
-          <View
-            className={`${headline || sub ? 'mt-6' : 'mt-2'}${scroll ? '' : ' flex-1'}`}
-          >
+          <View className={`${headline || sub ? 'mt-6' : 'mt-2'}${scroll ? '' : 'flex-1'}`}>
             {children}
           </View>
         </Body>
 
         {footer ? (
           <View
-            className="border-t border-hairline bg-bg px-6 pt-3"
+            className="border-hairline bg-bg border-t px-6 pt-3"
             style={{ paddingBottom: Math.max(16, insets.bottom) }}
           >
             {footer}

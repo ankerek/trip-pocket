@@ -90,7 +90,7 @@ export default function Welcome() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <View className="flex-1 bg-bg">
+      <View className="bg-bg flex-1">
         <View
           className="flex-1 items-center"
           style={{ paddingTop: insets.top + 24, paddingHorizontal: 24 }}
@@ -104,7 +104,7 @@ export default function Welcome() {
               accessibilityIgnoresInvertColors
             />
             <Text
-              className="ml-2 text-text"
+              className="text-text ml-2"
               style={{ fontSize: 17, fontWeight: '700', letterSpacing: -0.2 }}
             >
               Trip Pocket
@@ -128,24 +128,28 @@ export default function Welcome() {
 
           {/* Headline */}
           <Text
-            className="text-center text-text"
-            style={{ marginTop: 56, fontSize: 32, fontWeight: '700', letterSpacing: -0.5, lineHeight: 38 }}
+            className="text-text text-center"
+            style={{
+              marginTop: 56,
+              fontSize: 32,
+              fontWeight: '700',
+              letterSpacing: -0.5,
+              lineHeight: 38,
+            }}
           >
             Save travel inspiration{'\n'}before it gets lost.
           </Text>
           <Text
-            className="mt-3 text-center text-text-muted"
+            className="text-text-muted mt-3 text-center"
             style={{ fontSize: 16, lineHeight: 22, maxWidth: 320 }}
           >
-            Take a screenshot or share an Instagram or TikTok post. Our AI turns it into a place on a map you can actually use.
+            Take a screenshot or share an Instagram or TikTok post. Our AI turns it into a place on
+            a map you can actually use.
           </Text>
         </View>
 
         {/* CTA */}
-        <View
-          className="px-6"
-          style={{ paddingBottom: Math.max(20, insets.bottom + 8) }}
-        >
+        <View className="px-6" style={{ paddingBottom: Math.max(20, insets.bottom + 8) }}>
           <Pressable
             onPress={() => {
               void Haptics.selectionAsync();
@@ -156,7 +160,9 @@ export default function Welcome() {
             className="items-center justify-center rounded-2xl"
             style={{ height: 54, backgroundColor: colors.accent }}
           >
-            <Text style={{ fontSize: 17, fontWeight: '700', color: '#ffffff', letterSpacing: -0.2 }}>
+            <Text
+              style={{ fontSize: 17, fontWeight: '700', color: '#ffffff', letterSpacing: -0.2 }}
+            >
               Get started
             </Text>
           </Pressable>
@@ -166,13 +172,7 @@ export default function Welcome() {
   );
 }
 
-function FannedTileCard({
-  tile,
-  colors,
-}: {
-  tile: FannedTile;
-  colors: ThemeColors;
-}) {
+function FannedTileCard({ tile, colors }: { tile: FannedTile; colors: ThemeColors }) {
   const reducedMotion = useReducedMotion();
   // 0 → 1 drives the drop-in: opacity 0→1, translateY -180→0, scale 0.6→1.
   const progress = useSharedValue(reducedMotion ? 1 : 0);
@@ -194,10 +194,7 @@ function FannedTileCard({
 
   const outerStyle = useAnimatedStyle(() => ({
     opacity: progress.value,
-    transform: [
-      { translateY: -180 * (1 - progress.value) },
-      { scale: 0.6 + 0.4 * progress.value },
-    ],
+    transform: [{ translateY: -180 * (1 - progress.value) }, { scale: 0.6 + 0.4 * progress.value }],
   }));
 
   return (

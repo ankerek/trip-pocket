@@ -9,16 +9,16 @@ Spec: [`docs/superpowers/specs/2026-05-08-ai-extraction-design.md`](../../docs/s
 `POST /extract`
 
 Request:
+
 ```json
 { "ocr_text": "Maru Tonkatsu, Shibuya — best pork cutlet in Tokyo..." }
 ```
 
 Response (200):
+
 ```json
 {
-  "places": [
-    { "name": "Maru Tonkatsu", "city": "Tokyo", "category": "food" }
-  ],
+  "places": [{ "name": "Maru Tonkatsu", "city": "Tokyo", "category": "food" }],
   "model": "gemini-2.5-flash-lite"
 }
 ```
@@ -28,6 +28,7 @@ The client treats `5xx` as retryable, `4xx` as a permanent failure, and `429` as
 ## Privacy posture
 
 The Worker:
+
 - **Never** logs the OCR text.
 - **Never** logs the Gemini response body.
 - **Never** persists request bodies.
