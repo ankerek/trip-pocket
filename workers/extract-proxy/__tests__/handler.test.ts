@@ -1,6 +1,17 @@
 import { handleExtract } from '../src/index';
 import type { Env } from '../src/index';
 
+const VALID_ID = '$RCAnonymousID:0123456789abcdef0123456789abcdef';
+
+const RC_ACTIVE = new Response(
+  JSON.stringify({
+    subscriber: {
+      entitlements: { pro: { expires_date: new Date(Date.now() + 60_000).toISOString() } },
+    },
+  }),
+  { status: 200, headers: { 'content-type': 'application/json' } },
+);
+
 // Minimal stub of the Cloudflare Rate Limit binding.
 function rateLimit(allowed = true) {
   return {
@@ -42,6 +53,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     AI_GATEWAY_NAME: 'default',
     CF_AIG_TOKEN: 'test-aig-token',
     RATE_LIMIT: rateLimit(true) as unknown as Env['RATE_LIMIT'],
+    RC_REST_API_KEY: 'rc-key',
     ...overrides,
   };
 }
@@ -49,9 +61,25 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 function postJson(body: unknown): Request {
   return new Request('https://proxy.example.com/extract', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'CF-Connecting-IP': '1.2.3.4' },
+    headers: {
+      'content-type': 'application/json',
+      'CF-Connecting-IP': '1.2.3.4',
+      'X-RC-User-Id': VALID_ID,
+    },
     body: JSON.stringify(body),
   });
+}
+
+// Wraps a fetch implementation so that RC subscriber calls are always resolved
+// with an active subscription, passing other URLs through to `inner`.
+function withRcFetch(inner: typeof fetch): typeof fetch {
+  return jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.startsWith('https://api.revenuecat.com/v1/subscribers/')) {
+      return RC_ACTIVE.clone();
+    }
+    return inner(input, init);
+  }) as unknown as typeof fetch;
 }
 
 describe('handleExtract', () => {
@@ -59,6 +87,28 @@ describe('handleExtract', () => {
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+
+    // Install caches.default polyfill (required by requireEntitlement).
+    const store = new Map<string, Response>();
+    // @ts-expect-error — test polyfill
+    globalThis.caches = {
+      default: {
+        async match(key: Request) {
+          const k = key.url;
+          const r = store.get(k);
+          return r ? r.clone() : undefined;
+        },
+        async put(key: Request, value: Response) {
+          store.set(key.url, value.clone());
+        },
+      },
+    };
+
+    // Default fetch mock: handles RC lookup; throws for unexpected Gemini calls
+    // (individual tests override this for Gemini).
+    globalThis.fetch = withRcFetch(async (input) => {
+      throw new Error(`unexpected fetch in test: ${String(input)}`);
+    });
   });
 
   afterEach(() => {
@@ -74,7 +124,7 @@ describe('handleExtract', () => {
   it('returns 400 when content-type is not application/json', async () => {
     const req = new Request('https://proxy.example.com/extract', {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
+      headers: { 'content-type': 'text/plain', 'X-RC-User-Id': VALID_ID },
       body: 'hi',
     });
     const res = await handleExtract(req, makeEnv());
@@ -84,7 +134,7 @@ describe('handleExtract', () => {
   it('returns 400 when body is not parseable JSON', async () => {
     const req = new Request('https://proxy.example.com/extract', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'X-RC-User-Id': VALID_ID },
       body: 'not json',
     });
     const res = await handleExtract(req, makeEnv());
@@ -108,12 +158,12 @@ describe('handleExtract', () => {
   });
 
   it('returns 200 with parsed places when Gemini succeeds', async () => {
-    globalThis.fetch = jest.fn(async () =>
+    globalThis.fetch = withRcFetch(jest.fn(async () =>
       geminiOkResponse([
         { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
         { name: 'Tsukiji Market', city: 'Tokyo', category: 'place' },
       ]),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
 
     const res = await handleExtract(
       postJson({ ocr_text: 'Maru Tonkatsu in Shibuya. Visit Tsukiji.' }),
@@ -126,7 +176,7 @@ describe('handleExtract', () => {
   });
 
   it('returns 200 with empty places when Gemini classifies as noise', async () => {
-    globalThis.fetch = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
+    globalThis.fetch = withRcFetch(jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch);
     const res = await handleExtract(postJson({ ocr_text: 'just a meme' }), makeEnv());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { places: unknown[] };
@@ -134,7 +184,7 @@ describe('handleExtract', () => {
   });
 
   it('returns 502 when Gemini returns malformed JSON in candidates[0]', async () => {
-    globalThis.fetch = jest.fn(
+    globalThis.fetch = withRcFetch(jest.fn(
       async () =>
         new Response(
           JSON.stringify({
@@ -142,25 +192,25 @@ describe('handleExtract', () => {
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         ),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(502);
   });
 
   it('returns 502 when Gemini response fails Zod validation', async () => {
-    globalThis.fetch = jest.fn(async () =>
+    globalThis.fetch = withRcFetch(jest.fn(async () =>
       geminiOkResponse([{ name: 'X', city: 'Y', category: 'unknown-cat' as 'food' }]),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(502);
   });
 
   it('coerces lowercase country_code to uppercase (keeps the place rather than failing the batch)', async () => {
-    globalThis.fetch = jest.fn(async () =>
+    globalThis.fetch = withRcFetch(jest.fn(async () =>
       geminiOkResponse([{ name: 'X', city: 'Y', category: 'food', country_code: 'jp' }]),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(200);
@@ -169,7 +219,7 @@ describe('handleExtract', () => {
   });
 
   it('coerces missing country_code to empty (keeps the place — model omission is non-fatal)', async () => {
-    globalThis.fetch = jest.fn(
+    globalThis.fetch = withRcFetch(jest.fn(
       async () =>
         new Response(
           JSON.stringify({
@@ -189,7 +239,7 @@ describe('handleExtract', () => {
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         ),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(200);
@@ -198,12 +248,12 @@ describe('handleExtract', () => {
   });
 
   it('keeps good places when one place in the batch has a bad country_code (per-place coercion)', async () => {
-    globalThis.fetch = jest.fn(async () =>
+    globalThis.fetch = withRcFetch(jest.fn(async () =>
       geminiOkResponse([
         { name: 'Good', city: 'Tokyo', category: 'food', country_code: 'JP' },
         { name: 'Bad', city: 'Tokyo', category: 'food', country_code: 'JPN' },
       ]),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
 
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(200);
@@ -214,21 +264,21 @@ describe('handleExtract', () => {
   });
 
   it('returns 502 when Gemini upstream returns 5xx', async () => {
-    globalThis.fetch = jest.fn(
+    globalThis.fetch = withRcFetch(jest.fn(
       async () => new Response('upstream burning', { status: 500 }),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(502);
   });
 
   it('passes upstream Retry-After through on 429', async () => {
-    globalThis.fetch = jest.fn(
+    globalThis.fetch = withRcFetch(jest.fn(
       async () =>
         new Response('rate limited upstream', {
           status: 429,
           headers: { 'retry-after': '42' },
         }),
-    ) as unknown as typeof fetch;
+    ) as unknown as typeof fetch);
     const res = await handleExtract(postJson({ ocr_text: 'hi' }), makeEnv());
     expect(res.status).toBe(429);
     expect(res.headers.get('retry-after')).toBe('42');
@@ -241,7 +291,7 @@ describe('handleExtract', () => {
   });
 
   it('does not echo OCR text in any response body', async () => {
-    globalThis.fetch = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
+    globalThis.fetch = withRcFetch(jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch);
     const ocrText = 'This is private OCR text 12345';
     const res = await handleExtract(postJson({ ocr_text: ocrText }), makeEnv());
     const text = await res.text();
@@ -251,7 +301,7 @@ describe('handleExtract', () => {
   it('rate-limit binding is keyed by CF-Connecting-IP', async () => {
     const limiter = rateLimit(true);
     const env = makeEnv({ RATE_LIMIT: limiter as unknown as Env['RATE_LIMIT'] });
-    globalThis.fetch = jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch;
+    globalThis.fetch = withRcFetch(jest.fn(async () => geminiOkResponse([])) as unknown as typeof fetch);
     await handleExtract(postJson({ ocr_text: 'hi' }), env);
     expect(limiter.limit).toHaveBeenCalledWith({ key: '1.2.3.4' });
   });
@@ -261,7 +311,7 @@ describe('handleExtract', () => {
       const fetchSpy = jest.fn(async () =>
         geminiOkResponse([]),
       ) as unknown as typeof fetch;
-      globalThis.fetch = fetchSpy;
+      globalThis.fetch = withRcFetch(fetchSpy);
 
       const env = makeEnv({
         CF_ACCOUNT_ID: 'acct-abc123',
@@ -269,6 +319,7 @@ describe('handleExtract', () => {
       });
       await handleExtract(postJson({ ocr_text: 'hello' }), env);
 
+      // fetchSpy receives only non-RC calls (RC is intercepted by withRcFetch).
       const url = (fetchSpy as unknown as jest.Mock).mock.calls[0][0] as string;
       expect(url).toContain('https://gateway.ai.cloudflare.com/v1/acct-abc123/trip-pocket/google-ai-studio/');
       expect(url).toContain('models/gemini-2.5-flash-lite:generateContent');
@@ -278,11 +329,12 @@ describe('handleExtract', () => {
       const fetchSpy = jest.fn(async () =>
         geminiOkResponse([]),
       ) as unknown as typeof fetch;
-      globalThis.fetch = fetchSpy;
+      globalThis.fetch = withRcFetch(fetchSpy);
 
       const env = makeEnv({ CF_AIG_TOKEN: 'tok-xyz' });
       await handleExtract(postJson({ ocr_text: 'hello' }), env);
 
+      // fetchSpy receives only non-RC calls (RC is intercepted by withRcFetch).
       const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
       const headers = new Headers(init.headers);
       expect(headers.get('cf-aig-authorization')).toBe('Bearer tok-xyz');
@@ -292,11 +344,12 @@ describe('handleExtract', () => {
       const fetchSpy = jest.fn(async () =>
         geminiOkResponse([]),
       ) as unknown as typeof fetch;
-      globalThis.fetch = fetchSpy;
+      globalThis.fetch = withRcFetch(fetchSpy);
 
       const env = makeEnv({ GEMINI_API_KEY: 'gemini-secret' });
       await handleExtract(postJson({ ocr_text: 'hello' }), env);
 
+      // fetchSpy receives only non-RC calls (RC is intercepted by withRcFetch).
       const url = (fetchSpy as unknown as jest.Mock).mock.calls[0][0] as string;
       expect(url).toContain('?key=gemini-secret');
     });
@@ -318,5 +371,17 @@ describe('handleExtract', () => {
       const res = await handleExtract(postJson({ ocr_text: 'hello' }), env);
       expect(res.status).toBe(500);
     });
+  });
+
+  test('returns 401 entitlement-required when X-RC-User-Id header is missing', async () => {
+    const env = makeEnv();
+    const req = new Request('https://proxy.example.com/extract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ocr_text: 'some text' }),
+    });
+    const res = await handleExtract(req, env);
+    expect(res.status).toBe(401);
+    expect(await res.clone().json()).toEqual({ error: 'missing-user-id' });
   });
 });

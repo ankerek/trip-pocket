@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Env } from './index';
 import { GEMINI_MODEL } from './prompt';
+import { requireEntitlement } from './entitlement';
 
 // Request body. The OCR caption is required: the worker is stateless, so
 // the Gemini blurb step can only ground the narrative in OCR text that
@@ -96,6 +97,9 @@ function errorResponse(error: string, status: number, extra: Record<string, stri
 
 export async function handleEnrich(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return errorResponse('method-not-allowed', 405);
+
+  const gate = await requireEntitlement(request, env);
+  if (!gate.ok) return gate.response;
 
   if (!env.GOOGLE_PLACES_API_KEY) {
     console.error('extract-proxy/enrich: GOOGLE_PLACES_API_KEY missing');

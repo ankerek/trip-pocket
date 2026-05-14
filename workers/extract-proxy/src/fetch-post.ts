@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Env } from './index';
 import { ApifyError, fetchInstagramViaApify } from './apify';
+import { requireEntitlement } from './entitlement';
 
 // Designed around the Phase 0 spike findings (docs/superpowers/specs/
 // 2026-05-12-url-share-spike-results.md): IG's /embed/ surface moved to
@@ -105,6 +106,9 @@ function errorResponse(error: string, status: number, extra: Record<string, stri
 
 export async function handleFetchPost(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return errorResponse('method-not-allowed', 405);
+
+  const gate = await requireEntitlement(request, env);
+  if (!gate.ok) return gate.response;
 
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.toLowerCase().includes('application/json')) {

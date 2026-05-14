@@ -7,6 +7,7 @@ import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
 import { handleEnrich } from './enrich';
 import { handleFetchPost } from './fetch-post';
 import { handlePhoto } from './photo';
+import { requireEntitlement } from './entitlement';
 
 export interface RateLimitBinding {
   limit(args: { key: string }): Promise<{ success: boolean }>;
@@ -46,6 +47,9 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
   if (request.method !== 'POST') {
     return errorResponse('method-not-allowed', 405);
   }
+
+  const gate = await requireEntitlement(request, env);
+  if (!gate.ok) return gate.response;
 
   // Misconfiguration is the operator's problem, not the client's. 500 so
   // the client treats it as retryable; the operator sees the error class

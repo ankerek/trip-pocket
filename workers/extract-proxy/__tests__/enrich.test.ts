@@ -1,6 +1,17 @@
 import { handleEnrich } from '../src/enrich';
 import type { Env } from '../src/index';
 
+const VALID_ID = '$RCAnonymousID:0123456789abcdef0123456789abcdef';
+
+const RC_ACTIVE = new Response(
+  JSON.stringify({
+    subscriber: {
+      entitlements: { pro: { expires_date: new Date(Date.now() + 60_000).toISOString() } },
+    },
+  }),
+  { status: 200, headers: { 'content-type': 'application/json' } },
+);
+
 function rateLimit(allowed = true) {
   return { limit: jest.fn(async () => ({ success: allowed })) };
 }
@@ -13,6 +24,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     AI_GATEWAY_NAME: 'default',
     CF_AIG_TOKEN: 'aig-token',
     RATE_LIMIT: rateLimit(true) as unknown as Env['RATE_LIMIT'],
+    RC_REST_API_KEY: 'rc-key',
     ...overrides,
   };
 }
@@ -20,7 +32,11 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 function postJson(body: unknown, ip = '1.2.3.4'): Request {
   return new Request('https://proxy.example.com/enrich', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'CF-Connecting-IP': ip },
+    headers: {
+      'content-type': 'application/json',
+      'CF-Connecting-IP': ip,
+      'X-RC-User-Id': VALID_ID,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -40,13 +56,28 @@ type FetchScript = Array<{
 }>;
 
 function scriptedFetch(script: FetchScript) {
+  // Always prepend the RC-subscribers matcher so that requireEntitlement is
+  // satisfied without having to modify every callsite.
+  const withRc = withRcMatcher(script);
   return jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
-    for (const step of script) {
+    for (const step of withRc) {
       if (step.match(url, init)) return step.response();
     }
     throw new Error(`unexpected fetch: ${url}`);
   }) as unknown as typeof fetch;
+}
+
+// Prepends an RC-subscribers matcher so all scripted fetch mocks satisfy
+// the requireEntitlement gate without changing existing script entries.
+function withRcMatcher(script: FetchScript): FetchScript {
+  return [
+    {
+      match: (url) => url.startsWith('https://api.revenuecat.com/v1/subscribers/'),
+      response: () => RC_ACTIVE.clone(),
+    },
+    ...script,
+  ];
 }
 
 const isSearchText = (url: string) => url.includes('places:searchText');
@@ -104,6 +135,32 @@ describe('handleEnrich', () => {
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+
+    // Install caches.default polyfill (required by requireEntitlement).
+    const store = new Map<string, Response>();
+    // @ts-expect-error — test polyfill
+    globalThis.caches = {
+      default: {
+        async match(key: Request) {
+          const k = key.url;
+          const r = store.get(k);
+          return r ? r.clone() : undefined;
+        },
+        async put(key: Request, value: Response) {
+          store.set(key.url, value.clone());
+        },
+      },
+    };
+
+    // Default fetch: handles RC entitlement lookup; throws for unexpected URLs.
+    // Tests that need Places/Gemini override globalThis.fetch via scriptedFetch.
+    globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('https://api.revenuecat.com/v1/subscribers/')) {
+        return RC_ACTIVE.clone();
+      }
+      throw new Error(`unexpected fetch in test (no scriptedFetch override): ${url}`);
+    }) as unknown as typeof fetch;
   });
 
   afterEach(() => {
@@ -121,7 +178,7 @@ describe('handleEnrich', () => {
   it('returns 400 when content-type is not JSON', async () => {
     const req = new Request('https://proxy.example.com/enrich', {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
+      headers: { 'content-type': 'text/plain', 'X-RC-User-Id': VALID_ID },
       body: 'hi',
     });
     const res = await handleEnrich(req, makeEnv());
@@ -580,5 +637,17 @@ describe('handleEnrich', () => {
       expect(body._debug?.blurbOutcome).toBe('failed');
       expect(geminiCallCount(fetchSpy)).toBe(2);
     });
+  });
+
+  test('returns 401 entitlement-required when X-RC-User-Id header is missing', async () => {
+    const env = makeEnv();
+    const req = new Request('https://proxy.example.com/enrich', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(validBody),
+    });
+    const res = await handleEnrich(req, env);
+    expect(res.status).toBe(401);
+    expect(await res.clone().json()).toEqual({ error: 'missing-user-id' });
   });
 });

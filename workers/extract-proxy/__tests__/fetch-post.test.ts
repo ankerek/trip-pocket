@@ -13,6 +13,17 @@ import {
 import type { FetchPostResponse } from '../src/fetch-post';
 import type { Env } from '../src/index';
 
+const VALID_ID = '$RCAnonymousID:0123456789abcdef0123456789abcdef';
+
+const RC_ACTIVE = new Response(
+  JSON.stringify({
+    subscriber: {
+      entitlements: { pro: { expires_date: new Date(Date.now() + 60_000).toISOString() } },
+    },
+  }),
+  { status: 200, headers: { 'content-type': 'application/json' } },
+);
+
 // --- Pure-function unit tests --------------------------------------------
 
 describe('detectPlatform', () => {
@@ -159,6 +170,43 @@ describe('TikTok author helpers', () => {
 
 // --- Integration tests for handleFetchPost -------------------------------
 
+// Install caches.default polyfill and a default RC fetch mock before every
+// integration test so that requireEntitlement works in the Node Jest environment.
+// Individual test describes override globalThis.fetch / global.fetch as needed.
+let originalFetch: typeof globalThis.fetch;
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+
+  const store = new Map<string, Response>();
+  // @ts-expect-error — test polyfill
+  globalThis.caches = {
+    default: {
+      async match(key: Request) {
+        const k = key.url;
+        const r = store.get(k);
+        return r ? r.clone() : undefined;
+      },
+      async put(key: Request, value: Response) {
+        store.set(key.url, value.clone());
+      },
+    },
+  };
+
+  // Default fetch handles RC entitlement; tests that need platform fetches
+  // override via scriptedFetch (which also prepends the RC matcher).
+  globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.startsWith('https://api.revenuecat.com/v1/subscribers/')) {
+      return RC_ACTIVE.clone();
+    }
+    throw new Error(`unexpected fetch in test (no override): ${url}`);
+  }) as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
 function rateLimit(allowed = true) {
   return { limit: jest.fn(async () => ({ success: allowed })) };
 }
@@ -171,6 +219,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     AI_GATEWAY_NAME: 'gw',
     CF_AIG_TOKEN: 'tok',
     RATE_LIMIT: rateLimit(true) as unknown as Env['RATE_LIMIT'],
+    RC_REST_API_KEY: 'rc-key',
     ...overrides,
   };
 }
@@ -178,7 +227,11 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 function postJson(body: unknown, ip = '1.2.3.4'): Request {
   return new Request('https://proxy.example.com/fetch-post', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'CF-Connecting-IP': ip },
+    headers: {
+      'content-type': 'application/json',
+      'CF-Connecting-IP': ip,
+      'X-RC-User-Id': VALID_ID,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -189,13 +242,28 @@ type FetchScript = Array<{
 }>;
 
 function scriptedFetch(script: FetchScript) {
+  // Always prepend the RC-subscribers matcher so that requireEntitlement is
+  // satisfied without having to modify every callsite.
+  const withRc = withRcMatcher(script);
   return jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
-    for (const step of script) {
+    for (const step of withRc) {
       if (step.match(url, init)) return step.response();
     }
     throw new Error(`unexpected fetch: ${url}`);
   }) as unknown as typeof fetch;
+}
+
+// Prepends an RC-subscribers matcher so all scripted fetch mocks satisfy
+// the requireEntitlement gate without changing existing script entries.
+function withRcMatcher(script: FetchScript): FetchScript {
+  return [
+    {
+      match: (url) => url.startsWith('https://api.revenuecat.com/v1/subscribers/'),
+      response: () => RC_ACTIVE.clone(),
+    },
+    ...script,
+  ];
 }
 
 const IG_OG_HTML = (caption: string, image: string, title: string) =>
@@ -1031,14 +1099,22 @@ describe('handleFetchPost — _debug echo', () => {
 
 describe('handleFetchPost — guards', () => {
   it('rejects non-IG/TikTok URLs with 400 unsupported-url', async () => {
-    global.fetch = jest.fn(); // should never be called
+    // Provide RC mock so entitlement passes; verify no IG/TikTok/Apify fetch
+    // was triggered for an unsupported URL.
+    const fetchSpy = scriptedFetch([]); // only RC matcher; all others throw
+    global.fetch = fetchSpy;
     const resp = await handleFetchPost(
       postJson({ url: 'https://www.youtube.com/watch?v=abc' }),
       makeEnv(),
     );
     expect(resp.status).toBe(400);
     expect(((await resp.json()) as { error: string }).error).toBe('unsupported-url');
-    expect(global.fetch).not.toHaveBeenCalled();
+    // Only the RC entitlement check should have been called — no IG/TikTok fetches.
+    const calls = (fetchSpy as unknown as jest.Mock).mock.calls as Array<[unknown]>;
+    const nonRcCalls = calls.filter(
+      (c) => !String(c[0]).startsWith('https://api.revenuecat.com/'),
+    );
+    expect(nonRcCalls).toHaveLength(0);
   });
 
   it('honours rate-limit gate with 429', async () => {
@@ -1061,7 +1137,7 @@ describe('handleFetchPost — guards', () => {
   it('rejects invalid JSON body', async () => {
     const req = new Request('https://proxy.example.com/fetch-post', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'X-RC-User-Id': VALID_ID },
       body: 'not-json',
     });
     const resp = await handleFetchPost(req, makeEnv());
@@ -1071,5 +1147,17 @@ describe('handleFetchPost — guards', () => {
   it('rejects missing url field', async () => {
     const resp = await handleFetchPost(postJson({}), makeEnv());
     expect(resp.status).toBe(400);
+  });
+
+  test('returns 401 entitlement-required when X-RC-User-Id header is missing', async () => {
+    const env = makeEnv();
+    const req = new Request('https://proxy.example.com/fetch-post', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.instagram.com/p/ABC123/' }),
+    });
+    const res = await handleFetchPost(req, env);
+    expect(res.status).toBe(401);
+    expect(await res.clone().json()).toEqual({ error: 'missing-user-id' });
   });
 });
