@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import Purchases, {
   PURCHASES_ERROR_CODE,
   type CustomerInfo,
@@ -40,7 +41,10 @@ interface EntitlementContextValue {
 
 const Ctx = createContext<EntitlementContextValue | null>(null);
 
-const RC_API_KEY = process.env.EXPO_PUBLIC_RC_IOS_API_KEY ?? '';
+// Resolved at build time in app.config.ts so the dev variant gets the dev
+// RC project's key (when EXPO_PUBLIC_RC_IOS_API_KEY_DEV is set) without a
+// runtime branch on __DEV__.
+const RC_API_KEY = (Constants.expoConfig?.extra?.rcIosApiKey as string | undefined) ?? '';
 
 export function EntitlementProvider({ children }: { children: ReactNode }) {
   // Seed from the cached file synchronously so first render has a definite
@@ -90,6 +94,13 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
       }
       // configure() is synchronous in RC v10 (returns void).
       Purchases.configure({ apiKey: RC_API_KEY });
+      if (__DEV__) {
+        // Surface the anon RC user ID so dev can grant entitlements in the
+        // RC dashboard after a reinstall without spelunking the debugger.
+        Purchases.getAppUserID()
+          .then((id) => console.log('[entitlement] app user ID:', id))
+          .catch((err) => console.warn('[entitlement] getAppUserID failed:', err));
+      }
       try {
         const info = await Purchases.getCustomerInfo();
         if (cancelled) return;

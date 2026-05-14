@@ -8,6 +8,16 @@ import type { ExpoConfig } from 'expo/config';
 const IS_DEV = process.env.APP_VARIANT === 'development';
 
 const BUNDLE_ID = IS_DEV ? 'com.trippocket.app.dev' : 'com.trippocket.app';
+
+// Tie the RC key to the bundle variant. The dev RC project is a separate
+// project so daily dev work (grants, test customers) doesn't pollute the
+// prod project. Falls back to the prod key if the dev key isn't set so
+// existing devs without the new env var keep working.
+const RC_IOS_API_KEY = IS_DEV
+  ? (process.env.EXPO_PUBLIC_RC_IOS_API_KEY_DEV ??
+      process.env.EXPO_PUBLIC_RC_IOS_API_KEY ??
+      '')
+  : (process.env.EXPO_PUBLIC_RC_IOS_API_KEY ?? '');
 const ANDROID_PACKAGE = IS_DEV ? 'com.trippocket.app.dev' : 'com.trippocket.app';
 const APP_NAME = IS_DEV ? 'Trip Pocket Dev' : 'Trip Pocket';
 const SCHEME = IS_DEV ? 'trippocket-dev' : 'trippocket';
@@ -94,6 +104,7 @@ const config: ExpoConfig = {
     enrichmentProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/enrich',
     photoProxyUrlBase: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/photo',
     fetchPostProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/fetch-post',
+    rcIosApiKey: RC_IOS_API_KEY,
     appVariant: IS_DEV ? 'development' : 'production',
     eas: {
       projectId: '2dee30ac-eb35-4cc6-80d7-4e6a664237b5',
