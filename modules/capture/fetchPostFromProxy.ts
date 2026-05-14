@@ -3,6 +3,7 @@
 // timeout-and-classify wrapper around fetch + zod schema validation.
 
 import { z } from 'zod';
+import { getEntitlementUserId } from '@/lib/entitlement/userId';
 
 // Closed-vocab dispatch info echoed by the worker so the phone can surface
 // which path it took (og-only / Apify carousel / Apify fallback / TikTok
@@ -64,7 +65,8 @@ export type FetchPostResult = {
 
 export type FetchPostErrorKind =
   | { kind: 'retryable' }
-  | { kind: 'permanent'; code: PermanentCode };
+  | { kind: 'permanent'; code: PermanentCode }
+  | { kind: 'entitlement-required' };
 
 export type PermanentCode =
   | 'not-found'
@@ -150,6 +152,15 @@ export async function fetchPostFromProxy(
     throw new FetchPostError('fetch-post-proxy-not-configured', { kind: 'retryable' });
   }
 
+  // Fail fast if RC hasn't initialised — route through the paused-state
+  // machinery the same way a 401 from the worker would.
+  let userId: string;
+  try {
+    userId = await getEntitlementUserId();
+  } catch {
+    throw new FetchPostError('fetch-post-userid-unavailable', { kind: 'entitlement-required' });
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -157,7 +168,7 @@ export async function fetchPostFromProxy(
   try {
     response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'X-RC-User-Id': userId },
       body: JSON.stringify({ url }),
       signal: controller.signal,
     });
@@ -167,6 +178,10 @@ export async function fetchPostFromProxy(
     throw new FetchPostError(`fetch-post-network: ${String(err)}`, { kind: 'retryable' });
   } finally {
     clearTimeout(timeout);
+  }
+
+  if (response.status === 401) {
+    throw new FetchPostError('fetch-post-entitlement-required', { kind: 'entitlement-required' });
   }
 
   if (response.status === 404 || response.status === 403 || response.status === 400) {

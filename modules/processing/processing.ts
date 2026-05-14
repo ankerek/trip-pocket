@@ -28,6 +28,7 @@ export type Processor = {
   runOcrSweep(): Promise<void>;
   runUrlFetchSweep(): Promise<void>;
   runStartupRecovery(): Promise<void>;
+  resumeUrlFetchEntitlementPaused(): Promise<void>;
   /**
    * Test-only. Resolves once the in-memory queue has fully drained.
    * Production code should not need to call this — work happens in the
@@ -184,7 +185,8 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     const row = await opts.db.getFirstAsync<{
       url: string | null;
       file_path: string | null;
-    }>(`SELECT url, file_path FROM sources WHERE id = ?`, id);
+      url_fetch_paused_reason: string | null;
+    }>(`SELECT url, file_path, url_fetch_paused_reason FROM sources WHERE id = ?`, id);
     if (!row?.url) return { retry: false };
     if (row.file_path !== null) {
       // Worker fetch already completed for this row (e.g. retried after a
@@ -192,6 +194,8 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       enqueueOcr(id);
       return { retry: false };
     }
+    // Row paused for entitlement — do not re-attempt until resume clears it.
+    if (row.url_fetch_paused_reason === 'entitlement') return { retry: false };
 
     const urlFetchStage = startStage('url_fetch', id);
     let result: FetchPostResult;
@@ -220,6 +224,18 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       };
       if (platform) tags.platform = platform;
       urlFetchStage.failed(err, { tags });
+      if (classification.kind === 'entitlement-required') {
+        await opts.db.runAsync(
+          `UPDATE sources
+              SET url_fetch_paused_reason = 'entitlement', updated_at = ?
+            WHERE id = ?`,
+          getNow(),
+          id,
+        );
+        urlFetchStage.done({ pausedReason: 'entitlement' });
+        notifyChange('sources');
+        return { retry: false };
+      }
       if (classification.kind === 'retryable') {
         const key = `urlfetch:${id}`;
         const next = (retryCount.get(key) ?? 0) + 1;
@@ -405,14 +421,30 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
   async function runUrlFetchSweep(): Promise<void> {
     if (!opts.fetchPost) return;
     // URL sources still waiting on the worker call: file_path NULL, caption
-    // NULL, but the source row is in 'pending' for ocr_status.
+    // NULL, but the source row is in 'pending' for ocr_status. Paused rows
+    // (url_fetch_paused_reason IS NOT NULL) are skipped — they re-enter via
+    // resumeUrlFetchEntitlementPaused once entitlement is restored.
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources
         WHERE kind = 'url'
           AND ocr_status = 'pending'
           AND file_path IS NULL
           AND caption IS NULL
+          AND url_fetch_paused_reason IS NULL
      ORDER BY captured_at ASC`,
+    );
+    for (const r of rows) enqueueUrlFetch(r.id);
+  }
+
+  async function resumeUrlFetchEntitlementPaused(): Promise<void> {
+    const rows = await opts.db.getAllAsync<{ id: string }>(
+      `SELECT id FROM sources WHERE url_fetch_paused_reason = 'entitlement'`,
+    );
+    if (rows.length === 0) return;
+    await opts.db.runAsync(
+      `UPDATE sources SET url_fetch_paused_reason = NULL, updated_at = ?
+       WHERE url_fetch_paused_reason = 'entitlement'`,
+      getNow(),
     );
     for (const r of rows) enqueueUrlFetch(r.id);
   }
@@ -450,6 +482,7 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     runOcrSweep,
     runUrlFetchSweep,
     runStartupRecovery,
+    resumeUrlFetchEntitlementPaused,
     _awaitIdle,
   };
 }

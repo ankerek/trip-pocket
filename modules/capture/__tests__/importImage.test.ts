@@ -209,6 +209,7 @@ describe('importImage', () => {
         runOcrSweep: jest.fn().mockResolvedValue(undefined),
         runUrlFetchSweep: jest.fn().mockResolvedValue(undefined),
         runStartupRecovery: jest.fn().mockResolvedValue(undefined),
+        resumeUrlFetchEntitlementPaused: jest.fn().mockResolvedValue(undefined),
         _awaitIdle: jest.fn().mockResolvedValue(undefined),
       };
       return { processor, enqueueOcr };

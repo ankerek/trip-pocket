@@ -15,6 +15,7 @@ import {
   type Processor,
   type UrlFetcher,
   type ImageDownloader,
+  type CreateProcessorOptions,
 } from '../processing';
 import { FetchPostError } from '@/modules/capture/fetchPostFromProxy';
 import {
@@ -644,6 +645,103 @@ describe('createProcessor', () => {
           `SELECT ocr_status FROM sources WHERE id = 'u1'`,
         );
         expect(row?.ocr_status).toBe('pending');
+      });
+
+      describe('entitlement-required (401) URL fetch path', () => {
+        it('sets url_fetch_paused_reason=entitlement, leaves ocr_status pending, and does not retry', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+          const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
+            new FetchPostError('fetch-post-entitlement-required', { kind: 'entitlement-required' }),
+          );
+          const p = createProcessor({ db, ocr: jest.fn(), fetchPost, maxRetries: 3 });
+          p.enqueueUrlFetch('u1');
+          await drain(p);
+
+          // fetchPost called exactly once — no retry storm.
+          expect(fetchPost).toHaveBeenCalledTimes(1);
+
+          const row = await db.getFirstAsync<{
+            ocr_status: string;
+            extraction_status: string;
+            url_fetch_paused_reason: string | null;
+          }>(`SELECT ocr_status, extraction_status, url_fetch_paused_reason FROM sources WHERE id = 'u1'`);
+          // Only url_fetch_paused_reason is stamped — status columns are untouched.
+          expect(row?.ocr_status).toBe('pending');
+          expect(row?.extraction_status).toBe('pending');
+          expect(row?.url_fetch_paused_reason).toBe('entitlement');
+        });
+
+        it('runUrlFetchSweep does NOT pick up rows with url_fetch_paused_reason set', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+          // Manually pause the row as if a prior session hit 401.
+          await db.runAsync(
+            `UPDATE sources SET url_fetch_paused_reason = 'entitlement' WHERE id = 'u1'`,
+          );
+
+          const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+            platform: 'instagram',
+            permalink: 'https://instagram.com/p/ABC/',
+            caption: 'cap',
+            imageUrls: [],
+            author: null,
+          });
+          const p = createProcessor({ db, ocr: jest.fn(), fetchPost });
+          await p.runUrlFetchSweep();
+          await drain(p);
+
+          expect(fetchPost).not.toHaveBeenCalled();
+        });
+
+        it('resumeUrlFetchEntitlementPaused clears the column and re-enqueues paused rows', async () => {
+          const db = await freshDb();
+          // Two paused URL sources.
+          await seedUrlSource(db, 'pa', 'https://instagram.com/p/PA/');
+          await seedUrlSource(db, 'pb', 'https://instagram.com/p/PB/');
+          await db.runAsync(
+            `UPDATE sources SET url_fetch_paused_reason = 'entitlement' WHERE id IN ('pa', 'pb')`,
+          );
+          // One non-paused URL source — must NOT be re-fetched.
+          await seedUrlSource(db, 'pc', 'https://instagram.com/p/PC/');
+
+          const fetchPost: UrlFetcher = jest.fn().mockResolvedValue({
+            platform: 'instagram',
+            permalink: 'https://instagram.com/p/PA/',
+            caption: 'resumed',
+            imageUrls: [],
+            author: null,
+          });
+          const p = createProcessor({ db, ocr: jest.fn(), fetchPost });
+          await p.resumeUrlFetchEntitlementPaused();
+          await drain(p);
+
+          // fetchPost called exactly twice (one per formerly-paused row).
+          expect(fetchPost).toHaveBeenCalledTimes(2);
+
+          // Both paused columns must be cleared.
+          const pa = await db.getFirstAsync<{ url_fetch_paused_reason: string | null }>(
+            `SELECT url_fetch_paused_reason FROM sources WHERE id = 'pa'`,
+          );
+          const pb = await db.getFirstAsync<{ url_fetch_paused_reason: string | null }>(
+            `SELECT url_fetch_paused_reason FROM sources WHERE id = 'pb'`,
+          );
+          expect(pa?.url_fetch_paused_reason).toBeNull();
+          expect(pb?.url_fetch_paused_reason).toBeNull();
+        });
+
+        it('resumeUrlFetchEntitlementPaused is a no-op when no rows are paused', async () => {
+          const db = await freshDb();
+          await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
+
+          const fetchPost: UrlFetcher = jest.fn();
+          const p = createProcessor({ db, ocr: jest.fn(), fetchPost });
+          await p.resumeUrlFetchEntitlementPaused();
+          await drain(p);
+
+          expect(fetchPost).not.toHaveBeenCalled();
+        });
       });
 
       describe('carousel (multi-image) URL sources', () => {

@@ -9,6 +9,7 @@ module.exports = {
     '^expo-crypto$': '<rootDir>/__mocks__/expo-crypto.ts',
     '^expo-application$': '<rootDir>/__mocks__/expo-application.ts',
     '^@sentry/react-native$': '<rootDir>/__mocks__/sentry-react-native.ts',
+    '^react-native-purchases$': '<rootDir>/__mocks__/react-native-purchases.ts',
   },
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native|expo[^/]*|@expo|@expo/.*|nativewind|react-native-css-interop|uuid)/)',
