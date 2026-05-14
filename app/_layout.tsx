@@ -95,6 +95,8 @@ function RootLayoutInner() {
   // pop the user back out when markOnboardingComplete fires inside the flow.
   const needsOnboarding = useMemo(() => !isOnboardingComplete(), []);
 
+  const { status, refresh, registerResumeHandler } = useEntitlement();
+
   useEffect(() => {
     (async () => {
       // Open the SQLite file inside the App Group container so the share extension
@@ -243,9 +245,12 @@ function RootLayoutInner() {
       }, 400);
       return () => clearTimeout(t);
     }
+    // Onboarding done. Hold the splash until entitlement resolves so a
+    // lapsed user goes splash → paywall, not splash → (tabs) → paywall.
+    if (status === 'loading') return;
     void SplashScreen.hideAsync();
     setSplashHidden(true);
-  }, [ready, needsOnboarding, splashHidden, router]);
+  }, [ready, needsOnboarding, splashHidden, router, status]);
 
   if (!ready) return null;
   return (
