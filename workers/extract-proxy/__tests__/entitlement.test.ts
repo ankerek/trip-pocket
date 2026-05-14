@@ -63,7 +63,7 @@ beforeEach(() => {
 });
 
 describe('requireEntitlement', () => {
-  test('400 when header is missing entirely', async () => {
+  test('401 when header is missing entirely', async () => {
     const env = { RC_REST_API_KEY: 'rc-key' };
     const fetchSpy = jest.spyOn(globalThis, 'fetch');
     const result = await requireEntitlement(makeRequest({}), env);
@@ -110,6 +110,53 @@ describe('requireEntitlement', () => {
     if (!result.ok) {
       expect(result.response.status).toBe(401);
       expect(await result.response.clone().json()).toEqual({ error: 'entitlement-required' });
+    }
+  });
+
+  test('401 entitlement-required when RC returns empty entitlements map', async () => {
+    const env = { RC_REST_API_KEY: 'rc-key' };
+    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      rcResponse({ subscriber: { entitlements: {} } } as any),
+    );
+    const result = await requireEntitlement(
+      makeRequest({ 'X-RC-User-Id': VALID_ID }),
+      env,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+      expect(await result.response.clone().json()).toEqual({ error: 'entitlement-required' });
+    }
+  });
+
+  test('401 entitlement-required when RC returns pro with null expires_date', async () => {
+    const env = { RC_REST_API_KEY: 'rc-key' };
+    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      rcResponse({ subscriber: { entitlements: { pro: { expires_date: null } } } }),
+    );
+    const result = await requireEntitlement(
+      makeRequest({ 'X-RC-User-Id': VALID_ID }),
+      env,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+      expect(await result.response.clone().json()).toEqual({ error: 'entitlement-required' });
+    }
+  });
+
+  test('503 entitlement-check-failed when RC fetch times out (AbortError)', async () => {
+    const env = { RC_REST_API_KEY: 'rc-key' };
+    const abortError = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    jest.spyOn(globalThis, 'fetch').mockRejectedValueOnce(abortError);
+    const result = await requireEntitlement(
+      makeRequest({ 'X-RC-User-Id': VALID_ID }),
+      env,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(503);
+      expect(await result.response.clone().json()).toEqual({ error: 'entitlement-check-failed' });
     }
   });
 

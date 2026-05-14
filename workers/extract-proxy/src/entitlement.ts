@@ -13,6 +13,7 @@ type RCSubscriberResponse = {
 };
 
 const CACHE_TTL_SECONDS = 60;
+const RC_FETCH_TIMEOUT_MS = 5_000;
 const USER_ID_RE = /^\$RCAnonymousID:[a-f0-9]{32}$/;
 const RC_URL = (userId: string): string =>
   `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`;
@@ -53,9 +54,20 @@ export async function requireEntitlement(
     return { ok: false, response: jsonError('entitlement-required', 401) };
   }
 
-  const rc = await fetch(RC_URL(userId), {
-    headers: { authorization: `Bearer ${env.RC_REST_API_KEY}` },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RC_FETCH_TIMEOUT_MS);
+  let rc: Response;
+  try {
+    rc = await fetch(RC_URL(userId), {
+      headers: { authorization: `Bearer ${env.RC_REST_API_KEY}` },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    console.error('extract-proxy: RC lookup network error', err);
+    return { ok: false, response: jsonError('entitlement-check-failed', 503) };
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!rc.ok) {
     console.error(`extract-proxy: RC lookup ${rc.status}`);
     return { ok: false, response: jsonError('entitlement-check-failed', 503) };
