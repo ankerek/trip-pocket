@@ -13,6 +13,12 @@ import {
   type EnrichOutcome,
   type Enricher,
 } from '../enrichment';
+import { getEntitlementUserId } from '@/lib/entitlement/userId';
+import { enrichFromProxy } from '../proxy';
+
+jest.mock('@/lib/entitlement/userId', () => ({
+  getEntitlementUserId: jest.fn(async () => '$RCAnonymousID:0123456789abcdef0123456789abcdef'),
+}));
 
 async function freshDb(): Promise<Database> {
   const db = await openDatabase(':memory:');
@@ -695,5 +701,178 @@ describe('createEnricher', () => {
       const winner = await getPlace(db, 'p-incoming');
       expect(winner.external_place_id).toBe('ChIJ-test');
     });
+  });
+
+  describe('entitlement-paused dispatcher', () => {
+    it('401 path: dispatcher writes enrichment_paused_reason=entitlement (not failed)', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'some ocr text');
+      await seedPlace(db, { id: 'p1', name: 'X', city: 'Y', status: 'pending' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const enrich = jest.fn(async () => {
+        throw new EnrichmentError('paused', 'entitlement-required');
+      });
+      const enricher = makeEnricher(db, enrich);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await db.getFirstAsync<{
+        enrichment_status: string;
+        enrichment_paused_reason: string | null;
+      }>(`SELECT enrichment_status, enrichment_paused_reason FROM places WHERE id = 'p1'`);
+      expect(row?.enrichment_paused_reason).toBe('entitlement');
+      expect(row?.enrichment_status).toBe('pending');
+    });
+
+    it('processOne short-circuits on paused row', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'some ocr text');
+      await seedPlace(db, { id: 'p1', name: 'X', city: 'Y', status: 'pending' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      await db.runAsync(
+        `UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p1'`,
+      );
+
+      const enrich = jest.fn(async () => enrichedOutcome);
+      const enricher = makeEnricher(db, enrich);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      expect(enrich).not.toHaveBeenCalled();
+      const row = await db.getFirstAsync<{ enrichment_paused_reason: string | null }>(
+        `SELECT enrichment_paused_reason FROM places WHERE id = 'p1'`,
+      );
+      expect(row?.enrichment_paused_reason).toBe('entitlement');
+    });
+
+    it('resumeEntitlementPaused re-enqueues paused rows', async () => {
+      const db = await freshDb();
+      // Two paused places.
+      await seedSource(db, 's1', 'ocr text 1');
+      await seedPlace(db, { id: 'p1', name: 'A', city: 'Tokyo', status: 'pending' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+      await db.runAsync(`UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p1'`);
+
+      await seedSource(db, 's2', 'ocr text 2');
+      await seedPlace(db, { id: 'p2', name: 'B', city: 'Osaka', status: 'pending' });
+      await attachSourceToPlace(db, 'p2', 's2', null);
+      await db.runAsync(`UPDATE places SET enrichment_paused_reason = 'entitlement' WHERE id = 'p2'`);
+
+      // One non-paused place.
+      await seedSource(db, 's3', 'ocr text 3');
+      await seedPlace(db, { id: 'p3', name: 'C', city: 'Kyoto', status: 'pending' });
+      await attachSourceToPlace(db, 'p3', 's3', null);
+
+      // Runner returns not-found (simplest success path that doesn't collide).
+      const enrich = jest.fn(async () => ({ kind: 'not-found' as const }));
+      const enricher = makeEnricher(db, enrich) as Enricher & {
+        resumeEntitlementPaused: () => Promise<void>;
+      };
+
+      await enricher.resumeEntitlementPaused();
+      await enricher._awaitIdle();
+
+      // Runner called exactly twice — once per resumed place.
+      expect(enrich).toHaveBeenCalledTimes(2);
+
+      // Both paused columns cleared.
+      const p1Row = await db.getFirstAsync<{ enrichment_paused_reason: string | null }>(
+        `SELECT enrichment_paused_reason FROM places WHERE id = 'p1'`,
+      );
+      const p2Row = await db.getFirstAsync<{ enrichment_paused_reason: string | null }>(
+        `SELECT enrichment_paused_reason FROM places WHERE id = 'p2'`,
+      );
+      expect(p1Row?.enrichment_paused_reason).toBeNull();
+      expect(p2Row?.enrichment_paused_reason).toBeNull();
+    });
+  });
+});
+
+const PROXY_URL = 'https://proxy.example.com/enrich';
+
+function jsonResp(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+describe('enrichFromProxy', () => {
+  let originalFetch: typeof globalThis.fetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    // Reset mock back to the default success impl between tests.
+    (getEntitlementUserId as jest.Mock).mockResolvedValue(
+      '$RCAnonymousID:0123456789abcdef0123456789abcdef',
+    );
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('401 from the worker classifies as entitlement-required', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      jsonResp(401, { error: 'entitlement-required' }),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      enrichFromProxy(
+        {
+          place_id: 'p1',
+          name: 'X',
+          city: 'Tokyo',
+          address: null,
+          ocr_caption: 'some caption',
+        },
+        PROXY_URL,
+      ),
+    ).rejects.toMatchObject({ classification: 'entitlement-required' });
+  });
+
+  it('attaches X-RC-User-Id header on every fetch call', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      jsonResp(200, { status: 'not-found' }),
+    ) as unknown as typeof fetch;
+
+    await enrichFromProxy(
+      {
+        place_id: 'p1',
+        name: 'X',
+        city: 'Tokyo',
+        address: null,
+        ocr_caption: 'some caption',
+      },
+      PROXY_URL,
+    );
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      PROXY_URL,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-RC-User-Id': '$RCAnonymousID:0123456789abcdef0123456789abcdef',
+        }),
+      }),
+    );
+  });
+
+  it('throws entitlement-required (without fetching) when getEntitlementUserId rejects', async () => {
+    (getEntitlementUserId as jest.Mock).mockRejectedValueOnce(new Error('rc-not-ready'));
+    globalThis.fetch = jest.fn() as unknown as typeof fetch;
+
+    await expect(
+      enrichFromProxy(
+        {
+          place_id: 'p1',
+          name: 'X',
+          city: 'Tokyo',
+          address: null,
+          ocr_caption: 'some caption',
+        },
+        PROXY_URL,
+      ),
+    ).rejects.toMatchObject({ classification: 'entitlement-required' });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

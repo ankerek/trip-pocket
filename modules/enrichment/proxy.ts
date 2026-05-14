@@ -4,6 +4,7 @@ import {
   type EnrichOutcome,
   type EnrichRequestPayload,
 } from './enrichment';
+import { getEntitlementUserId } from '@/lib/entitlement/userId';
 
 // Closed-vocab debug echo from the worker. Optional because an older deployed
 // worker that hasn't shipped the v0.4 echo will omit it. See
@@ -77,6 +78,15 @@ export async function enrichFromProxy(
   proxyUrl: string,
   opts: EnrichFromProxyOptions = {},
 ): Promise<EnrichOutcome> {
+  // Fail fast if RC hasn't initialised — route through the paused-state
+  // machinery the same way a 401 from the worker would.
+  let userId: string;
+  try {
+    userId = await getEntitlementUserId();
+  } catch {
+    throw new EnrichmentError('enrich-userid-unavailable', 'entitlement-required');
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -84,7 +94,7 @@ export async function enrichFromProxy(
   try {
     response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'X-RC-User-Id': userId },
       // Wire format keeps the legacy `extracted_place_id` key; the worker
       // uses it for tracing only and is unaware of the client's places-first
       // restructure. Internally we now key off the canonical place row.
@@ -103,6 +113,9 @@ export async function enrichFromProxy(
     clearTimeout(timeout);
   }
 
+  if (response.status === 401) {
+    throw new EnrichmentError('enrich-entitlement-required', 'entitlement-required');
+  }
   if (response.status === 429) {
     throw new EnrichmentError('enrich-rate-limited', 'rate-limited');
   }

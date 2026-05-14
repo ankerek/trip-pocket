@@ -44,7 +44,7 @@ export type EnrichRequestPayload = {
   ocr_caption: string;
 };
 
-export type EnrichErrorKind = 'permanent' | 'retryable' | 'rate-limited';
+export type EnrichErrorKind = 'permanent' | 'retryable' | 'rate-limited' | 'entitlement-required';
 
 export class EnrichmentError extends Error {
   constructor(
@@ -60,6 +60,7 @@ export type EnrichmentRunner = (payload: EnrichRequestPayload) => Promise<Enrich
 
 export type Enricher = {
   enqueueEnrichment(placeId: string): void;
+  resumeEntitlementPaused(): Promise<void>;
   /** Test-only. Resolves once all in-flight work has settled. */
   _awaitIdle(): Promise<void>;
 };
@@ -78,6 +79,7 @@ type PlaceSnapshot = {
   city: string;
   trip_id: string | null;
   enrichment_status: 'pending' | 'enriched' | 'not-found' | 'failed';
+  enrichment_paused_reason: string | null;
   // Most recent non-null hint from place_sources.
   address: string | null;
   // Most recent non-null OCR text from any attached source.
@@ -137,6 +139,9 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
   async function processOne(id: string): Promise<void> {
     const place = await loadPlace(id);
     if (!place) return;
+    // Paused beats everything — a row paused for entitlement should not
+    // proceed even if it was also already-enriched.
+    if (place.enrichment_paused_reason === 'entitlement') return;
     if (place.enrichment_status === 'not-found') return;
     // 'enriched' is short-circuit by default, EXCEPT when description is
     // null — that means /enrich's first pass got Google Places data back
@@ -189,6 +194,17 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
 
     if (outcome instanceof EnrichmentError) {
       stage.failed(outcome);
+      if (outcome.classification === 'entitlement-required') {
+        // Write paused-reason rather than 'failed' so the row is recoverable
+        // once the user subscribes. Same "don't downgrade enriched" invariant
+        // applies: a blurb-retry failure on an enriched row should not mark
+        // it paused and lose the existing enrichment data.
+        if (place.enrichment_status !== 'enriched') {
+          await enqueueWrite(() => markEntitlementPaused(id));
+          notifyChange('places');
+        }
+        return;
+      }
       // Don't downgrade an already-enriched row to 'failed' on a retry —
       // a transient /enrich failure on the blurb-retry path shouldn't lose
       // the existing lat/lng/photo. The throttle map will gate further
@@ -224,10 +240,11 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       city: string | null;
       trip_id: string | null;
       enrichment_status: PlaceSnapshot['enrichment_status'];
+      enrichment_paused_reason: string | null;
       description: string | null;
       created_at: string;
     }>(
-      `SELECT id, name, city, trip_id, enrichment_status, description, created_at
+      `SELECT id, name, city, trip_id, enrichment_status, enrichment_paused_reason, description, created_at
          FROM places WHERE id = ?`,
       id,
     );
@@ -261,6 +278,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       city: place.city ?? '',
       trip_id: place.trip_id,
       enrichment_status: place.enrichment_status,
+      enrichment_paused_reason: place.enrichment_paused_reason,
       address: addrRow?.extracted_address ?? null,
       ocr_caption: ocrRow?.ocr_text ?? '',
       description: place.description,
@@ -393,6 +411,33 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     );
   }
 
+  async function markEntitlementPaused(id: string): Promise<void> {
+    // Does NOT touch enrichment_status — the row stays 'pending' so that
+    // resumeEntitlementPaused can simply clear the column and re-enqueue.
+    const ts = getNow();
+    await opts.db.runAsync(
+      `UPDATE places
+          SET enrichment_paused_reason = 'entitlement', updated_at = ?
+        WHERE id = ?`,
+      ts,
+      id,
+    );
+  }
+
+  async function resumeEntitlementPaused(): Promise<void> {
+    const rows = await opts.db.getAllAsync<{ id: string }>(
+      `SELECT id FROM places WHERE enrichment_paused_reason = 'entitlement'`,
+    );
+    if (rows.length === 0) return;
+    const ts = getNow();
+    await opts.db.runAsync(
+      `UPDATE places SET enrichment_paused_reason = NULL, updated_at = ?
+       WHERE enrichment_paused_reason = 'entitlement'`,
+      ts,
+    );
+    for (const r of rows) enqueueEnrichment(r.id);
+  }
+
   async function _awaitIdle(): Promise<void> {
     while (pending.size > 0) {
       await Promise.allSettled(Array.from(pending));
@@ -401,5 +446,5 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     await writeChain;
   }
 
-  return { enqueueEnrichment, _awaitIdle };
+  return { enqueueEnrichment, resumeEntitlementPaused, _awaitIdle };
 }
