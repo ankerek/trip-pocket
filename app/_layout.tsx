@@ -1,7 +1,7 @@
 import '../global.css';
 import * as Sentry from '@sentry/react-native';
 import * as SplashScreen from 'expo-splash-screen';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, usePathname } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 
 // Hold the native splash until we've decided whether to push the
@@ -90,6 +90,7 @@ function RootLayoutInner() {
   } | null>(null);
   const colorScheme = useColorScheme();
   const router = useRouter();
+  const pathname = usePathname();
   // Sync filesystem check at first render — cheap, stable across remounts.
   // Reading it once means navigating into onboarding mid-session doesn't
   // pop the user back out when markOnboardingComplete fires inside the flow.
@@ -251,6 +252,20 @@ function RootLayoutInner() {
     void SplashScreen.hideAsync();
     setSplashHidden(true);
   }, [ready, needsOnboarding, splashHidden, router, status]);
+
+  // Task 23: Lapse gate — when the user's entitlement is inactive after
+  // onboarding is complete, redirect to the paywall in lapse mode. The
+  // pathname guard prevents stacked modals on re-fires. Skip in __DEV__ so
+  // the dev-only `x` dismiss affordance retains its meaning.
+  useEffect(() => {
+    if (__DEV__) return;
+    if (!ready) return;
+    if (needsOnboarding) return;
+    if (status === 'loading') return;
+    if (status !== 'inactive') return;
+    if (pathname.startsWith('/onboarding/paywall')) return;
+    router.replace('/onboarding/paywall?mode=lapse');
+  }, [ready, needsOnboarding, status, pathname, router]);
 
   if (!ready) return null;
   return (
