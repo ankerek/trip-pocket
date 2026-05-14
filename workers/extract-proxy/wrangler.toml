@@ -30,6 +30,10 @@ APIFY_ACTOR_ID = "apify~instagram-post-scraper"
 #                            dispatch escalates to the Apify actor (carousels +
 #                            og: failures). See docs/superpowers/specs/
 #                            2026-05-12-apify-ig-scraping-design.md.
+#   RC_REST_API_KEY        — RevenueCat REST API key (server-side, secret).
+#                            Used by requireEntitlement to look up the
+#                            subscriber's pro entitlement. See docs/superpowers/
+#                            specs/2026-05-14-paywall-and-entitlement-gate-design.md.
 
 # Logs include status, latency, and error class only — never OCR text.
 [observability]
