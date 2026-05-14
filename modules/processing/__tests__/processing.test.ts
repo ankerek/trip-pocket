@@ -15,7 +15,6 @@ import {
   type Processor,
   type UrlFetcher,
   type ImageDownloader,
-  type CreateProcessorOptions,
 } from '../processing';
 import { FetchPostError } from '@/modules/capture/fetchPostFromProxy';
 import {
@@ -741,6 +740,42 @@ describe('createProcessor', () => {
           await drain(p);
 
           expect(fetchPost).not.toHaveBeenCalled();
+        });
+
+        it('paused entitlement row emits stage.done (not stage.failed) — no Sentry, no failed diagnostic', async () => {
+          // Regression guard: urlFetchStage.failed() must NOT be called before
+          // the entitlement branch runs, otherwise the pipeline-log records
+          // status='failed' (settled flag blocks the subsequent .done()) and
+          // Sentry fires a false-positive alert on every 401.
+          const g = globalThis as { __DEV__?: boolean };
+          const prev = g.__DEV__;
+          g.__DEV__ = false;
+          try {
+            (Sentry.captureException as jest.Mock).mockClear();
+
+            const db = await freshDb();
+            await seedUrlSource(db, 'ent1', 'https://instagram.com/p/ENT/');
+
+            const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
+              new FetchPostError('fetch-post-entitlement-required', { kind: 'entitlement-required' }),
+            );
+            const p = createProcessor({ db, ocr: jest.fn(), fetchPost, maxRetries: 3 });
+            p.enqueueUrlFetch('ent1');
+            await drain(p);
+            await flushPipelineInserts();
+
+            // 1. No Sentry alert — entitlement pause is expected, not exceptional.
+            expect(Sentry.captureException).not.toHaveBeenCalled();
+
+            // 2. Pipeline diagnostic must record the stage as 'done', not 'failed'.
+            const events = await db.getAllAsync<{ stage: string; status: string }>(
+              `SELECT stage, status FROM pipeline_events WHERE source_id = 'ent1'`,
+            );
+            expect(events).toHaveLength(1);
+            expect(events[0]).toEqual({ stage: 'url_fetch', status: 'done' });
+          } finally {
+            g.__DEV__ = prev;
+          }
         });
       });
 

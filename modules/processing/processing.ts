@@ -214,16 +214,10 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     } catch (err) {
       const classification =
         err instanceof FetchPostError ? err.classification : { kind: 'retryable' as const };
-      // Emit failed for this attempt before retry-budget logic so each try
-      // shows up distinctly in the diagnostics stream (spec §Module shape).
-      // Tags let Sentry filter "TikTok extraction failing" from generic
-      // noise — see 2026-05-13-tiktok-slideshow-parsing-design.md §Monitoring.
-      const platform = detectPlatformFromUrl(row.url);
-      const tags: Record<string, string> = {
-        worker_error_code: workerErrorCodeFor(err),
-      };
-      if (platform) tags.platform = platform;
-      urlFetchStage.failed(err, { tags });
+
+      // Entitlement pause is expected — not an error. Settle the stage as done
+      // (with a pausedReason hint) BEFORE touching the failed() path so that
+      // the pipeline-log records status='done' and Sentry is never notified.
       if (classification.kind === 'entitlement-required') {
         await opts.db.runAsync(
           `UPDATE sources
@@ -236,6 +230,17 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
         notifyChange('sources');
         return { retry: false };
       }
+
+      // Emit failed for this attempt before retry-budget logic so each try
+      // shows up distinctly in the diagnostics stream (spec §Module shape).
+      // Tags let Sentry filter "TikTok extraction failing" from generic
+      // noise — see 2026-05-13-tiktok-slideshow-parsing-design.md §Monitoring.
+      const platform = detectPlatformFromUrl(row.url);
+      const tags: Record<string, string> = {
+        worker_error_code: workerErrorCodeFor(err),
+      };
+      if (platform) tags.platform = platform;
+      urlFetchStage.failed(err, { tags });
       if (classification.kind === 'retryable') {
         const key = `urlfetch:${id}`;
         const next = (retryCount.get(key) ?? 0) + 1;
