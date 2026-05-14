@@ -1149,7 +1149,7 @@ describe('handleFetchPost — guards', () => {
     expect(resp.status).toBe(400);
   });
 
-  test('returns 401 entitlement-required when X-RC-User-Id header is missing', async () => {
+  test('returns 401 missing-user-id when X-RC-User-Id header is absent', async () => {
     const env = makeEnv();
     const req = new Request('https://proxy.example.com/fetch-post', {
       method: 'POST',
