@@ -4,29 +4,46 @@ import { useRouter, Stack } from 'expo-router';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import type { PurchasesPackage } from 'react-native-purchases';
 import { Icon } from '@/components/Icon';
 import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
 import { useThemeColors } from '@/tw/theme';
 import { markOnboardingComplete } from '@/lib/onboarding/storage';
 import { useOnboarding, type Destination } from '@/lib/onboarding/state';
+import { PLANS, DEFAULT_SELECTED_PLAN, type PlanId, type PlanConfig } from '@/lib/entitlement/plans';
+import { useEntitlement } from '@/lib/entitlement/provider';
 
-// Screen 6 — Paywall. PLACEHOLDER. PRODUCT.md specifies 7-day free trial,
-// then auto-renewing monthly or yearly. Wire this to RevenueCat (or
-// StoreKit + expo-iap) before App Store submission.
+// Screen 6 — Paywall.
 //
 // Tap-flow:
-//   "Start your 7-day free trial" → TODO: kick off StoreKit purchase →
+//   "Start your N-day free trial" → purchasePlan() via RevenueCat →
 //   mark onboarding complete → navigate to /(tabs).
-// "Restore purchases" → TODO: query existing entitlement →
+// "Restore purchases" → restore() via RevenueCat →
 //   mark onboarding complete → navigate to /(tabs).
 
-type Plan = 'yearly' | 'monthly';
-
-const PLANS: Record<Plan, { price: string; per: string; note: string; badge?: string }> = {
-  // TODO replace with real App Store SKU pricing pulled from StoreKit
-  yearly: { price: '$39.99', per: '/yr', note: 'Save 50%. Billed yearly after the trial.', badge: 'BEST VALUE' },
+const FALLBACK_PRICES: Record<PlanId, { price: string; per: string; note: string }> = {
+  yearly: { price: '$39.99', per: '/yr', note: 'Save 50%. Billed yearly after the trial.' },
   monthly: { price: '$6.99', per: '/mo', note: 'Billed monthly after the trial.' },
+  weekly: { price: '$1.99', per: '/wk', note: 'Billed weekly after the trial.' },
 };
+
+function deriveNoteFromPackage(pkg: PurchasesPackage, plan: PlanConfig): string {
+  // priceString is localized by RC. Compose the same human note we had before.
+  return `Billed ${plan.label.toLowerCase()} after the trial.`;
+}
+
+function trialDaysFromPackage(pkg: PurchasesPackage | undefined): number | null {
+  const period = pkg?.product.introPrice?.periodNumberOfUnits;
+  const unit = pkg?.product.introPrice?.periodUnit;
+  if (period == null || unit == null) return null;
+  switch (unit) {
+    case 'DAY':   return period;
+    case 'WEEK':  return period * 7;
+    case 'MONTH': return period * 30;
+    case 'YEAR':  return period * 365;
+    default:      return null;
+  }
+}
 
 // Hand-written per-destination headline. DESTINATION_LABEL alone produces
 // awkward strings ("Your US road trip trip starts here.") so each value is
@@ -46,11 +63,37 @@ export default function PaywallScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
-  const [plan, setPlan] = useState<Plan>('yearly');
+  const [plan, setPlan] = useState<PlanId>(DEFAULT_SELECTED_PLAN);
   const { answers } = useOnboarding();
+  const { offerings } = useEntitlement();
   const headline = answers.destination
     ? PAYWALL_HEADLINE[answers.destination]
     : FALLBACK_HEADLINE;
+
+  const selectedPlanCfg = PLANS.find((pl) => pl.id === plan);
+  const selectedPkg = offerings?.current?.availablePackages.find(
+    (p) => p.product.identifier === selectedPlanCfg?.productId,
+  );
+  const trialDays = trialDaysFromPackage(selectedPkg);
+  const trialCtaLabel = trialDays
+    ? `Start your ${trialDays}-day free trial`
+    : 'Start your free trial';
+  const trialFooterCopy = trialDays
+    ? `Cancel anytime. No charge for ${trialDays} days. Then your plan auto-renews.`
+    : 'Cancel anytime during the free trial. Then your plan auto-renews.';
+
+  function exitOnboarding() {
+    // The paywall sits inside two nested Stacks:
+    //   root Stack [ (tabs), onboarding (fullScreenModal) ]
+    //     └── onboarding Stack [ index, destination, …, paywall ]
+    // router.dismissAll() only targets the *closest* Stack, so on its
+    // own it pops the inner Stack back to /onboarding (Welcome) and
+    // leaves the modal mounted — the user lands on the start of
+    // onboarding again. We follow it with router.dismiss() to pop the
+    // modal off the root Stack so (tabs) becomes visible underneath.
+    router.dismissAll();
+    router.dismiss();
+  }
 
   function handleStartTrial() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -69,19 +112,6 @@ export default function PaywallScreen() {
     // QA can iterate on the post-onboarding app.
     markOnboardingComplete();
     exitOnboarding();
-  }
-
-  function exitOnboarding() {
-    // The paywall sits inside two nested Stacks:
-    //   root Stack [ (tabs), onboarding (fullScreenModal) ]
-    //     └── onboarding Stack [ index, destination, …, paywall ]
-    // router.dismissAll() only targets the *closest* Stack, so on its
-    // own it pops the inner Stack back to /onboarding (Welcome) and
-    // leaves the modal mounted — the user lands on the start of
-    // onboarding again. We follow it with router.dismiss() to pop the
-    // modal off the root Stack so (tabs) becomes visible underneath.
-    router.dismissAll();
-    router.dismiss();
   }
 
   return (
@@ -149,9 +179,15 @@ export default function PaywallScreen() {
 
           {/* Plan pills */}
           <View className="mt-6" style={{ gap: 10 }}>
-            {(['yearly', 'monthly'] as Plan[]).map((p) => {
+            {PLANS.map((planCfg) => {
+              const p = planCfg.id;
               const isPicked = plan === p;
-              const cfg = PLANS[p];
+              const pkg = offerings?.current?.availablePackages.find(
+                (pkg) => pkg.product.identifier === planCfg.productId,
+              );
+              const price = pkg?.product.priceString ?? FALLBACK_PRICES[p].price;
+              const per = FALLBACK_PRICES[p].per;
+              const note = pkg ? deriveNoteFromPackage(pkg, planCfg) : FALLBACK_PRICES[p].note;
               return (
                 <Pressable
                   key={p}
@@ -183,18 +219,18 @@ export default function PaywallScreen() {
                         className="text-text"
                         style={{ fontSize: 17, fontWeight: '700', letterSpacing: -0.2 }}
                       >
-                        {p === 'yearly' ? 'Yearly' : 'Monthly'}
+                        {planCfg.label}
                       </Text>
                       <Text className="ml-2 text-text" style={{ fontSize: 15, fontWeight: '600' }}>
-                        {cfg.price}
-                        <Text className="text-text-muted" style={{ fontSize: 13 }}>{cfg.per}</Text>
+                        {price}
+                        <Text className="text-text-muted" style={{ fontSize: 13 }}>{per}</Text>
                       </Text>
                     </View>
                     <Text className="mt-0.5 text-text-muted" style={{ fontSize: 12, lineHeight: 18 }}>
-                      {cfg.note}
+                      {note}
                     </Text>
                   </View>
-                  {cfg.badge ? (
+                  {planCfg.badge ? (
                     <View
                       className="ml-2 rounded-md px-2 py-1"
                       style={{ backgroundColor: colors.accent }}
@@ -202,7 +238,7 @@ export default function PaywallScreen() {
                       <Text
                         style={{ color: '#ffffff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 }}
                       >
-                        {cfg.badge}
+                        {planCfg.badge}
                       </Text>
                     </View>
                   ) : null}
@@ -217,14 +253,14 @@ export default function PaywallScreen() {
           style={{ paddingBottom: Math.max(16, insets.bottom) }}
         >
           <PrimaryButton
-            label="Start your 7-day free trial"
+            label={trialCtaLabel}
             onPress={handleStartTrial}
           />
           <Text
             className="mt-2 text-center text-text-muted"
             style={{ fontSize: 11, lineHeight: 16 }}
           >
-            Cancel anytime. No charge for 7 days. Then your plan auto-renews.
+            {trialFooterCopy}
           </Text>
           <View
             className="mt-2 flex-row items-center justify-center"
