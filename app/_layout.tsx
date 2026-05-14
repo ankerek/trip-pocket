@@ -256,6 +256,23 @@ function RootLayoutInner() {
     setSplashHidden(true);
   }, [ready, needsOnboarding, splashHidden, router, status]);
 
+  // Task 15: Wire resume handlers — fan out inactive→active transitions to
+  // each pipeline module so paused work resumes when entitlement is restored.
+  useEffect(() => {
+    if (!ctx) return;
+    const unsubs: Array<() => void> = [];
+    unsubs.push(registerResumeHandler(async () => {
+      await ctx.extractor.resumeEntitlementPaused();
+    }));
+    unsubs.push(registerResumeHandler(async () => {
+      await ctx.enricher.resumeEntitlementPaused();
+    }));
+    unsubs.push(registerResumeHandler(async () => {
+      await ctx.processor.resumeUrlFetchEntitlementPaused();
+    }));
+    return () => unsubs.forEach((u) => u());
+  }, [ctx, registerResumeHandler]);
+
   // Task 23: Lapse gate — when the user's entitlement is inactive after
   // onboarding is complete, redirect to the paywall in lapse mode. The
   // pathname guard prevents stacked modals on re-fires. Skip in __DEV__ so
