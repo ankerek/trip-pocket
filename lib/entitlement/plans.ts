@@ -1,4 +1,4 @@
-export type PlanId = 'weekly' | 'monthly' | 'yearly';
+export type PlanId = 'weekly' | 'yearly';
 
 export interface PlanConfig {
   id: PlanId;
@@ -11,7 +11,6 @@ export interface PlanConfig {
 // The first entry is the default-selected tile.
 export const PLANS: PlanConfig[] = [
   { id: 'yearly', productId: 'trip_pocket_pro_yearly', label: 'Yearly', badge: 'BEST VALUE' },
-  { id: 'monthly', productId: 'trip_pocket_pro_monthly', label: 'Monthly' },
   { id: 'weekly', productId: 'trip_pocket_pro_weekly', label: 'Weekly' },
 ];
 

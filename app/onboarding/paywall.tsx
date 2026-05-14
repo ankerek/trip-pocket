@@ -23,9 +23,8 @@ import { showToast } from '@/lib/toast/toast';
 //   mark onboarding complete → navigate to /(tabs).
 
 const FALLBACK_PRICES: Record<PlanId, { price: string; per: string; note: string }> = {
-  yearly: { price: '$39.99', per: '/yr', note: 'Save 50%. Billed yearly after the trial.' },
-  monthly: { price: '$6.99', per: '/mo', note: 'Billed monthly after the trial.' },
-  weekly: { price: '$1.99', per: '/wk', note: 'Billed weekly after the trial.' },
+  yearly: { price: '$39.99', per: '/yr', note: 'Save 83%. Billed yearly after the trial.' },
+  weekly: { price: '$4.49', per: '/wk', note: 'Billed weekly after the trial.' },
 };
 
 function deriveNoteFromPackage(pkg: PurchasesPackage, plan: PlanConfig): string {
