@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from '@/tw';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -12,6 +12,7 @@ import { markOnboardingComplete } from '@/lib/onboarding/storage';
 import { useOnboarding, type Destination } from '@/lib/onboarding/state';
 import { PLANS, DEFAULT_SELECTED_PLAN, type PlanId, type PlanConfig } from '@/lib/entitlement/plans';
 import { useEntitlement } from '@/lib/entitlement/provider';
+import { showToast } from '@/lib/toast/toast';
 
 // Screen 6 — Paywall.
 //
@@ -63,12 +64,15 @@ export default function PaywallScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ mode?: 'first-run' | 'lapse' }>();
+  const isLapseMode = params.mode === 'lapse';
   const [plan, setPlan] = useState<PlanId>(DEFAULT_SELECTED_PLAN);
+  const [busy, setBusy] = useState(false);
   const { answers } = useOnboarding();
-  const { offerings } = useEntitlement();
-  const headline = answers.destination
-    ? PAYWALL_HEADLINE[answers.destination]
-    : FALLBACK_HEADLINE;
+  const { offerings, purchasePlan, restore } = useEntitlement();
+  const headline = isLapseMode
+    ? 'Welcome back to Trip Pocket'
+    : (answers.destination ? PAYWALL_HEADLINE[answers.destination] : FALLBACK_HEADLINE);
 
   const selectedPlanCfg = PLANS.find((pl) => pl.id === plan);
   const selectedPkg = offerings?.current?.availablePackages.find(
@@ -95,23 +99,37 @@ export default function PaywallScreen() {
     router.dismiss();
   }
 
-  function handleStartTrial() {
+  async function handleStartTrial() {
+    if (busy) return;
+    setBusy(true);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    // TODO(@cong): wire to RevenueCat / expo-iap. The placeholder below
-    // simulates a successful purchase so the rest of the flow is
-    // exercisable end-to-end during dev. Replace before launch.
-    markOnboardingComplete();
-    exitOnboarding();
+    const result = await purchasePlan(plan);
+    setBusy(false);
+    if (result.ok) {
+      markOnboardingComplete();
+      exitOnboarding();
+      return;
+    }
+    if (result.reason === 'user-cancelled') return;       // silent
+    showToast({ kind: 'error', message: "Couldn't start your trial. Try again." });
   }
 
-  function handleRestore() {
+  async function handleRestore() {
+    if (busy) return;
+    setBusy(true);
     void Haptics.selectionAsync();
-    // TODO(@cong): query StoreKit for an existing entitlement, mark
-    // complete and navigate on success; otherwise show a "no purchases
-    // found" message. For dev, treat restore as a successful unlock so
-    // QA can iterate on the post-onboarding app.
-    markOnboardingComplete();
-    exitOnboarding();
+    const result = await restore();
+    setBusy(false);
+    if (result.ok && result.entitled) {
+      markOnboardingComplete();
+      exitOnboarding();
+      return;
+    }
+    if (result.ok) {
+      showToast({ kind: 'success', message: 'No purchases to restore.' });
+      return;
+    }
+    showToast({ kind: 'error', message: 'Restore failed. Check your connection.' });
   }
 
   return (
@@ -126,22 +144,21 @@ export default function PaywallScreen() {
             justifyContent: 'flex-end',
           }}
         >
-          {/* "x" lets developers exit without paying during dev; the
-               markOnboardingComplete keeps QA un-blocked. The "x" stays in
-               the App Store build but reads as "Maybe later" — Apple
-               requires a visible decline path on subscription paywalls. */}
-          <Pressable
-            onPress={() => {
-              markOnboardingComplete();
-              exitOnboarding();
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Close paywall"
-            hitSlop={12}
-            className="h-9 w-9 items-center justify-center"
-          >
-            <Icon name="xmark" size={18} tintColor={colors.textMuted} />
-          </Pressable>
+          {/* Dev-only escape hatch. App Store builds must complete the paywall. */}
+          {__DEV__ && (
+            <Pressable
+              onPress={() => {
+                markOnboardingComplete();
+                exitOnboarding();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Close paywall"
+              hitSlop={12}
+              className="h-9 w-9 items-center justify-center"
+            >
+              <Icon name="xmark" size={18} tintColor={colors.textMuted} />
+            </Pressable>
+          )}
         </View>
 
         <ScrollView
@@ -255,6 +272,7 @@ export default function PaywallScreen() {
           <PrimaryButton
             label={trialCtaLabel}
             onPress={handleStartTrial}
+            disabled={busy}
           />
           <Text
             className="mt-2 text-center text-text-muted"
@@ -268,8 +286,10 @@ export default function PaywallScreen() {
           >
             <Pressable
               onPress={handleRestore}
+              disabled={busy}
               accessibilityRole="button"
               accessibilityLabel="Restore purchases"
+              style={{ opacity: busy ? 0.5 : 1 }}
             >
               <Text className="text-text-muted" style={{ fontSize: 12, fontWeight: '500' }}>
                 Restore purchases
