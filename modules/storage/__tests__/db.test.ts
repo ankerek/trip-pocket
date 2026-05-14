@@ -97,7 +97,7 @@ describe('url-share migration (0002)', () => {
     expect(cols.map((c) => c.name)).toEqual(
       expect.arrayContaining(['platform', 'caption']),
     );
-    expect(await getMigrationVersion(db)).toBe(6);
+    expect(await getMigrationVersion(db)).toBe(7);
   });
 });
 
@@ -193,7 +193,7 @@ describe('pending_imports nullable-path migration (0003)', () => {
         WHERE type='table' AND name LIKE 'pending_imports%'`,
     );
     expect(tables.map((t) => t.name)).toEqual(['pending_imports']);
-    expect(await getMigrationVersion(db)).toBe(6);
+    expect(await getMigrationVersion(db)).toBe(7);
   });
 });
 

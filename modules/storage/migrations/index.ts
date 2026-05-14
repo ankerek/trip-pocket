@@ -5,6 +5,7 @@ import { pendingImportsNullablePath } from './0003_pending_imports_nullable_path
 import { renameScreenshotToImage } from './0004_rename_screenshot_to_image';
 import { pipelineEvents } from './0005_pipeline_events';
 import { countrySearch } from './0006_country_search';
+import { entitlementPausedReason } from './0007_entitlement_paused_reason';
 
 export const migrations: Migration[] = [
   init,
@@ -13,4 +14,5 @@ export const migrations: Migration[] = [
   renameScreenshotToImage,
   pipelineEvents,
   countrySearch,
+  entitlementPausedReason,
 ];
