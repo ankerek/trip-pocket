@@ -855,6 +855,42 @@ describe('createExtractor', () => {
     });
   });
 
+  describe('resumeEntitlementPaused', () => {
+    it('skips paused rows during sweep, clears the reason on resume, and processes the row', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', { extractionStatus: 'pending', ocrStatus: 'done' });
+      await db.runAsync(
+        `UPDATE sources SET extraction_paused_reason = 'entitlement' WHERE id = 's1'`,
+      );
+
+      const extract = okExtract([{ name: 'Kosoan', city: 'Tokyo', category: 'food' }]);
+      const e = createExtractor({
+        db,
+        extract,
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+
+      // Sweep must not touch the paused row.
+      await e.runExtractionSweep();
+      await drain(e);
+      expect(extract).not.toHaveBeenCalled();
+      expect((await getStatus(db, 's1')).status).toBe('pending');
+
+      // Resume must clear the paused reason and trigger extraction.
+      await e.resumeEntitlementPaused();
+      await drain(e);
+      expect(extract).toHaveBeenCalledTimes(1);
+
+      const row = await db.getFirstAsync<{ extraction_paused_reason: string | null }>(
+        `SELECT extraction_paused_reason FROM sources WHERE id = 's1'`,
+      );
+      expect(row?.extraction_paused_reason).toBeNull();
+      expect((await getStatus(db, 's1')).status).toBe('done');
+    });
+  });
+
   describe('runStartupRecovery', () => {
     it('flips failed extractions back to pending exactly once per process', async () => {
       const db = await freshDb();

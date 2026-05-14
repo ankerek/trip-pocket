@@ -107,6 +107,16 @@ describe('extractFromProxy', () => {
     });
   });
 
+  it('throws entitlement-required on 401', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      jsonResp(401, { error: 'entitlement-required' }),
+    ) as unknown as typeof fetch;
+
+    await expect(extractFromProxy('hi', URL)).rejects.toMatchObject({
+      classification: { kind: 'entitlement-required' },
+    });
+  });
+
   it('throws permanent on 4xx (non-429)', async () => {
     globalThis.fetch = jest.fn(async () =>
       jsonResp(400, { error: 'invalid-request-body' }),

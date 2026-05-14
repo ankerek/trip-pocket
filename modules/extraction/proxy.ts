@@ -64,6 +64,10 @@ export async function extractFromProxy(
     clearTimeout(timeout);
   }
 
+  if (response.status === 401) {
+    throw new ExtractionError('extract-entitlement-required', { kind: 'entitlement-required' });
+  }
+
   if (response.status === 429) {
     throw new ExtractionError('extract-rate-limited', classifyRateLimit(response));
   }

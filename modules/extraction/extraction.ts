@@ -25,9 +25,10 @@ export type ExtractionResult = {
 };
 
 export type ExtractionErrorKind =
-  | { kind: 'permanent' } // 4xx (non-429) — immediate `failed`
+  | { kind: 'permanent' } // 4xx (non-429, non-401) — immediate `failed`
   | { kind: 'retryable' } // 5xx, timeout, TLS — counts toward 3-try budget
-  | { kind: 'deferred'; retryAfterMs: number }; // 429 — re-enqueue, do NOT count toward budget
+  | { kind: 'deferred'; retryAfterMs: number } // 429 — re-enqueue, do NOT count toward budget
+  | { kind: 'entitlement-required' }; // 401 — paused until entitlement is active
 
 export class ExtractionError extends Error {
   constructor(
@@ -45,6 +46,8 @@ export type Extractor = {
   enqueueExtraction(sourceId: string): void;
   runExtractionSweep(): Promise<void>;
   runStartupRecovery(): Promise<void>;
+  /** Clears entitlement-paused rows and re-sweeps; call when entitlement becomes active. */
+  resumeEntitlementPaused(): Promise<void>;
   /** Test-only. Resolves once the in-memory queue has fully drained. */
   _awaitIdle(): Promise<void>;
 };
@@ -253,6 +256,11 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     err: unknown,
     stage: Stage,
   ): ProcessOutcome {
+    // Paused rows are not failures — skip stage emission so diagnostics stay clean.
+    if (classification.kind === 'entitlement-required') {
+      void markPaused(id);
+      return { kind: 'done' };
+    }
     // Every classifyFailure invocation ends *this attempt*. A retry/deferred
     // outcome creates a fresh stage in the next processOne call, so emitting
     // failed here gives the per-attempt rows the diagnostics stream wants.
@@ -282,25 +290,50 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     notifyChange('sources');
   }
 
+  async function markPaused(id: string): Promise<void> {
+    await opts.db.runAsync(
+      `UPDATE sources
+          SET extraction_paused_reason = 'entitlement', updated_at = ?
+        WHERE id = ?`,
+      getNow(),
+      id,
+    );
+    notifyChange('sources');
+  }
+
   async function runExtractionSweep(): Promise<void> {
     // Mid-session sweeps deliberately skip 'failed' rows; the retry-on-relaunch
-    // path is runStartupRecovery (called once per process).
+    // path is runStartupRecovery (called once per process). Paused rows are
+    // skipped here and only re-entered via resumeEntitlementPaused.
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources
         WHERE extraction_status = 'pending'
           AND ocr_status = 'done'
+          AND extraction_paused_reason IS NULL
      ORDER BY captured_at ASC`,
     );
     for (const r of rows) enqueueExtraction(r.id);
   }
 
   async function runStartupRecovery(): Promise<void> {
+    // Paused rows stay paused across restarts; only non-paused failures are reset.
     await opts.db.runAsync(
       `UPDATE sources
           SET extraction_status = 'pending', updated_at = ?
-        WHERE extraction_status = 'failed'`,
+        WHERE extraction_status = 'failed'
+          AND extraction_paused_reason IS NULL`,
       getNow(),
     );
+  }
+
+  async function resumeEntitlementPaused(): Promise<void> {
+    await opts.db.runAsync(
+      `UPDATE sources
+          SET extraction_paused_reason = NULL, updated_at = ?
+        WHERE extraction_paused_reason = 'entitlement'`,
+      getNow(),
+    );
+    await runExtractionSweep();
   }
 
   async function _awaitIdle(): Promise<void> {
@@ -311,7 +344,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     }
   }
 
-  return { enqueueExtraction, runExtractionSweep, runStartupRecovery, _awaitIdle };
+  return { enqueueExtraction, runExtractionSweep, runStartupRecovery, resumeEntitlementPaused, _awaitIdle };
 }
 
 function defaultUuid(): string {

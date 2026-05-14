@@ -333,6 +333,7 @@ describe('createProcessor', () => {
         enqueueExtraction,
         runExtractionSweep: jest.fn().mockResolvedValue(undefined),
         runStartupRecovery: jest.fn().mockResolvedValue(undefined),
+        resumeEntitlementPaused: jest.fn().mockResolvedValue(undefined),
         _awaitIdle: jest.fn().mockResolvedValue(undefined),
       };
       provideExtractor(fakeExtractor);
@@ -354,6 +355,7 @@ describe('createProcessor', () => {
         enqueueExtraction,
         runExtractionSweep: jest.fn().mockResolvedValue(undefined),
         runStartupRecovery: jest.fn().mockResolvedValue(undefined),
+        resumeEntitlementPaused: jest.fn().mockResolvedValue(undefined),
         _awaitIdle: jest.fn().mockResolvedValue(undefined),
       };
       provideExtractor(fakeExtractor);
