@@ -53,6 +53,7 @@ import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
 import { warmMapAppDetection } from '@/lib/openInMaps';
 import { warmSocialAppDetection } from '@/lib/openInSocial';
+import { EntitlementProvider, useEntitlement } from '@/lib/entitlement/provider';
 
 try {
   initSentry();
@@ -70,6 +71,14 @@ const SHARED_HEADER_OPTIONS = {
 } as const;
 
 export default function RootLayout() {
+  return (
+    <EntitlementProvider>
+      <RootLayoutInner />
+    </EntitlementProvider>
+  );
+}
+
+function RootLayoutInner() {
   const [ready, setReady] = useState(false);
   const [ctx, setCtx] = useState<{
     db: Database;
