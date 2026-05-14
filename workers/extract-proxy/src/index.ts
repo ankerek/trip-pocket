@@ -23,6 +23,7 @@ export interface Env {
   // secret. Both are read by /fetch-post for the IG carousel / og-failure path.
   APIFY_TOKEN?: string;
   APIFY_ACTOR_ID?: string;
+  RC_REST_API_KEY: string;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' } as const;
