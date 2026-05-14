@@ -46,15 +46,14 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
   // Seed from the cached file synchronously so first render has a definite
   // status. Provider sits outside the existing root `ready` guard — see
   // app/_layout.tsx changes in Task 21.
-  const cachedSeed = useMemo<EntitlementStatus | 'loading'>(() => {
-    return readCachedStatus() ?? 'loading';
-  }, []);
-
-  const [status, setStatus] = useState<'loading' | EntitlementStatus>(cachedSeed);
+  const [status, setStatus] = useState<'loading' | EntitlementStatus>(() => readCachedStatus() ?? 'loading');
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [offerings, setOfferings] = useState<PurchasesOfferings | null>(null);
-  const previousStatus = useRef<EntitlementStatus | 'loading'>(cachedSeed);
+  const previousStatus = useRef<EntitlementStatus | 'loading'>(status);
+  const offeringsRef = useRef<PurchasesOfferings | null>(offerings);
   const resumeHandlers = useRef<Set<() => void | Promise<void>>>(new Set());
+
+  useEffect(() => { offeringsRef.current = offerings; }, [offerings]);
 
   const applyCustomerInfo = useCallback((info: CustomerInfo | null) => {
     const next = entitlementStatus(info);
@@ -97,7 +96,13 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
         applyCustomerInfo(info);
       } catch (err) {
         console.warn('[entitlement] initial getCustomerInfo failed', err);
-        if (!cancelled) applyCustomerInfo(null);
+        if (!cancelled) {
+          // Don't apply null — that would overwrite the cache with 'inactive'
+          // and erase a previously-known good state. Keep the seed status from
+          // the cache and let the listener / next refresh recover.
+          setCustomerInfo(null);
+          setStatus((s) => (s === 'loading' ? (readCachedStatus() ?? 'inactive') : s));
+        }
       }
       try {
         const off = await Purchases.getOfferings();
@@ -112,6 +117,8 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
       };
       Purchases.addCustomerInfoUpdateListener(listenerCallback);
     })();
+    // cancelled guards the IIFE continuation; the listener is removed
+    // synchronously in cleanup so it will not fire after unmount.
     return () => {
       cancelled = true;
       if (listenerCallback) {
@@ -134,7 +141,7 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
       const plan = PLANS.find((p) => p.id === planId);
       if (!plan) return { ok: false, reason: 'error' };
       try {
-        const off = offerings ?? (await Purchases.getOfferings());
+        const off = offeringsRef.current ?? (await Purchases.getOfferings());
         const pkg = off.current?.availablePackages.find(
           (p) => p.product.identifier === plan.productId,
         );
@@ -157,7 +164,7 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
         return { ok: false, reason: 'error' };
       }
     },
-    [offerings],
+    [],
   );
 
   const restore = useCallback(async (): Promise<RestoreResult> => {
