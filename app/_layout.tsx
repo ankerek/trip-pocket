@@ -221,10 +221,13 @@ function RootLayoutInner() {
     // share the same in-flight mutex. See spec §4.1.
     void runForegroundIngest(ctx.db);
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
-      if (s === 'active') void runForegroundIngest(ctx.db);
+      if (s === 'active') {
+        void runForegroundIngest(ctx.db);
+        void refresh();
+      }
     });
     return () => sub.remove();
-  }, [ctx]);
+  }, [ctx, refresh]);
 
   // First-launch redirect. Fires once after the boot pipeline is ready so
   // we don't race the router. We `push` (rather than `replace`) so the
