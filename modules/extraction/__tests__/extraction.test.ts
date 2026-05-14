@@ -914,5 +914,65 @@ describe('createExtractor', () => {
       await e.runStartupRecovery();
       expect((await getStatus(db, 's1')).status).toBe('pending');
     });
+
+    it('does NOT flip a paused-failed row back to pending, but still flips a plain failed row', async () => {
+      const db = await freshDb();
+      // Paused row: failed + entitlement reason (invariant: recovery must leave it alone).
+      await seedSource(db, 'paused', { extractionStatus: 'failed' });
+      await db.runAsync(
+        `UPDATE sources SET extraction_paused_reason = 'entitlement' WHERE id = 'paused'`,
+      );
+      // Plain failed row: no paused reason (should be flipped to pending).
+      await seedSource(db, 'plain', { extractionStatus: 'failed' });
+
+      const e = createExtractor({
+        db,
+        extract: okExtract([]),
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+      });
+      await e.runStartupRecovery();
+
+      // Paused row must stay failed — recovery must not touch it.
+      expect((await getStatus(db, 'paused')).status).toBe('failed');
+      // Plain failed row must be reset so it can be retried.
+      expect((await getStatus(db, 'plain')).status).toBe('pending');
+    });
+  });
+
+  describe('entitlement-required (401) full pipeline path', () => {
+    it('sets extraction_paused_reason=entitlement, keeps status pending, and does not retry', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1');
+
+      const extract = jest.fn(async () => {
+        throw new ExtractionError('401', { kind: 'entitlement-required' });
+      }) as unknown as ExtractionRunner;
+
+      const e = createExtractor({
+        db,
+        extract,
+        ownerId: 'owner-1',
+        uuid: seqUuid,
+        now: () => NOW,
+        maxRetries: 3,
+      });
+
+      e.enqueueExtraction('s1');
+      await drain(e);
+
+      // Status stays pending — entitlement rows are NOT failures.
+      expect((await getStatus(db, 's1')).status).toBe('pending');
+
+      // The paused reason is stamped by markPaused via classifyFailure.
+      const row = await db.getFirstAsync<{ extraction_paused_reason: string | null }>(
+        `SELECT extraction_paused_reason FROM sources WHERE id = 's1'`,
+      );
+      expect(row?.extraction_paused_reason).toBe('entitlement');
+
+      // extract must have been called exactly once — no retry storm.
+      expect(extract).toHaveBeenCalledTimes(1);
+    });
   });
 });
