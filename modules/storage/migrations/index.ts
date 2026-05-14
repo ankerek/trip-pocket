@@ -4,6 +4,7 @@ import { urlShare } from './0002_url_share';
 import { pendingImportsNullablePath } from './0003_pending_imports_nullable_path';
 import { renameScreenshotToImage } from './0004_rename_screenshot_to_image';
 import { pipelineEvents } from './0005_pipeline_events';
+import { countrySearch } from './0006_country_search';
 
 export const migrations: Migration[] = [
   init,
@@ -11,4 +12,5 @@ export const migrations: Migration[] = [
   pendingImportsNullablePath,
   renameScreenshotToImage,
   pipelineEvents,
+  countrySearch,
 ];

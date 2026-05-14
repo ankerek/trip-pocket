@@ -82,13 +82,21 @@ describe('search integration: buildFtsMatch -> sources_fts MATCH', () => {
 // (rebuilds the FTS doc with raw_text + extracted_address). The screen's
 // SEARCH_SQL is duplicated verbatim here so the test catches drift.
 const PLACE_SEARCH_SQL = `
-  SELECT p.id          AS id,
-         p.name        AS name,
-         p.city        AS city,
-         p.category    AS category,
-         p.photo_name  AS photo_name,
-         p.trip_id     AS trip_id,
-         t.name        AS trip_name
+  SELECT p.id                  AS id,
+         p.name                AS name,
+         p.city                AS city,
+         p.country_code        AS country_code,
+         p.category            AS category,
+         p.photo_name          AS photo_name,
+         p.rating              AS rating,
+         p.price_level         AS price_level,
+         p.external_place_id   AS external_place_id,
+         p.enrichment_status   AS enrichment_status,
+         p.latitude            AS latitude,
+         p.longitude           AS longitude,
+         p.formatted_address   AS formatted_address,
+         p.trip_id             AS trip_id,
+         t.name                AS trip_name
     FROM places_fts
     JOIN places p ON p.id = places_fts.place_id
     LEFT JOIN trips t ON t.id = p.trip_id
@@ -139,13 +147,21 @@ async function seedSource(db: Database, id: string, tripId: string | null): Prom
 
 async function seedPlace(
   db: Database,
-  opts: { id: string; tripId: string | null; name: string; city?: string; category?: string },
+  opts: {
+    id: string;
+    tripId: string | null;
+    name: string;
+    city?: string;
+    category?: string;
+    countryCode?: string;
+  },
 ): Promise<void> {
   await insertPlace(db, {
     id: opts.id,
     tripId: opts.tripId,
     name: opts.name,
     city: opts.city ?? null,
+    countryCode: opts.countryCode ?? null,
     category: opts.category ?? null,
     ownerId: OWNER,
   });
@@ -239,5 +255,71 @@ describe('search integration: places_fts MATCH (places-first)', () => {
     });
     expect((await placeSearch(db, 'ramen', null)).map((r) => r.id)).toEqual(['p1']);
     expect((await placeSearch(db, 'biryani', null)).map((r) => r.id)).toEqual(['p1']);
+  });
+});
+
+describe('search integration: country name resolves via country_names join', () => {
+  it('finds a place by its country name when only the ISO code is stored', async () => {
+    const db = await freshDb();
+    await seedPlace(db, {
+      id: 'p1',
+      tripId: null,
+      name: 'Maru Tonkatsu',
+      city: 'Shibuya',
+      countryCode: 'JP',
+    });
+    await seedPlace(db, {
+      id: 'p2',
+      tripId: null,
+      name: 'Café Tonkin',
+      city: 'Paris',
+      countryCode: 'FR',
+    });
+
+    expect((await placeSearch(db, 'japan', null)).map((r) => r.id)).toEqual(['p1']);
+    expect((await placeSearch(db, 'france', null)).map((r) => r.id)).toEqual(['p2']);
+  });
+
+  it('AND-combines a country name with another term (japan ramen)', async () => {
+    const db = await freshDb();
+    await seedSource(db, 'src-jp', null);
+    await seedSource(db, 'src-fr', null);
+    await seedPlace(db, { id: 'jp', tripId: null, name: 'Some Ramen Shop', countryCode: 'JP' });
+    await seedPlace(db, { id: 'fr', tripId: null, name: 'Paris Ramen', countryCode: 'FR' });
+    await linkPlaceSource(db, { placeId: 'jp', sourceId: 'src-jp', extractionModel: 't', ownerId: OWNER });
+    await linkPlaceSource(db, { placeId: 'fr', sourceId: 'src-fr', extractionModel: 't', ownerId: OWNER });
+
+    expect((await placeSearch(db, 'japan ramen', null)).map((r) => r.id)).toEqual(['jp']);
+  });
+
+  it('updates the FTS doc when country_code changes after creation', async () => {
+    const db = await freshDb();
+    await seedPlace(db, { id: 'p1', tripId: null, name: 'Mystery Place', countryCode: 'JP' });
+    expect((await placeSearch(db, 'japan', null)).map((r) => r.id)).toEqual(['p1']);
+
+    await db.runAsync(
+      `UPDATE places SET country_code = ?, updated_at = ? WHERE id = ?`,
+      'IT',
+      new Date().toISOString(),
+      'p1',
+    );
+    expect((await placeSearch(db, 'japan', null)).map((r) => r.id)).toEqual([]);
+    expect((await placeSearch(db, 'italy', null)).map((r) => r.id)).toEqual(['p1']);
+  });
+
+  it('preserves the country term after a source is linked (full doc rebuild)', async () => {
+    const db = await freshDb();
+    await seedSource(db, 'src-1', null);
+    await seedPlace(db, { id: 'p1', tripId: null, name: 'Some Place', countryCode: 'JP' });
+    await linkPlaceSource(db, {
+      placeId: 'p1',
+      sourceId: 'src-1',
+      rawText: 'mentions ramen',
+      extractionModel: 't',
+      ownerId: OWNER,
+    });
+
+    expect((await placeSearch(db, 'japan', null)).map((r) => r.id)).toEqual(['p1']);
+    expect((await placeSearch(db, 'ramen', null)).map((r) => r.id)).toEqual(['p1']);
   });
 });

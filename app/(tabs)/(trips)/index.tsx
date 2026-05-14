@@ -126,30 +126,26 @@ export default function Trips() {
                 {item.count} place{item.count === 1 ? '' : 's'}
               </Text>
             </View>
-            <FlatList
-              data={item.previews}
-              horizontal
-              keyExtractor={(p) => p.id}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 14, gap: 6 }}
-              renderItem={({ item: p }) => (
-                <Pressable
-                  onPress={() => router.push(`/places/${p.id}`)}
-                  accessibilityRole="button"
-                  accessibilityLabel={p.name}
-                >
-                  <PreviewThumb place={p} />
-                </Pressable>
-              )}
-              ListEmptyComponent={
-                <Text
-                  className="pb-3 text-text-muted"
-                  style={{ fontSize: 12 }}
-                >
+            {item.previews.length === 0 ? (
+              <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+                <Text className="text-text-muted" style={{ fontSize: 12 }}>
                   No places yet
                 </Text>
-              }
-            />
+              </View>
+            ) : (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  paddingHorizontal: 14,
+                  paddingBottom: 14,
+                  gap: 6,
+                }}
+              >
+                {item.previews.map((p) => (
+                  <PreviewThumb key={p.id} place={p} />
+                ))}
+              </View>
+            )}
           </PressableScale>
         )}
       />
