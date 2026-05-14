@@ -4,6 +4,7 @@ import {
   type ExtractionErrorKind,
   type ExtractionResult,
 } from './extraction';
+import { getEntitlementUserId } from '@/lib/entitlement/userId';
 
 const responseSchema = z.object({
   places: z.array(
@@ -44,6 +45,15 @@ export async function extractFromProxy(
   proxyUrl: string,
   opts: ExtractFromProxyOptions = {},
 ): Promise<ExtractionResult> {
+  // Fail fast if RC hasn't initialised — route through the paused-state
+  // machinery the same way a 401 from the worker would.
+  let userId: string;
+  try {
+    userId = await getEntitlementUserId();
+  } catch {
+    throw new ExtractionError('extract-userid-unavailable', { kind: 'entitlement-required' });
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -51,7 +61,10 @@ export async function extractFromProxy(
   try {
     response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'X-RC-User-Id': userId,
+      },
       body: JSON.stringify({ ocr_text: ocrText }),
       signal: controller.signal,
     });

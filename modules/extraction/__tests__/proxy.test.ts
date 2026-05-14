@@ -1,5 +1,10 @@
+import { getEntitlementUserId } from '@/lib/entitlement/userId';
 import { ExtractionError } from '../extraction';
 import { extractFromProxy } from '../proxy';
+
+jest.mock('@/lib/entitlement/userId', () => ({
+  getEntitlementUserId: jest.fn(async () => '$RCAnonymousID:0123456789abcdef0123456789abcdef'),
+}));
 
 const URL = 'https://proxy.example.com/extract';
 
@@ -201,5 +206,35 @@ describe('extractFromProxy', () => {
       caught = e;
     }
     expect(caught).toBeInstanceOf(ExtractionError);
+  });
+
+  it('attaches X-RC-User-Id header on every fetch call', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      jsonResp(200, {
+        places: [],
+        model: 'gemini-2.5-flash-lite',
+      }),
+    ) as unknown as typeof fetch;
+
+    await extractFromProxy('hi', URL);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      URL,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-RC-User-Id': '$RCAnonymousID:0123456789abcdef0123456789abcdef',
+        }),
+      }),
+    );
+  });
+
+  it('throws entitlement-required (without fetching) when getEntitlementUserId rejects', async () => {
+    (getEntitlementUserId as jest.Mock).mockRejectedValueOnce(new Error('rc-not-ready'));
+    globalThis.fetch = jest.fn() as unknown as typeof fetch;
+
+    await expect(extractFromProxy('hi', URL)).rejects.toMatchObject({
+      classification: { kind: 'entitlement-required' },
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
