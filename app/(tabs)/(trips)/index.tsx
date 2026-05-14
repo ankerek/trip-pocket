@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Image, Pressable, Text, View, useCSSVariable } from '@/tw';
 import { FlatList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
 import { PressableScale } from '@/components/PressableScale';
@@ -187,7 +188,6 @@ function PreviewThumb({ place }: { place: TripPreviewPlace }) {
 
 function buildPhotoUri(photoName: string | null): string | null {
   if (!photoName) return null;
-  const Constants = require('expo-constants').default;
   const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
   if (!base) return null;
   return `${base.replace(/\/$/, '')}/${photoName}?w=144&h=180`;

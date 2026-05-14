@@ -3,14 +3,6 @@ import * as Sentry from '@sentry/react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { Stack, useRouter, usePathname } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-
-// Hold the native splash until we've decided whether to push the
-// onboarding modal. Without this, the JS layer becomes ready a frame
-// or two before the modal is pushed, and the user sees the (tabs) home
-// flash for that interval before the modal fades in on top.
-SplashScreen.preventAutoHideAsync().catch(() => {
-  // Already-hidden / unsupported environments are fine to swallow.
-});
 import { AppState, type AppStateStatus, useColorScheme } from 'react-native';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { initSentry, attachInstallId } from '@/lib/observability';
@@ -54,6 +46,14 @@ import Constants from 'expo-constants';
 import { warmMapAppDetection } from '@/lib/openInMaps';
 import { warmSocialAppDetection } from '@/lib/openInSocial';
 import { EntitlementProvider, useEntitlement } from '@/lib/entitlement/provider';
+
+// Hold the native splash until we've decided whether to push the
+// onboarding modal. Without this, the JS layer becomes ready a frame
+// or two before the modal is pushed, and the user sees the (tabs) home
+// flash for that interval before the modal fades in on top.
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // Already-hidden / unsupported environments are fine to swallow.
+});
 
 try {
   initSentry();
@@ -259,7 +259,7 @@ function RootLayoutInner() {
   // each pipeline module so paused work resumes when entitlement is restored.
   useEffect(() => {
     if (!ctx) return;
-    const unsubs: Array<() => void> = [];
+    const unsubs: (() => void)[] = [];
     unsubs.push(
       registerResumeHandler(async () => {
         await ctx.extractor.resumeEntitlementPaused();

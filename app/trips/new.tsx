@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Alert, ScrollView } from 'react-native';
-import { Pressable, Text, TextInput, View } from '@/tw';
+import { Pressable, Text, TextInput } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import * as Haptics from 'expo-haptics';

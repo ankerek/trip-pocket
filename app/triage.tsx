@@ -600,7 +600,7 @@ function TriageCard({
                 className="text-text-muted"
                 style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}
               >
-                COULDN'T READ
+                COULDN&apos;T READ
               </Text>
             )}
             <Text

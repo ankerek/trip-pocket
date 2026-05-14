@@ -13,9 +13,9 @@ import { Image, Pressable, Text, View } from '@/tw';
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/tw/theme';
+import * as Haptics from 'expo-haptics';
 
 type ThemeColors = ReturnType<typeof useThemeColors>;
-import * as Haptics from 'expo-haptics';
 
 // Screen 1 — Welcome. No back button, no progress bar. A casually fanned
 // stack of five place cards drops in to preview the end state before the

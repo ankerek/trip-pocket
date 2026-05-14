@@ -43,12 +43,12 @@ export default function PipelineLogScreen() {
   const [limit, setLimit] = useState(PAGE_SIZE);
 
   // Live-subscribe so new events appear without a manual refresh.
-  const rows = useLiveQuery<Row>(SQL, [limit], ['pipeline_events', 'sources']) ?? [];
+  const rows = useLiveQuery<Row>(SQL, [limit], ['pipeline_events', 'sources']);
 
   // Group consecutive rows that share the same source_id (DESC order from
   // SQL). Within each group, reverse the stage order so the pipeline reads
   // top→bottom in the same direction it actually ran.
-  const groups = useMemo(() => groupBySource(rows), [rows]);
+  const groups = useMemo(() => groupBySource(rows ?? []), [rows]);
 
   const onClear = () => {
     if (!db) return;
@@ -96,7 +96,7 @@ export default function PipelineLogScreen() {
                 onOpenSource={(id) => router.push(`/sources/${id}`)}
               />
             ))}
-            {rows.length >= limit && (
+            {(rows?.length ?? 0) >= limit && (
               <Pressable
                 onPress={() => setLimit((l) => l + PAGE_SIZE)}
                 accessibilityRole="button"
