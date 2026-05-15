@@ -65,7 +65,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
         place.city ? `In ${place.city}. Opens place detail.` : 'Opens place detail.'
       }
     >
-      <View className="relative aspect-[3/4] w-full">
+      <View className="relative aspect-square w-full">
         {photoUrl ? (
           <Image
             source={{ uri: photoUrl }}
@@ -153,5 +153,5 @@ function buildPhotoUrl(photoName: string | null): string | null {
   if (!photoName) return null;
   const base = Constants.expoConfig?.extra?.photoProxyUrlBase as string | undefined;
   if (!base) return null;
-  return `${base.replace(/\/$/, '')}/${photoName}?w=400&h=520`;
+  return `${base.replace(/\/$/, '')}/${photoName}?w=400&h=400`;
 }
