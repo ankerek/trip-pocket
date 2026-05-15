@@ -15,6 +15,7 @@ import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
 import { pickPhotosForImport } from '@/components/pickPhotos';
 import { DetailHeaderIconButton, DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
+import { cn } from '@/tw/cn';
 import { useThemeColors } from '@/tw/theme';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
@@ -300,7 +301,7 @@ function ToggleSegment({
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       accessibilityLabel={label}
-      className={`flex-1 items-center rounded-full py-2 ${active ? 'bg-bg' : ''}`}
+      className={cn('flex-1 items-center rounded-full py-2', active && 'bg-bg')}
     >
       <Text
         className={active ? 'text-text' : 'text-text-muted'}
@@ -367,9 +368,10 @@ function SubTabButton({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
-      className={`flex-1 items-center rounded-full px-4 py-2 ${
-        active ? 'bg-accent' : 'bg-hairline'
-      }`}
+      className={cn(
+        'flex-1 items-center rounded-full px-4 py-2',
+        active ? 'bg-accent' : 'bg-hairline',
+      )}
     >
       <Text
         className={active ? 'text-white' : 'text-text-muted'}

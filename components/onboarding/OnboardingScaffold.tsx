@@ -3,6 +3,7 @@ import { Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/Icon';
+import { cn } from '@/tw/cn';
 import { useThemeColors } from '@/tw/theme';
 import { OnboardingProgressBar } from './OnboardingProgressBar';
 
@@ -89,7 +90,7 @@ export function OnboardingScaffold({
               {sub}
             </Text>
           ) : null}
-          <View className={`${headline || sub ? 'mt-6' : 'mt-2'}${scroll ? '' : 'flex-1'}`}>
+          <View className={cn(headline || sub ? 'mt-6' : 'mt-2', !scroll && 'flex-1')}>
             {children}
           </View>
         </Body>

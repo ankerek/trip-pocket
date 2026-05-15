@@ -10,6 +10,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Pressable, Text, TextInput, View } from '@/tw';
+import { cn } from '@/tw/cn';
 import {
   assignSourceTrip,
   countPlacesByTrip,
@@ -269,7 +270,10 @@ function TripRow(props: {
       style={{ paddingVertical: 15, paddingHorizontal: 20, borderTopWidth: 1, gap: 10 }}
     >
       <Text
-        className={`flex-1 text-[15px] ${selected ? 'text-accent font-semibold' : 'text-text font-medium'}`}
+        className={cn(
+          'flex-1 text-[15px]',
+          selected ? 'text-accent font-semibold' : 'text-text font-medium',
+        )}
         numberOfLines={1}
       >
         {trip.name}

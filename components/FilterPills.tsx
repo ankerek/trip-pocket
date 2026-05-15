@@ -1,4 +1,5 @@
 import { Pressable, ScrollView, Text } from '@/tw';
+import { cn } from '@/tw/cn';
 
 export type FilterOption = {
   id: string;
@@ -34,12 +35,13 @@ export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps)
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             accessibilityLabel={opt.label}
-            className={`flex-row items-center gap-1.5 rounded-full px-3 py-1.5 ${
-              active ? 'bg-accent' : 'bg-hairline'
-            }`}
+            className={cn(
+              'flex-row items-center gap-1.5 rounded-full px-3 py-1.5',
+              active ? 'bg-accent' : 'bg-hairline',
+            )}
           >
             <Text
-              className={`text-[13px] ${active ? 'text-white' : 'text-text-muted'}`}
+              className={cn('text-[13px]', active ? 'text-white' : 'text-text-muted')}
               style={{
                 // Constant weight prevents the pill from changing width
                 // when toggling active — bolder glyphs measure wider and
@@ -51,7 +53,7 @@ export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps)
             </Text>
             {opt.count !== undefined ? (
               <Text
-                className={`text-[11px] ${active ? 'text-white/70' : 'text-text-muted'}`}
+                className={cn('text-[11px]', active ? 'text-white/70' : 'text-text-muted')}
                 style={{ fontVariant: ['tabular-nums'] }}
               >
                 {opt.count}
