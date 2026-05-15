@@ -13,6 +13,16 @@ class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Entitlement gate — check the App Group status file the main app
+        // writes on every entitlement change. If the user's subscription
+        // is inactive (or the cached value is too stale to trust), we
+        // refuse to write to pending_imports and instead show a screen
+        // pointing them back to the main app.
+        let verdict = EntitlementReader().read()
+        if verdict != .active {
+            presentEntitlementBlocked(verdict: verdict)
+            return
+        }
         let host = UIHostingController(rootView: TripPickerView(
             onSave: { [weak self] tripId, destinationName in
                 self?.lastTripId = tripId
@@ -29,6 +39,38 @@ class ShareViewController: UIViewController {
                 self.errorState.set(nil)
                 self.handleSave(tripId: self.lastTripId, destinationName: self.lastDestinationName)
             }
+        ))
+        addChild(host)
+        view.addSubview(host.view)
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        host.didMove(toParent: self)
+    }
+
+    private func presentEntitlementBlocked(verdict: EntitlementReader.Verdict) {
+        let title: String
+        let body: String
+        switch verdict {
+        case .stale:
+            title = "Open Trip Pocket"
+            body = "Open Trip Pocket to sync your subscription."
+        case .inactive:
+            title = "Subscription inactive"
+            body = "Open Trip Pocket to resume."
+        case .active:
+            // Unreachable — viewDidLoad only calls this when verdict != .active.
+            title = ""
+            body = ""
+        }
+        let host = UIHostingController(rootView: EntitlementBlockedView(
+            title: title,
+            body: body,
+            onDone: { [weak self] in self?.cancel() }
         ))
         addChild(host)
         view.addSubview(host.view)

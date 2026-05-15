@@ -33,6 +33,7 @@ function withExtensionTarget(config) {
         `${TARGET_NAME}/TripPickerView.swift`,
         `${TARGET_NAME}/TripReader.swift`,
         `${TARGET_NAME}/PendingImportWriter.swift`,
+        `${TARGET_NAME}/EntitlementReader.swift`,
       ],
       'PBXSourcesBuildPhase',
       'Sources',

@@ -30,6 +30,47 @@ final class SaveSuccessState: ObservableObject {
     }
 }
 
+// Shown by ShareViewController when the App Group's `entitlement-status.json`
+// reports an inactive or stale subscription. The share is refused at the
+// extension boundary — nothing is written to pending_imports — so the main
+// app's pipeline never sees a row it would just have to pause.
+struct EntitlementBlockedView: View {
+    let title: String
+    let body: String
+    let onDone: () -> Void
+
+    var bodyView: some View {
+        NavigationView {
+            VStack(spacing: 16) {
+                Spacer()
+                Image(systemName: "lock.circle.fill")
+                    .resizable()
+                    .frame(width: 56, height: 56)
+                    .foregroundColor(.orange)
+                Text(title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                Text(body)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Trip Pocket")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: onDone)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    var body: some View { bodyView }
+}
+
 struct TripPickerView: View {
     let onSave: (String?, String) -> Void
     let onCancel: () -> Void
