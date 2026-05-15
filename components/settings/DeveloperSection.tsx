@@ -79,7 +79,14 @@ export function DeveloperSection({ onForceRenderError }: Props) {
                 text: 'Replay',
                 onPress: () => {
                   resetOnboarding();
-                  router.replace('/onboarding');
+                  // Must `push`, not `replace` — the onboarding flow's exit
+                  // path is `router.dismissAll()` + `router.dismiss()`,
+                  // which assumes there's a non-onboarding screen
+                  // underneath the modal. Replacing the current (tabs)
+                  // screen with /onboarding leaves the root Stack empty
+                  // when the modal dismisses, throwing a navigation
+                  // error. Matches the first-launch path in _layout.tsx.
+                  router.push('/onboarding');
                 },
               },
             ],
