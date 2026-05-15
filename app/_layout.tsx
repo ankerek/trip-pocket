@@ -102,8 +102,30 @@ function RootLayoutInner() {
     (async () => {
       // Open the SQLite file inside the App Group container so the share extension
       // and the main app read/write the same database.
-      const db = await openDatabase('trip-pocket.db', getAppGroupContainerUri());
-      await runMigrations(db, migrations);
+      const dbDir = getAppGroupContainerUri();
+      console.log('[boot-debug] dbDir:', dbDir);
+      const db = await openDatabase('trip-pocket.db', dbDir);
+      const preTables = await db.getAllAsync<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`,
+      );
+      const preMig = await db
+        .getAllAsync<{ version: number }>(`SELECT version FROM schema_migrations ORDER BY version`)
+        .catch((e) => `error: ${(e as Error).message}`);
+      console.log('[boot-debug] before runMigrations — tables:', preTables, 'schema_migrations:', preMig);
+      try {
+        await runMigrations(db, migrations);
+        console.log('[boot-debug] runMigrations returned');
+      } catch (err) {
+        console.error('[boot-debug] runMigrations THREW', err);
+        throw err;
+      }
+      const postTables = await db.getAllAsync<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`,
+      );
+      const postMig = await db.getAllAsync<{ version: number }>(
+        `SELECT version FROM schema_migrations ORDER BY version`,
+      );
+      console.log('[boot-debug] after runMigrations — tables:', postTables, 'schema_migrations:', postMig);
       provideDatabase(db);
       void attachInstallId();
 
