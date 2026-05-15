@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 
-export default function TripsStack() {
+export default function SettingsStack() {
   return (
     <Stack
       screenOptions={{
@@ -13,10 +13,7 @@ export default function TripsStack() {
         headerBackButtonDisplayMode: 'minimal',
       }}
     >
-      {/* Trips index hides the native header and renders its own title
-          row so the + add button sits on the same line as the big "Trips"
-          text — mirrors the Pocket tab. */}
-      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="index" options={{ title: 'Settings' }} />
     </Stack>
   );
 }

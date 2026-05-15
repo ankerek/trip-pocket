@@ -98,7 +98,7 @@ export default function Welcome() {
           {/* App wordmark */}
           <View className="flex-row items-center">
             <Image
-              source={require('@/assets/pocket-trip-icon-2.png')}
+              source={require('@/assets/logo.png')}
               style={{ width: 28, height: 28, borderRadius: 7 }}
               contentFit="cover"
               accessibilityIgnoresInvertColors

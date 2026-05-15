@@ -306,40 +306,52 @@ function ExtractingFrame({ variant }: { variant: 'idle' | 'busy' }) {
           <DemoScreenshotMockup fixture={DEMO_SCREENSHOT} pulsing={variant === 'idle'} />
         </Animated.View>
         {variant === 'busy' && cardHeight > 0 ? (
-          <Animated.View
+          <View
             pointerEvents="none"
-            style={[
-              {
-                position: 'absolute',
-                left: 0,
-                right: 0,
-                top: 0,
-                height: SCAN_BAND_HEIGHT,
-                justifyContent: 'center',
-              },
-              scanStyle,
-            ]}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              borderRadius: 18,
+              overflow: 'hidden',
+            }}
           >
-            <LinearGradient
-              colors={[
-                'rgba(20, 184, 166, 0)',
-                'rgba(20, 184, 166, 0.35)',
-                'rgba(20, 184, 166, 0)',
+            <Animated.View
+              style={[
+                {
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: SCAN_BAND_HEIGHT,
+                  justifyContent: 'center',
+                },
+                scanStyle,
               ]}
-              locations={[0, 0.5, 1]}
-              style={{ position: 'absolute', inset: 0 }}
-            />
-            <View
-              style={{
-                height: 2,
-                backgroundColor: colors.accent,
-                shadowColor: colors.accent,
-                shadowOpacity: 0.9,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 0 },
-              }}
-            />
-          </Animated.View>
+            >
+              <LinearGradient
+                colors={[
+                  'rgba(20, 184, 166, 0)',
+                  'rgba(20, 184, 166, 0.35)',
+                  'rgba(20, 184, 166, 0)',
+                ]}
+                locations={[0, 0.5, 1]}
+                style={{ position: 'absolute', inset: 0 }}
+              />
+              <View
+                style={{
+                  height: 2,
+                  backgroundColor: colors.accent,
+                  shadowColor: colors.accent,
+                  shadowOpacity: 0.9,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 0 },
+                }}
+              />
+            </Animated.View>
+          </View>
         ) : null}
       </View>
       <Animated.View style={labelStyle}>

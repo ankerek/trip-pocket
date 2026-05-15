@@ -1,7 +1,8 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { PixelRatio, RefreshControl, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FlatList, Text, View } from '@/tw';
-import { Stack, useRouter, usePathname } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { useEntitlement } from '@/lib/entitlement/provider';
 import { openLapsePaywall } from '@/lib/paywall/openLapsePaywall';
 import { useLiveQuery, PROCESSING_SOURCES_WHERE } from '@/modules/storage';
@@ -64,6 +65,7 @@ export default function Pocket() {
   const pathname = usePathname();
   const { status } = useEntitlement();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const places = useLiveQuery<PlaceRow>(PLACES_SQL, [], ['places', 'trips']);
   const inboxCountRows = useLiveQuery<InboxCount>(INBOX_COUNT_SQL, [], ['sources']);
   const processingRows = useLiveQuery<InboxCount>(PROCESSING_COUNT_SQL, [], ['sources']);
@@ -101,8 +103,6 @@ export default function Pocket() {
     return places.filter((p) => p.trip_id === filter);
   }, [places, filter]);
 
-  const headerRight = () => <HeaderCaptureButton />;
-
   const cellStyle = useMemo(
     () => ({
       flex: 1 / numColumns,
@@ -138,8 +138,21 @@ export default function Pocket() {
     filter === ALL_FILTER_ID
   ) {
     return (
-      <>
-        <Stack.Screen options={{ headerRight }} />
+      <View className="bg-bg flex-1">
+        {/* Float the title over the EmptyState so the body centers in the
+            viewport, not in the post-title flex region. */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            paddingTop: insets.top,
+            zIndex: 1,
+          }}
+        >
+          <PocketTitleRow />
+        </View>
         <EmptyState
           icon="square.and.arrow.down"
           title="No places yet"
@@ -161,56 +174,76 @@ export default function Pocket() {
             accessibilityHint: 'Opens Photos to import images into the inbox',
           }}
         />
-      </>
+      </View>
     );
   }
 
   return (
-    <>
-      <Stack.Screen options={{ headerRight }} />
-      <FlatList
-        contentInsetAdjustmentBehavior="automatic"
-        className="bg-bg"
-        data={filteredPlaces}
-        keyExtractor={keyExtractor}
-        numColumns={numColumns}
-        // Force a re-mount when columns change; FlatList disallows toggling
-        // numColumns without a key change.
-        key={`grid-${numColumns}`}
-        // Spec §13: removeClippedSubviews OFF on the grid so source tiles
-        // remain mounted during shared-element transitions (phase 4).
-        removeClippedSubviews={false}
-        windowSize={5}
-        contentContainerClassName="pb-24"
-        columnWrapperStyle={numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined}
-        ItemSeparatorComponent={GridGap}
-        ListHeaderComponent={
-          <View>
-            <ProcessingBanner count={processingCount} />
-            <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
-            {/* InboxBanner only on the Untriaged filter — keeps the All
+    <FlatList
+      // No native header on this screen — contentInsetAdjustmentBehavior is
+      // 'never' so the title row we render ourselves is the very first thing
+      // below the status bar.
+      contentInsetAdjustmentBehavior="never"
+      className="bg-bg"
+      style={{ paddingTop: insets.top }}
+      data={filteredPlaces}
+      keyExtractor={keyExtractor}
+      numColumns={numColumns}
+      // Force a re-mount when columns change; FlatList disallows toggling
+      // numColumns without a key change.
+      key={`grid-${numColumns}`}
+      // Spec §13: removeClippedSubviews OFF on the grid so source tiles
+      // remain mounted during shared-element transitions (phase 4).
+      removeClippedSubviews={false}
+      windowSize={5}
+      contentContainerClassName="pb-24"
+      columnWrapperStyle={numColumns > 1 ? { paddingHorizontal: 11, gap: 6 } : undefined}
+      ItemSeparatorComponent={GridGap}
+      ListHeaderComponent={
+        <View>
+          <PocketTitleRow />
+          <ProcessingBanner count={processingCount} />
+          <FilterPills options={filterOptions} selectedId={filter} onSelect={setFilter} />
+          {/* InboxBanner only on the Untriaged filter — keeps the All
                 feed visually quiet for users who already have a queue
                 they're ignoring. */}
-            {filter === UNTRIAGED_FILTER_ID ? (
-              <InboxBanner count={inboxCount} onPress={() => router.push('/triage' as never)} />
-            ) : null}
-          </View>
-        }
-        ListEmptyComponent={
-          <View className="px-8 pt-12">
-            <Text className="text-text-muted text-center text-base">
-              {filter === UNTRIAGED_FILTER_ID
-                ? 'Nothing to triage.'
-                : 'No places yet for this filter.'}
-            </Text>
-          </View>
-        }
-        renderItem={renderItem}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
-        }
-      />
-    </>
+          {filter === UNTRIAGED_FILTER_ID ? (
+            <InboxBanner count={inboxCount} onPress={() => router.push('/triage' as never)} />
+          ) : null}
+        </View>
+      }
+      ListEmptyComponent={
+        <View className="px-8 pt-12">
+          <Text className="text-text-muted text-center text-base">
+            {filter === UNTRIAGED_FILTER_ID
+              ? 'Nothing to triage.'
+              : 'No places yet for this filter.'}
+          </Text>
+        </View>
+      }
+      renderItem={renderItem}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+      }
+    />
+  );
+}
+
+// Inline large-title row. iOS sizing — 34pt, bold, slight negative tracking,
+// matches the system large-title look so the screen still reads like a
+// standard tab even without the native header.
+function PocketTitleRow() {
+  return (
+    <View className="flex-row items-center justify-between px-4 pt-2 pb-2">
+      <Text
+        className="text-text"
+        style={{ fontSize: 34, fontWeight: '700', letterSpacing: -0.4 }}
+        accessibilityRole="header"
+      >
+        Pocket
+      </Text>
+      <HeaderCaptureButton />
+    </View>
   );
 }
 

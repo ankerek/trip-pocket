@@ -1,13 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack } from 'expo-router';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import Purchases, {
-  INTRO_ELIGIBILITY_STATUS,
-  type PurchasesPackage,
-} from 'react-native-purchases';
+import Purchases, { INTRO_ELIGIBILITY_STATUS, type PurchasesPackage } from 'react-native-purchases';
 import { Icon } from '@/components/Icon';
 import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
 import { useThemeColors } from '@/tw/theme';
@@ -18,9 +15,13 @@ import {
   type PlanConfig,
 } from '@/lib/entitlement/plans';
 import { useEntitlement } from '@/lib/entitlement/provider';
+import { PRIVACY_URL, TERMS_URL } from '@/lib/links';
 import { showToast } from '@/lib/toast/toast';
 
-const FALLBACK_PRICES: Record<PlanId, { price: string; per: string; trialNote: string; subNote: string }> = {
+const FALLBACK_PRICES: Record<
+  PlanId,
+  { price: string; per: string; trialNote: string; subNote: string }
+> = {
   yearly: {
     price: '$39.99',
     per: '/yr',
@@ -88,29 +89,40 @@ export function PaywallBody({
   const insets = useSafeAreaInsets();
   const [plan, setPlan] = useState<PlanId>(DEFAULT_SELECTED_PLAN);
   const [busy, setBusy] = useState(false);
-  const { offerings, customerInfo, purchasePlan, restore } = useEntitlement();
+  const { status, offerings, purchasePlan, restore } = useEntitlement();
+
+  // Auto-exit when entitlement is already active. Covers two paths:
+  //  1. Returning subscriber whose reinstall raced past the root-layout
+  //     onboarding gate (RC fetch resolved after the modal was pushed).
+  //  2. Lapse paywall where status flips back to active via the customer-
+  //     info listener (e.g. background renew, billing recovery).
+  // onSuccess is inline in the parent so its identity changes every render;
+  // route it through a ref + one-shot flag so the dismiss fires exactly once.
+  const onSuccessRef = useRef(onSuccess);
+  onSuccessRef.current = onSuccess;
+  const autoExitedRef = useRef(false);
+  useEffect(() => {
+    if (status === 'active' && !autoExitedRef.current) {
+      autoExitedRef.current = true;
+      onSuccessRef.current();
+    }
+  }, [status]);
 
   const selectedPlanCfg = PLANS.find((pl) => pl.id === plan);
   const selectedPkg = offerings?.current?.availablePackages.find(
     (p) => p.product.identifier === selectedPlanCfg?.productId,
   );
 
-  // Whether *this* Apple ID is still eligible for the intro offer per plan.
-  // Two signals, both required to count as eligible:
-  //
-  //   1. RC's checkTrialOrIntroductoryPriceEligibility — the API source of
-  //      truth in production. Treat UNKNOWN as ineligible so we never promise
-  //      a trial that StoreKit will reject.
-  //
-  //   2. customerInfo.allPurchasedProductIdentifiers must NOT contain the
-  //      product. Apple's sandbox keeps users "eligible" for trial offers
-  //      across cancel/expire cycles so renewals can be tested, but the
-  //      subscription has already lapsed — at that point a repeat trial is
-  //      misleading even if the sandbox accepts it. If the user has ever
-  //      purchased the product, the trial copy is wrong.
-  const [trialEligibility, setTrialEligibility] = useState<Record<PlanId, boolean>>({
-    yearly: false,
-    weekly: false,
+  // Eligibility per plan from RC. We only promise the trial when RC
+  // explicitly returns ELIGIBLE — UNKNOWN (RC couldn't determine, usually
+  // missing subscription-group info) falls back to non-intro copy per RC's
+  // recommendation, so we never make a promise StoreKit will reject.
+  // `undefined` = check not yet resolved; treat the same as non-eligible to
+  // avoid flashing trial copy that flips to "Subscribe" a frame later for
+  // ineligible users (mis-leading is worse than under-selling).
+  const [eligibility, setEligibility] = useState<Record<PlanId, boolean | undefined>>({
+    yearly: undefined,
+    weekly: undefined,
   });
   useEffect(() => {
     const ids = PLANS.map((p) => p.productId);
@@ -118,13 +130,13 @@ export function PaywallBody({
     Purchases.checkTrialOrIntroductoryPriceEligibility(ids)
       .then((map) => {
         if (cancelled) return;
-        const next: Record<PlanId, boolean> = { yearly: false, weekly: false };
+        const next: Record<PlanId, boolean | undefined> = { yearly: false, weekly: false };
         for (const planCfg of PLANS) {
           next[planCfg.id] =
             map[planCfg.productId]?.status ===
             INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE;
         }
-        setTrialEligibility(next);
+        setEligibility(next);
       })
       .catch((err) => {
         console.warn('[paywall] checkTrialOrIntroductoryPriceEligibility failed', err);
@@ -134,23 +146,15 @@ export function PaywallBody({
     };
   }, []);
 
-  const everPurchased = new Set(customerInfo?.allPurchasedProductIdentifiers ?? []);
-  const eligibleForSelected =
-    trialEligibility[plan] &&
-    selectedPlanCfg != null &&
-    !everPurchased.has(selectedPlanCfg.productId);
-  const trialDays = eligibleForSelected ? trialDaysFromPackage(selectedPkg) : null;
-  const ctaLabel = eligibleForSelected
-    ? trialDays
-      ? `Start your ${trialDays}-day free trial`
-      : 'Start your free trial'
+  const selectedTrialDays = trialDaysFromPackage(selectedPkg);
+  const hasTrial = selectedTrialDays != null && selectedTrialDays > 0 && eligibility[plan] === true;
+  const ctaLabel = hasTrial
+    ? `Start your ${selectedTrialDays}-day free trial`
     : selectedPlanCfg
       ? `Subscribe ${selectedPlanCfg.label.toLowerCase()}`
       : 'Subscribe';
-  const footerCopy = eligibleForSelected
-    ? trialDays
-      ? `Cancel anytime. No charge for ${trialDays} days. Then your plan auto-renews.`
-      : 'Cancel anytime during the free trial. Then your plan auto-renews.'
+  const footerCopy = hasTrial
+    ? `Cancel anytime. No charge for ${selectedTrialDays} days. Then your plan auto-renews.`
     : 'Cancel anytime. Your subscription auto-renews until cancelled.';
 
   async function handleStartTrial() {
@@ -166,7 +170,7 @@ export function PaywallBody({
     if (result.reason === 'user-cancelled') return;
     showToast({
       kind: 'error',
-      message: eligibleForSelected
+      message: hasTrial
         ? "Couldn't start your trial. Try again."
         : "Couldn't start your subscription. Try again.",
     });
@@ -217,7 +221,7 @@ export function PaywallBody({
         <ScrollView contentContainerClassName="px-6 pb-6" showsVerticalScrollIndicator={false}>
           <View className="items-center" style={{ marginTop: 8 }}>
             <Image
-              source={require('@/assets/pocket-trip-icon-2.png')}
+              source={require('@/assets/logo.png')}
               style={{ width: 56, height: 56, borderRadius: 14 }}
               contentFit="cover"
               accessibilityIgnoresInvertColors
@@ -254,11 +258,11 @@ export function PaywallBody({
               );
               const price = pkg?.product.priceString ?? FALLBACK_PRICES[p].price;
               const per = FALLBACK_PRICES[p].per;
-              const eligibleForThisPlan =
-                trialEligibility[p] && !everPurchased.has(planCfg.productId);
+              const planHasTrial =
+                eligibility[p] === true && pkg != null && (trialDaysFromPackage(pkg) ?? 0) > 0;
               const note = pkg
-                ? deriveNoteFromPackage(pkg, planCfg, eligibleForThisPlan)
-                : eligibleForThisPlan
+                ? deriveNoteFromPackage(pkg, planCfg, planHasTrial)
+                : planHasTrial
                   ? FALLBACK_PRICES[p].trialNote
                   : FALLBACK_PRICES[p].subNote;
               return (
@@ -358,7 +362,7 @@ export function PaywallBody({
               ·
             </Text>
             <Pressable
-              onPress={() => void Linking.openURL('https://trippocket.app/terms')}
+              onPress={() => void Linking.openURL(TERMS_URL)}
               accessibilityRole="link"
               accessibilityLabel="Terms"
             >
@@ -370,7 +374,7 @@ export function PaywallBody({
               ·
             </Text>
             <Pressable
-              onPress={() => void Linking.openURL('https://trippocket.app/privacy')}
+              onPress={() => void Linking.openURL(PRIVACY_URL)}
               accessibilityRole="link"
               accessibilityLabel="Privacy"
             >

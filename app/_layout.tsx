@@ -9,7 +9,7 @@ import { initSentry, attachInstallId } from '@/lib/observability';
 import { ErrorFallback } from '@/components/ErrorFallback';
 import { ErrorToast } from '@/components/ErrorToast';
 import { InactiveEntitlementBanner } from '@/components/InactiveEntitlementBanner';
-import { isOnboardingComplete } from '@/lib/onboarding/storage';
+import { isOnboardingComplete, markOnboardingComplete } from '@/lib/onboarding/storage';
 import {
   openDatabase,
   runMigrations,
@@ -274,7 +274,14 @@ function RootLayoutInner() {
   const [splashHidden, setSplashHidden] = useState(false);
   useEffect(() => {
     if (!ready || splashHidden) return;
-    if (needsOnboarding) {
+    // Hold the splash until entitlement resolves on every path:
+    //  - onboarding-needed + entitled → returning subscriber on reinstall;
+    //    skip the flow entirely.
+    //  - onboarding-done + inactive → lapsed user; goes splash → paywall.
+    // Without this, a clean reinstall would push onboarding before the
+    // RC fetch lands and force the user back through the welcome flow.
+    if (status === 'loading') return;
+    if (needsOnboarding && status !== 'active') {
       router.push('/onboarding');
       const t = setTimeout(() => {
         void SplashScreen.hideAsync();
@@ -282,9 +289,11 @@ function RootLayoutInner() {
       }, 400);
       return () => clearTimeout(t);
     }
-    // Onboarding done. Hold the splash until entitlement resolves so a
-    // lapsed user goes splash → paywall, not splash → (tabs) → paywall.
-    if (status === 'loading') return;
+    // Returning subscriber on a fresh install — flip the flag so we don't
+    // re-evaluate next launch even if the subscription later lapses.
+    if (needsOnboarding && status === 'active') {
+      markOnboardingComplete();
+    }
     void SplashScreen.hideAsync();
     setSplashHidden(true);
   }, [ready, needsOnboarding, splashHidden, router, status]);
@@ -366,17 +375,6 @@ function RootLayoutInner() {
               presentation: 'fullScreenModal',
               gestureEnabled: false,
               animation: 'fade',
-            }}
-          />
-          <Stack.Screen
-            name="settings"
-            options={{
-              headerShown: true,
-              presentation: 'formSheet',
-              sheetGrabberVisible: true,
-              sheetAllowedDetents: [0.5, 1.0],
-              title: 'Settings',
-              ...SHARED_HEADER_OPTIONS,
             }}
           />
           <Stack.Screen
