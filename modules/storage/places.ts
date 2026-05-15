@@ -22,6 +22,7 @@ export type Place = {
   longitude: number | null;
   formattedAddress: string | null;
   enrichmentStatus: EnrichmentStatus;
+  enrichmentPausedReason: string | null;
   enrichedAt: string | null;
   enrichmentModel: string | null;
 
@@ -48,6 +49,7 @@ type Row = {
   longitude: number | null;
   formatted_address: string | null;
   enrichment_status: EnrichmentStatus;
+  enrichment_paused_reason: string | null;
   enriched_at: string | null;
   enrichment_model: string | null;
   owner_id: string;
@@ -58,7 +60,7 @@ type Row = {
 const ALL = `id, trip_id, name, city, country_code, category, normalized_key,
    external_place_id, photo_name, description, rating, price_level,
    external_url, latitude, longitude, formatted_address,
-   enrichment_status, enriched_at, enrichment_model,
+   enrichment_status, enrichment_paused_reason, enriched_at, enrichment_model,
    owner_id, created_at, updated_at`;
 
 function rowToPlace(r: Row): Place {
@@ -80,6 +82,7 @@ function rowToPlace(r: Row): Place {
     longitude: r.longitude,
     formattedAddress: r.formatted_address,
     enrichmentStatus: r.enrichment_status,
+    enrichmentPausedReason: r.enrichment_paused_reason,
     enrichedAt: r.enriched_at,
     enrichmentModel: r.enrichment_model,
     ownerId: r.owner_id,

@@ -646,13 +646,11 @@ describe('createProcessor', () => {
           const db = await freshDb();
           await seedUrlSource(db, 'u1', 'https://instagram.com/p/ABC/');
 
-          const fetchPost: UrlFetcher = jest
-            .fn()
-            .mockRejectedValue(
-              new FetchPostError('fetch-post-entitlement-required', {
-                kind: 'entitlement-required',
-              }),
-            );
+          const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
+            new FetchPostError('fetch-post-entitlement-required', {
+              kind: 'entitlement-required',
+            }),
+          );
           const p = createProcessor({ db, ocr: jest.fn(), fetchPost, maxRetries: 3 });
           p.enqueueUrlFetch('u1');
           await drain(p);
@@ -757,13 +755,11 @@ describe('createProcessor', () => {
             const db = await freshDb();
             await seedUrlSource(db, 'ent1', 'https://instagram.com/p/ENT/');
 
-            const fetchPost: UrlFetcher = jest
-              .fn()
-              .mockRejectedValue(
-                new FetchPostError('fetch-post-entitlement-required', {
-                  kind: 'entitlement-required',
-                }),
-              );
+            const fetchPost: UrlFetcher = jest.fn().mockRejectedValue(
+              new FetchPostError('fetch-post-entitlement-required', {
+                kind: 'entitlement-required',
+              }),
+            );
             const p = createProcessor({ db, ocr: jest.fn(), fetchPost, maxRetries: 3 });
             p.enqueueUrlFetch('ent1');
             await drain(p);

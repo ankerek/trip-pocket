@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import * as Sentry from '@sentry/react-native';
 import Purchases, {
   PURCHASES_ERROR_CODE,
   type CustomerInfo,
@@ -17,7 +18,28 @@ import Purchases, {
 } from 'react-native-purchases';
 import { entitlementStatus, type EntitlementStatus } from './status';
 import { readCachedStatus, writeCachedStatus } from './storage';
+import { writeSharedEntitlementStatus } from './shared-storage';
 import { PLANS, type PlanId } from './plans';
+
+type ResumeHandler = () => void | number | Promise<void | number>;
+type ResumedListener = (totalResumed: number) => void;
+
+function mirrorToAppGroup(status: EntitlementStatus): void {
+  try {
+    writeSharedEntitlementStatus(status);
+  } catch (err) {
+    // The Share Extension fail-opens to 'active' when the file is missing, so a
+    // write failure here only means a freshly-cancelled user might still slip a
+    // share through and pause downstream. Surface via breadcrumb so we can spot
+    // it if entitlement misconfigs ever land in prod.
+    Sentry.addBreadcrumb({
+      category: 'entitlement',
+      level: 'warning',
+      message: 'writeSharedEntitlementStatus failed',
+      data: { error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}
 
 type PurchaseResult = { ok: true } | { ok: false; reason: 'user-cancelled' | 'pending' | 'error' };
 
@@ -31,8 +53,14 @@ interface EntitlementContextValue {
   purchasePlan: (planId: PlanId) => Promise<PurchaseResult>;
   restore: () => Promise<RestoreResult>;
   // Callback registered by RootLayoutInner once the pipeline modules are
-  // mounted. Fired on inactive→active transitions.
-  registerResumeHandler: (handler: () => void | Promise<void>) => () => void;
+  // mounted. Fired on inactive→active transitions. May return a number — the
+  // count of rows that the handler unpaused — which is summed across handlers
+  // and surfaced via `registerOnResumed`.
+  registerResumeHandler: (handler: ResumeHandler) => () => void;
+  // Fires after all resume handlers settle on an inactive→active transition,
+  // with the total count of rows unpaused. The layout uses this to show a
+  // "Resuming your imports…" toast when total > 0.
+  registerOnResumed: (handler: ResumedListener) => () => void;
 }
 
 const Ctx = createContext<EntitlementContextValue | null>(null);
@@ -53,7 +81,8 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
   const [offerings, setOfferings] = useState<PurchasesOfferings | null>(null);
   const previousStatus = useRef<EntitlementStatus | 'loading'>(status);
   const offeringsRef = useRef<PurchasesOfferings | null>(offerings);
-  const resumeHandlers = useRef<Set<() => void | Promise<void>>>(new Set());
+  const resumeHandlers = useRef<Set<ResumeHandler>>(new Set());
+  const onResumedListeners = useRef<Set<ResumedListener>>(new Set());
 
   useEffect(() => {
     offeringsRef.current = offerings;
@@ -64,19 +93,42 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
     setCustomerInfo(info);
     setStatus(next);
     writeCachedStatus(next);
+    mirrorToAppGroup(next);
     const prev = previousStatus.current;
     previousStatus.current = next;
     if (next === 'active' && prev !== 'active') {
-      resumeHandlers.current.forEach((h) => {
-        Promise.resolve(h()).catch((err) =>
-          console.warn('[entitlement] resume handler failed', err),
-        );
-      });
+      const handlers = Array.from(resumeHandlers.current);
+      void (async () => {
+        const results = await Promise.allSettled(handlers.map((h) => Promise.resolve(h())));
+        let total = 0;
+        for (const r of results) {
+          if (r.status === 'fulfilled' && typeof r.value === 'number') total += r.value;
+          if (r.status === 'rejected') {
+            console.warn('[entitlement] resume handler failed', r.reason);
+          }
+        }
+        if (total > 0) {
+          onResumedListeners.current.forEach((l) => {
+            try {
+              l(total);
+            } catch (err) {
+              console.warn('[entitlement] onResumed listener failed', err);
+            }
+          });
+        }
+      })();
     }
   }, []);
 
   // Init effect.
   useEffect(() => {
+    // Mirror the synchronously-seeded status into the App Group container
+    // before any RC fetch resolves. Without this, the Share Extension on a
+    // cold launch (after a cancellation in the prior session) would read no
+    // file and fail-open to 'active', letting a share-in attempt slip through.
+    const seed = readCachedStatus();
+    if (seed) mirrorToAppGroup(seed);
+
     // Keep a stable ref to the listener callback so we can remove it on cleanup.
     let listenerCallback: ((info: CustomerInfo) => void) | null = null;
     let cancelled = false;
@@ -181,10 +233,17 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
     }
   }, [applyCustomerInfo]);
 
-  const registerResumeHandler = useCallback((handler: () => void | Promise<void>) => {
+  const registerResumeHandler = useCallback((handler: ResumeHandler) => {
     resumeHandlers.current.add(handler);
     return () => {
       resumeHandlers.current.delete(handler);
+    };
+  }, []);
+
+  const registerOnResumed = useCallback((handler: ResumedListener) => {
+    onResumedListeners.current.add(handler);
+    return () => {
+      onResumedListeners.current.delete(handler);
     };
   }, []);
 
@@ -197,8 +256,18 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
       purchasePlan,
       restore,
       registerResumeHandler,
+      registerOnResumed,
     }),
-    [status, customerInfo, offerings, refresh, purchasePlan, restore, registerResumeHandler],
+    [
+      status,
+      customerInfo,
+      offerings,
+      refresh,
+      purchasePlan,
+      restore,
+      registerResumeHandler,
+      registerOnResumed,
+    ],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

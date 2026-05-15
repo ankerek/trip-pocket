@@ -1,7 +1,9 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { PixelRatio, RefreshControl, useWindowDimensions } from 'react-native';
 import { FlatList, Text, View } from '@/tw';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, usePathname } from 'expo-router';
+import { useEntitlement } from '@/lib/entitlement/provider';
+import { openLapsePaywall } from '@/lib/paywall/openLapsePaywall';
 import { useLiveQuery, PROCESSING_SOURCES_WHERE } from '@/modules/storage';
 import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
 import { HeaderCaptureButton } from '@/components/HeaderCaptureButton';
@@ -59,6 +61,8 @@ const UNTRIAGED_FILTER_ID = '__untriaged__';
 export default function Pocket() {
   const db = useDatabase();
   const router = useRouter();
+  const pathname = usePathname();
+  const { status } = useEntitlement();
   const colors = useThemeColors();
   const places = useLiveQuery<PlaceRow>(PLACES_SQL, [], ['places', 'trips']);
   const inboxCountRows = useLiveQuery<InboxCount>(INBOX_COUNT_SQL, [], ['sources']);
@@ -143,7 +147,16 @@ export default function Pocket() {
           cta={{
             label: 'Add from Photos',
             onPress: () => {
-              if (db) void pickPhotosForImport(db);
+              if (!db) return;
+              if (status === 'inactive') {
+                openLapsePaywall(router, pathname);
+                return;
+              }
+              void pickPhotosForImport(db, { getEntitlementStatus: () => status }).then(
+                (outcome) => {
+                  if (outcome.entitlementRequired) openLapsePaywall(router, pathname);
+                },
+              );
             },
             accessibilityHint: 'Opens Photos to import images into the inbox',
           }}

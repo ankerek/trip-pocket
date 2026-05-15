@@ -60,7 +60,12 @@ export type EnrichmentRunner = (payload: EnrichRequestPayload) => Promise<Enrich
 
 export type Enricher = {
   enqueueEnrichment(placeId: string): void;
-  resumeEntitlementPaused(): Promise<void>;
+  /**
+   * Clears entitlement-paused places and re-enqueues them. Returns the number
+   * of places that were unpaused (so the layout can show one combined
+   * "Resuming…" toast across all pipeline modules).
+   */
+  resumeEntitlementPaused(): Promise<number>;
   /** Test-only. Resolves once all in-flight work has settled. */
   _awaitIdle(): Promise<void>;
 };
@@ -424,18 +429,20 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     );
   }
 
-  async function resumeEntitlementPaused(): Promise<void> {
+  async function resumeEntitlementPaused(): Promise<number> {
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM places WHERE enrichment_paused_reason = 'entitlement'`,
     );
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
     const ts = getNow();
     await opts.db.runAsync(
       `UPDATE places SET enrichment_paused_reason = NULL, updated_at = ?
        WHERE enrichment_paused_reason = 'entitlement'`,
       ts,
     );
+    notifyChange('places');
     for (const r of rows) enqueueEnrichment(r.id);
+    return rows.length;
   }
 
   async function _awaitIdle(): Promise<void> {

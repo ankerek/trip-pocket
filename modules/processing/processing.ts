@@ -28,7 +28,12 @@ export type Processor = {
   runOcrSweep(): Promise<void>;
   runUrlFetchSweep(): Promise<void>;
   runStartupRecovery(): Promise<void>;
-  resumeUrlFetchEntitlementPaused(): Promise<void>;
+  /**
+   * Clears url-fetch entitlement-paused rows and re-enqueues them. Returns the
+   * number of rows unpaused so callers can decide whether to surface a
+   * "Resuming…" toast.
+   */
+  resumeUrlFetchEntitlementPaused(): Promise<number>;
   /**
    * Test-only. Resolves once the in-memory queue has fully drained.
    * Production code should not need to call this — work happens in the
@@ -441,17 +446,19 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     for (const r of rows) enqueueUrlFetch(r.id);
   }
 
-  async function resumeUrlFetchEntitlementPaused(): Promise<void> {
+  async function resumeUrlFetchEntitlementPaused(): Promise<number> {
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources WHERE url_fetch_paused_reason = 'entitlement'`,
     );
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
     await opts.db.runAsync(
       `UPDATE sources SET url_fetch_paused_reason = NULL, updated_at = ?
        WHERE url_fetch_paused_reason = 'entitlement'`,
       getNow(),
     );
+    notifyChange('sources');
     for (const r of rows) enqueueUrlFetch(r.id);
+    return rows.length;
   }
 
   async function runStartupRecovery(): Promise<void> {

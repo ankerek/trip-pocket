@@ -11,8 +11,22 @@ import { ensurePhotosAccess } from '@/lib/permissions/photos';
 import { classifyImportError } from '@/lib/errors/captureErrors';
 import { showToast } from '@/lib/toast/toast';
 
+export type EntitlementStatusSnapshot = 'loading' | 'active' | 'inactive';
+
 export type PickPhotosOptions = {
   tripId?: string | null;
+  /**
+   * Optional sync entitlement reader. When provided, pickPhotosForImport gates
+   * both before opening the picker and again after it returns (the user can
+   * spend arbitrary time in the system picker, during which the subscription
+   * can lapse via foreground refresh). When the gate denies, the function
+   * returns early with `entitlementRequired: true` and the picker outcome
+   * counters all stay zero. Callers route to the lapse paywall.
+   *
+   * Omitting this option preserves the unguarded behavior — used by the test
+   * harness and any legacy call site that hasn't been wired up yet.
+   */
+  getEntitlementStatus?: () => EntitlementStatusSnapshot;
 };
 
 export type PickPhotosOutcome = {
@@ -20,7 +34,23 @@ export type PickPhotosOutcome = {
   failed: number; // hard failures + items skipped after storage-full short-circuit
   storageFull: number;
   denied: boolean;
+  /**
+   * Set when the entitlement gate rejected the capture (either pre-picker or
+   * post-picker re-check). Callers should open the lapse paywall.
+   */
+  entitlementRequired: boolean;
 };
+
+function emptyOutcome(overrides: Partial<PickPhotosOutcome> = {}): PickPhotosOutcome {
+  return {
+    imported: 0,
+    failed: 0,
+    storageFull: 0,
+    denied: false,
+    entitlementRequired: false,
+    ...overrides,
+  };
+}
 
 // Opens the system photo library and imports the selected images. When
 // `tripId` is provided, freshly imported sources are assigned to that
@@ -29,9 +59,12 @@ export async function pickPhotosForImport(
   db: Database,
   options: PickPhotosOptions = {},
 ): Promise<PickPhotosOutcome> {
+  if (options.getEntitlementStatus && options.getEntitlementStatus() === 'inactive') {
+    return emptyOutcome({ entitlementRequired: true });
+  }
   const access = await ensurePhotosAccess();
   if (access === 'denied') {
-    return { imported: 0, failed: 0, storageFull: 0, denied: true };
+    return emptyOutcome({ denied: true });
   }
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
@@ -39,7 +72,12 @@ export async function pickPhotosForImport(
     selectionLimit: 20,
   });
   if (result.canceled) {
-    return { imported: 0, failed: 0, storageFull: 0, denied: false };
+    return emptyOutcome();
+  }
+  // Re-check after the picker returns — the user may have been in the system
+  // picker for minutes while a foreground refresh flipped the status.
+  if (options.getEntitlementStatus && options.getEntitlementStatus() === 'inactive') {
+    return emptyOutcome({ entitlementRequired: true });
   }
   const outcome = await runImports(db, result.assets, options.tripId ?? null);
   reportOutcome(outcome, result.assets.length);
@@ -56,12 +94,7 @@ async function runImports(
   const now = new Date().toISOString();
   const fs = createImportFs();
 
-  const outcome: PickPhotosOutcome = {
-    imported: 0,
-    failed: 0,
-    storageFull: 0,
-    denied: false,
-  };
+  const outcome: PickPhotosOutcome = emptyOutcome();
   const queue = [...assets];
   let storageFullDetected = false;
 

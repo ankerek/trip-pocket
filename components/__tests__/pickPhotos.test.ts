@@ -51,7 +51,13 @@ describe('pickPhotosForImport', () => {
   test('returns denied outcome when permission is denied and never opens the picker', async () => {
     ensureMock.mockResolvedValue('denied');
     const outcome = await pickPhotosForImport(db);
-    expect(outcome).toEqual({ imported: 0, failed: 0, storageFull: 0, denied: true });
+    expect(outcome).toEqual({
+      imported: 0,
+      failed: 0,
+      storageFull: 0,
+      denied: true,
+      entitlementRequired: false,
+    });
     expect(launchMock).not.toHaveBeenCalled();
     expect(showToastMock).not.toHaveBeenCalled();
   });
@@ -60,9 +66,59 @@ describe('pickPhotosForImport', () => {
     ensureMock.mockResolvedValue('granted');
     launchMock.mockResolvedValue({ canceled: true });
     const outcome = await pickPhotosForImport(db);
-    expect(outcome).toEqual({ imported: 0, failed: 0, storageFull: 0, denied: false });
+    expect(outcome).toEqual({
+      imported: 0,
+      failed: 0,
+      storageFull: 0,
+      denied: false,
+      entitlementRequired: false,
+    });
     expect(importMock).not.toHaveBeenCalled();
     expect(showToastMock).not.toHaveBeenCalled();
+  });
+
+  test('inactive entitlement before picker — returns entitlementRequired, never opens picker', async () => {
+    const outcome = await pickPhotosForImport(db, {
+      getEntitlementStatus: () => 'inactive',
+    });
+    expect(outcome).toEqual({
+      imported: 0,
+      failed: 0,
+      storageFull: 0,
+      denied: false,
+      entitlementRequired: true,
+    });
+    expect(ensureMock).not.toHaveBeenCalled();
+    expect(launchMock).not.toHaveBeenCalled();
+    expect(importMock).not.toHaveBeenCalled();
+  });
+
+  test('entitlement flips inactive while picker is open — discards selection, no imports', async () => {
+    ensureMock.mockResolvedValue('granted');
+    launchMock.mockResolvedValue({
+      canceled: false,
+      assets: [asset('a'), asset('b')],
+    });
+    const statuses: ('active' | 'inactive')[] = ['active', 'inactive'];
+    const outcome = await pickPhotosForImport(db, {
+      getEntitlementStatus: () => statuses.shift()!,
+    });
+    expect(outcome.entitlementRequired).toBe(true);
+    expect(importMock).not.toHaveBeenCalled();
+  });
+
+  test('active entitlement at both checkpoints — proceeds normally', async () => {
+    ensureMock.mockResolvedValue('granted');
+    launchMock.mockResolvedValue({
+      canceled: false,
+      assets: [asset('a')],
+    });
+    importMock.mockResolvedValue({ status: 'imported', sourceId: 'x' });
+    const outcome = await pickPhotosForImport(db, {
+      getEntitlementStatus: () => 'active',
+    });
+    expect(outcome.entitlementRequired).toBe(false);
+    expect(outcome.imported).toBe(1);
   });
 
   test('all imports succeed — silent (no toast)', async () => {

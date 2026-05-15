@@ -19,6 +19,8 @@ export type Source = {
   ocrStatus: ProcessingStatus;
   ocrText: string | null;
   extractionStatus: ProcessingStatus;
+  extractionPausedReason: string | null;
+  urlFetchPausedReason: string | null;
   capturedAt: string;
   ownerId: string;
   createdAt: string;
@@ -74,6 +76,8 @@ type Row = {
   ocr_status: ProcessingStatus;
   ocr_text: string | null;
   extraction_status: ProcessingStatus;
+  extraction_paused_reason: string | null;
+  url_fetch_paused_reason: string | null;
   captured_at: string;
   owner_id: string;
   created_at: string;
@@ -81,7 +85,7 @@ type Row = {
 };
 
 const ALL_COLUMNS =
-  'id, kind, platform, trip_id, file_path, url, caption, content_hash, origin, ocr_status, ocr_text, extraction_status, captured_at, owner_id, created_at, updated_at';
+  'id, kind, platform, trip_id, file_path, url, caption, content_hash, origin, ocr_status, ocr_text, extraction_status, extraction_paused_reason, url_fetch_paused_reason, captured_at, owner_id, created_at, updated_at';
 
 function rowToSource(r: Row): Source {
   return {
@@ -97,6 +101,8 @@ function rowToSource(r: Row): Source {
     ocrStatus: r.ocr_status,
     ocrText: r.ocr_text,
     extractionStatus: r.extraction_status,
+    extractionPausedReason: r.extraction_paused_reason,
+    urlFetchPausedReason: r.url_fetch_paused_reason,
     capturedAt: r.captured_at,
     ownerId: r.owner_id,
     createdAt: r.created_at,

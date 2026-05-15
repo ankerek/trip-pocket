@@ -3,6 +3,8 @@ import { thumbnailBadge } from '../thumbnailBadge';
 const base = {
   ocr_status: 'done' as const,
   extraction_status: 'done' as const,
+  extraction_paused_reason: null,
+  url_fetch_paused_reason: null,
   place_count: 0,
 };
 
@@ -51,5 +53,25 @@ describe('thumbnailBadge', () => {
     // extraction_status='done', but assert the logic isn't fragile to
     // hypothetical race orderings).
     expect(thumbnailBadge({ ...base, place_count: 3 })).toBe('pin');
+  });
+
+  it('paused when extraction is entitlement-paused (overrides shimmer)', () => {
+    expect(
+      thumbnailBadge({
+        ...base,
+        ocr_status: 'done',
+        extraction_status: 'pending',
+        extraction_paused_reason: 'entitlement',
+      }),
+    ).toBe('paused');
+  });
+
+  it('paused when url_fetch is entitlement-paused', () => {
+    expect(
+      thumbnailBadge({
+        ...base,
+        url_fetch_paused_reason: 'entitlement',
+      }),
+    ).toBe('paused');
   });
 });

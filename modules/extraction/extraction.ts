@@ -46,8 +46,12 @@ export type Extractor = {
   enqueueExtraction(sourceId: string): void;
   runExtractionSweep(): Promise<void>;
   runStartupRecovery(): Promise<void>;
-  /** Clears entitlement-paused rows and re-sweeps; call when entitlement becomes active. */
-  resumeEntitlementPaused(): Promise<void>;
+  /**
+   * Clears entitlement-paused rows and re-sweeps; call when entitlement becomes
+   * active. Returns the number of rows that were unpaused so callers can
+   * decide whether to surface a "Resuming your imports…" toast.
+   */
+  resumeEntitlementPaused(): Promise<number>;
   /** Test-only. Resolves once the in-memory queue has fully drained. */
   _awaitIdle(): Promise<void>;
 };
@@ -326,14 +330,16 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     );
   }
 
-  async function resumeEntitlementPaused(): Promise<void> {
-    await opts.db.runAsync(
+  async function resumeEntitlementPaused(): Promise<number> {
+    const result = await opts.db.runAsync(
       `UPDATE sources
           SET extraction_paused_reason = NULL, updated_at = ?
         WHERE extraction_paused_reason = 'entitlement'`,
       getNow(),
     );
+    if (result.changes > 0) notifyChange('sources');
     await runExtractionSweep();
+    return result.changes;
   }
 
   async function _awaitIdle(): Promise<void> {

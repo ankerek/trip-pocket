@@ -8,6 +8,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { initSentry, attachInstallId } from '@/lib/observability';
 import { ErrorFallback } from '@/components/ErrorFallback';
 import { ErrorToast } from '@/components/ErrorToast';
+import { InactiveEntitlementBanner } from '@/components/InactiveEntitlementBanner';
 import { isOnboardingComplete } from '@/lib/onboarding/storage';
 import {
   openDatabase,
@@ -46,6 +47,7 @@ import Constants from 'expo-constants';
 import { warmMapAppDetection } from '@/lib/openInMaps';
 import { warmSocialAppDetection } from '@/lib/openInSocial';
 import { EntitlementProvider, useEntitlement } from '@/lib/entitlement/provider';
+import { showToast } from '@/lib/toast/toast';
 
 // Hold the native splash until we've decided whether to push the
 // onboarding modal. Without this, the JS layer becomes ready a frame
@@ -96,7 +98,7 @@ function RootLayoutInner() {
   // pop the user back out when markOnboardingComplete fires inside the flow.
   const needsOnboarding = useMemo(() => !isOnboardingComplete(), []);
 
-  const { status, refresh, registerResumeHandler } = useEntitlement();
+  const { status, refresh, registerResumeHandler, registerOnResumed } = useEntitlement();
 
   useEffect(() => {
     (async () => {
@@ -111,7 +113,12 @@ function RootLayoutInner() {
       const preMig = await db
         .getAllAsync<{ version: number }>(`SELECT version FROM schema_migrations ORDER BY version`)
         .catch((e) => `error: ${(e as Error).message}`);
-      console.log('[boot-debug] before runMigrations — tables:', preTables, 'schema_migrations:', preMig);
+      console.log(
+        '[boot-debug] before runMigrations — tables:',
+        preTables,
+        'schema_migrations:',
+        preMig,
+      );
       try {
         await runMigrations(db, migrations);
         console.log('[boot-debug] runMigrations returned');
@@ -125,7 +132,12 @@ function RootLayoutInner() {
       const postMig = await db.getAllAsync<{ version: number }>(
         `SELECT version FROM schema_migrations ORDER BY version`,
       );
-      console.log('[boot-debug] after runMigrations — tables:', postTables, 'schema_migrations:', postMig);
+      console.log(
+        '[boot-debug] after runMigrations — tables:',
+        postTables,
+        'schema_migrations:',
+        postMig,
+      );
       provideDatabase(db);
       void attachInstallId();
 
@@ -277,42 +289,64 @@ function RootLayoutInner() {
     setSplashHidden(true);
   }, [ready, needsOnboarding, splashHidden, router, status]);
 
-  // Task 15: Wire resume handlers — fan out inactive→active transitions to
-  // each pipeline module so paused work resumes when entitlement is restored.
+  // Wire resume handlers — fan out inactive→active transitions to each
+  // pipeline module so paused work resumes when entitlement is restored. Each
+  // handler returns the count of rows it unpaused; the provider aggregates and
+  // fires onResumed below.
   useEffect(() => {
     if (!ctx) return;
     const unsubs: (() => void)[] = [];
-    unsubs.push(
-      registerResumeHandler(async () => {
-        await ctx.extractor.resumeEntitlementPaused();
-      }),
-    );
-    unsubs.push(
-      registerResumeHandler(async () => {
-        await ctx.enricher.resumeEntitlementPaused();
-      }),
-    );
-    unsubs.push(
-      registerResumeHandler(async () => {
-        await ctx.processor.resumeUrlFetchEntitlementPaused();
-      }),
-    );
+    unsubs.push(registerResumeHandler(() => ctx.extractor.resumeEntitlementPaused()));
+    unsubs.push(registerResumeHandler(() => ctx.enricher.resumeEntitlementPaused()));
+    unsubs.push(registerResumeHandler(() => ctx.processor.resumeUrlFetchEntitlementPaused()));
     return () => unsubs.forEach((u) => u());
   }, [ctx, registerResumeHandler]);
 
-  // Task 23: Lapse gate — when the user's entitlement is inactive after
-  // onboarding is complete, redirect to the paywall in lapse mode. The
-  // pathname guard prevents stacked modals on re-fires. Skip in __DEV__ so
-  // the dev-only `x` dismiss affordance retains its meaning.
+  // Resume toast — fires after the provider has summed resumed-row counts
+  // across all handlers. Only shown when at least one row actually resumed,
+  // so a renew with no paused work stays silent.
   useEffect(() => {
-    if (__DEV__) return;
-    if (!ready) return;
-    if (needsOnboarding) return;
-    if (status === 'loading') return;
-    if (status !== 'inactive') return;
-    if (pathname.startsWith('/onboarding/paywall')) return;
-    router.replace('/onboarding/paywall?mode=lapse');
-  }, [ready, needsOnboarding, status, pathname, router]);
+    return registerOnResumed((total) => {
+      if (total <= 0) return;
+      showToast({
+        kind: 'success',
+        message: 'Welcome back. Resuming your imports…',
+        durationMs: 2500,
+      });
+    });
+  }, [registerOnResumed]);
+
+  // Late-registration replay — the provider fires resume handlers immediately
+  // on inactive→active transitions, but the handlers can't register until ctx
+  // is ready. A transition during that gap is dropped. When ctx becomes
+  // available with status already `active`, run a one-shot sweep so any rows
+  // that paused in a prior session resume now.
+  const [replayDone, setReplayDone] = useState(false);
+  useEffect(() => {
+    if (replayDone) return;
+    if (!ctx) return;
+    if (status !== 'active') return;
+    setReplayDone(true);
+    void (async () => {
+      try {
+        const counts = await Promise.all([
+          ctx.extractor.resumeEntitlementPaused(),
+          ctx.enricher.resumeEntitlementPaused(),
+          ctx.processor.resumeUrlFetchEntitlementPaused(),
+        ]);
+        const total = counts.reduce((a, b) => a + b, 0);
+        if (total > 0) {
+          showToast({
+            kind: 'success',
+            message: 'Welcome back. Resuming your imports…',
+            durationMs: 2500,
+          });
+        }
+      } catch (err) {
+        console.warn('[layout] late-registration resume replay failed', err);
+      }
+    })();
+  }, [ctx, status, replayDone]);
 
   if (!ready) return null;
   return (
@@ -402,7 +436,24 @@ function RootLayoutInner() {
               title: 'Places',
             }}
           />
+          <Stack.Screen
+            name="paywall-lapse"
+            options={{
+              headerShown: false,
+              // Sibling of `onboarding/` so it isn't trapped inside the
+              // fullScreenModal stack. Gesture-dismissible because a returning
+              // user is allowed to keep browsing in read-only mode.
+              presentation: 'modal',
+              gestureEnabled: true,
+              animation: 'slide_from_bottom',
+            }}
+          />
         </Stack>
+        <InactiveEntitlementBanner
+          status={status}
+          needsOnboarding={needsOnboarding}
+          pathname={pathname}
+        />
         <ErrorToast />
       </ThemeProvider>
     </Sentry.ErrorBoundary>

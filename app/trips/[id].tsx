@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from '@/tw';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useEntitlement } from '@/lib/entitlement/provider';
+import { openLapsePaywall } from '@/lib/paywall/openLapsePaywall';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
@@ -19,6 +21,7 @@ import { cn } from '@/tw/cn';
 import { useThemeColors } from '@/tw/theme';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
+                                 s.extraction_paused_reason, s.url_fetch_paused_reason,
                                  COALESCE(p.place_count, 0) AS place_count
                             FROM sources s
                        LEFT JOIN (
@@ -49,7 +52,9 @@ type ViewMode = 'grid' | 'map';
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const pathname = usePathname();
   const db = useDatabase();
+  const { status: entitlementStatus } = useEntitlement();
   const [trip, setTrip] = useState<Trip | null | 'loading'>('loading');
   const [tab, setTab] = useState<'photos' | 'places'>('places');
   const [view, setView] = useState<ViewMode>('grid');
@@ -90,7 +95,16 @@ export default function TripDetail() {
     if (process.env.EXPO_OS === 'ios') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
-    void pickPhotosForImport(db, { tripId: id });
+    if (entitlementStatus === 'inactive') {
+      openLapsePaywall(router, pathname);
+      return;
+    }
+    void pickPhotosForImport(db, {
+      tripId: id,
+      getEntitlementStatus: () => entitlementStatus,
+    }).then((outcome) => {
+      if (outcome.entitlementRequired) openLapsePaywall(router, pathname);
+    });
   };
 
   const headerRight = (

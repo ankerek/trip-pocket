@@ -39,6 +39,8 @@
   --color-info-text: #115e59;
   --color-danger-bg: #fee2e2;
   --color-danger-text: #991b1b;
+  --color-warning-bg: #fef3c7;
+  --color-warning-text: #92400e;
   --color-hairline: rgba(15, 23, 42, 0.06);
   --color-overlay-strong: rgba(0, 0, 0, 0.55);
 
@@ -61,6 +63,8 @@
     --color-info-text: #5eead4;
     --color-danger-bg: #3f1d1d;
     --color-danger-text: #fca5a5;
+    --color-warning-bg: #422006;
+    --color-warning-text: #fcd34d;
     --color-hairline: rgba(255, 255, 255, 0.08);
     --color-overlay-strong: rgba(0, 0, 0, 0.55);
   }
