@@ -210,14 +210,16 @@ function FannedTileCard({ tile, colors }: { tile: FannedTile; colors: ThemeColor
         },
       ]}
     >
-      <View style={{ transform: [{ rotate: `${tile.rotation}deg` }] }}>
+      <View
+        shouldRasterizeIOS
+        renderToHardwareTextureAndroid
+        style={{ transform: [{ rotate: `${tile.rotation}deg` }] }}
+      >
         <View
           style={{
             backgroundColor: colors.bg,
             borderRadius: 16,
-            borderWidth: 1,
-            borderColor: colors.hairline,
-            overflow: 'hidden',
+            padding: 1,
             shadowColor: '#000',
             shadowOffset: { width: 0, height: 6 },
             shadowOpacity: 0.16,
@@ -225,7 +227,14 @@ function FannedTileCard({ tile, colors }: { tile: FannedTile; colors: ThemeColor
             elevation: 6,
           }}
         >
-          <View style={{ width: '100%', aspectRatio: 4 / 5 }}>
+          <View
+            style={{
+              width: '100%',
+              aspectRatio: 4 / 5,
+              borderRadius: 15,
+              overflow: 'hidden',
+            }}
+          >
             <Image
               source={{ uri: tile.uri }}
               style={{ position: 'absolute', inset: 0 }}
