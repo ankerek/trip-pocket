@@ -695,30 +695,5 @@ describe('sources additions', () => {
       const place = await db.getFirstAsync(`SELECT id FROM places WHERE id = 'pShared'`);
       expect(place).toBeTruthy();
     });
-
-    it('removes tags attached to the deleted source', async () => {
-      const db = await freshDb();
-      await insertSource(db, {
-        id: 's1',
-        tripId: null,
-        filePath: '/x/s1.jpg',
-        contentHash: 'h-s1',
-        origin: 'manual',
-        capturedAt: '2026-05-10T10:00:00Z',
-        ownerId,
-      });
-      await db.runAsync(
-        `INSERT INTO tags (id, source_id, kind, value, owner_id, created_at, updated_at)
-         VALUES ('tag1', 's1', 'food', 'sushi', ?, ?, ?)`,
-        ownerId,
-        '2026-05-10T10:00:00Z',
-        '2026-05-10T10:00:00Z',
-      );
-
-      await deleteSource(db, 's1', { unlinkFile: () => {} });
-
-      const tag = await db.getFirstAsync(`SELECT id FROM tags WHERE id = 'tag1'`);
-      expect(tag).toBeNull();
-    });
   });
 });

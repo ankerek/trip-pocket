@@ -103,7 +103,7 @@ describe('trips repository', () => {
   });
 
   describe('deleteTrip — cascade', () => {
-    it('removes the trip, all member sources, their files, places, junctions, and tags', async () => {
+    it('removes the trip, all member sources, their files, places, and junctions', async () => {
       const db = await freshDb();
       const deletedFiles: string[] = [];
       const fakeUnlink = (path: string) => deletedFiles.push(path);

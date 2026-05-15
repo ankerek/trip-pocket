@@ -106,7 +106,7 @@ const okExtract = (
   places: Array<{
     name: string;
     city: string;
-    category: 'place' | 'food' | 'activity';
+    category: 'food' | 'drinks' | 'stays' | 'sights' | 'activities' | 'shops';
     address?: string;
     country_code?: string;
   }>,
@@ -145,7 +145,7 @@ describe('createExtractor', () => {
       await seedSource(db, 's1', { ocrText: 'Maru Tonkatsu, Shibuya. Try Tsukiji.' });
       const extract = okExtract([
         { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
-        { name: 'Tsukiji Outer Market', city: 'Tokyo', category: 'place' },
+        { name: 'Tsukiji Outer Market', city: 'Tokyo', category: 'sights' },
       ]);
       const e = createExtractor({
         db,
@@ -182,7 +182,7 @@ describe('createExtractor', () => {
             address: '1 Chome-24-23 Jiyugaoka, Meguro City, Tokyo 152-0035, Japan',
             category: 'food',
           },
-          { name: 'No Address Place', city: 'Kyoto', category: 'place' },
+          { name: 'No Address Place', city: 'Kyoto', category: 'sights' },
         ]),
         ownerId: 'owner-1',
         uuid: seqUuid,
@@ -220,7 +220,7 @@ describe('createExtractor', () => {
         db,
         extract: okExtract([
           { name: 'Kosoan', city: 'Tokyo', category: 'food', country_code: 'JP' },
-          { name: 'Mystery', city: '', category: 'place', country_code: '' },
+          { name: 'Mystery', city: '', category: 'sights', country_code: '' },
         ]),
         ownerId: 'owner-1',
         uuid: seqUuid,
@@ -555,7 +555,7 @@ describe('createExtractor', () => {
       const extract = okExtract([
         { name: 'Starbucks', city: 'Tokyo', category: 'food' },
         { name: 'starbucks', city: 'Tokyo ', category: 'food' },
-        { name: 'Tsukiji', city: 'Tokyo', category: 'place' },
+        { name: 'Tsukiji', city: 'Tokyo', category: 'sights' },
       ]);
       const e = createExtractor({
         db,
@@ -784,7 +784,7 @@ describe('createExtractor', () => {
       await seedSource(db, 's1');
       await db.runAsync(`DELETE FROM sources WHERE id = 's1'`);
 
-      const extract = okExtract([{ name: 'X', city: 'Y', category: 'place' }]);
+      const extract = okExtract([{ name: 'X', city: 'Y', category: 'sights' }]);
       const e = createExtractor({
         db,
         extract,

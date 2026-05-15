@@ -14,6 +14,7 @@ import {
   type Place,
 } from '@/modules/storage';
 import { Icon } from '@/components/Icon';
+import { CATEGORY_ICON, CATEGORY_LABEL } from '@/components/PlaceTile';
 import { TripChip } from '@/components/TripChip';
 import { useDatabase } from '@/components/useDatabase';
 import { TripPicker, type TripPickerMode } from '@/components/TripPicker';
@@ -496,9 +497,12 @@ export default function PlaceDetail() {
 }
 
 const CATEGORY_META: Record<string, { icon: string; label: string }> = {
-  food: { icon: 'fork.knife', label: 'Food' },
-  activity: { icon: 'figure.walk', label: 'Activity' },
-  place: { icon: 'mappin.circle', label: 'Place' },
+  food: { icon: CATEGORY_ICON.food, label: CATEGORY_LABEL.food },
+  drinks: { icon: CATEGORY_ICON.drinks, label: CATEGORY_LABEL.drinks },
+  stays: { icon: CATEGORY_ICON.stays, label: CATEGORY_LABEL.stays },
+  sights: { icon: CATEGORY_ICON.sights, label: CATEGORY_LABEL.sights },
+  activities: { icon: CATEGORY_ICON.activities, label: CATEGORY_LABEL.activities },
+  shops: { icon: CATEGORY_ICON.shops, label: CATEGORY_LABEL.shops },
 };
 
 // Photo-aware category pill — translucent dark fill with white text/icon

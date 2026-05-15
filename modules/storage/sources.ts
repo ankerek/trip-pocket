@@ -305,7 +305,6 @@ export async function deleteSource(
     );
     filePath = fileRow?.file_path ?? null;
 
-    await db.runAsync(`DELETE FROM tags WHERE source_id = ?`, id);
     await db.runAsync(`DELETE FROM place_sources WHERE source_id = ?`, id);
     await db.runAsync(`DELETE FROM sources WHERE id = ?`, id);
 

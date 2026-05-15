@@ -91,7 +91,7 @@ describe('url-share migration (0002)', () => {
     // the idempotency guard directly.
     const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(sources)`);
     expect(cols.map((c) => c.name)).toEqual(expect.arrayContaining(['platform', 'caption']));
-    expect(await getMigrationVersion(db)).toBe(7);
+    expect(await getMigrationVersion(db)).toBe(migrations[migrations.length - 1]!.version);
   });
 });
 
@@ -196,7 +196,7 @@ describe('pending_imports nullable-path migration (0003)', () => {
         WHERE type='table' AND name LIKE 'pending_imports%'`,
     );
     expect(tables.map((t) => t.name)).toEqual(['pending_imports']);
-    expect(await getMigrationVersion(db)).toBe(7);
+    expect(await getMigrationVersion(db)).toBe(migrations[migrations.length - 1]!.version);
   });
 });
 
@@ -369,7 +369,6 @@ describe('initial migration (0001)', () => {
         'sources',
         'places',
         'place_sources',
-        'tags',
         'pending_imports',
         'meta',
         'schema_migrations',
@@ -379,6 +378,9 @@ describe('initial migration (0001)', () => {
     expect(names).not.toContain('screenshots');
     expect(names).not.toContain('extracted_places');
     expect(names).not.toContain('place_enrichments');
+    // `tags` was introduced in 0001 and dropped in 0009 (it was never written
+    // to by app code). A fully-migrated DB should not contain it.
+    expect(names).not.toContain('tags');
   });
 
   it('creates places_fts and sources_fts virtual tables', async () => {
@@ -397,7 +399,7 @@ describe('schema shape — post-soft-delete-removal', () => {
   it('no table has a deleted_at column', async () => {
     const db = await openDatabase(':memory:');
     await runMigrations(db, migrations);
-    for (const table of ['trips', 'sources', 'places', 'place_sources', 'tags']) {
+    for (const table of ['trips', 'sources', 'places', 'place_sources']) {
       const cols = await db.getAllAsync<{ name: string }>(
         `SELECT name FROM pragma_table_info(?)`,
         table,
@@ -445,5 +447,126 @@ describe('schema shape — post-soft-delete-removal', () => {
     );
     expect(row?.content).toMatch(/Maru Tonkatsu/);
     expect(row?.content).not.toMatch(/Sushi Bar/);
+  });
+});
+
+describe('category rename migration (0008)', () => {
+  // Helper: build a DB at v7 (just before 0008) so we can seed legacy values
+  // and observe what 0008 does to them.
+  async function dbAtV7(): Promise<Database> {
+    const db = await openDatabase(':memory:');
+    const upTo7 = migrations.filter((m) => m.version <= 7);
+    await runMigrations(db, upTo7);
+    return db;
+  }
+
+  async function seedPlace(db: Database, id: string, category: string | null): Promise<void> {
+    await db.runAsync(
+      `INSERT INTO places (id, name, normalized_key, category,
+                           enrichment_status, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', 'o1', ?, ?)`,
+      id,
+      `Place ${id}`,
+      `place ${id}|x`,
+      category,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
+    );
+  }
+
+  it("renames 'activity' to 'activities' and 'place' to NULL, leaves 'food' alone", async () => {
+    const db = await dbAtV7();
+    await seedPlace(db, 'p-food', 'food');
+    await seedPlace(db, 'p-activity', 'activity');
+    await seedPlace(db, 'p-place', 'place');
+    await seedPlace(db, 'p-null', null);
+
+    await runMigrations(db, migrations);
+
+    const rows = await db.getAllAsync<{ id: string; category: string | null }>(
+      `SELECT id, category FROM places ORDER BY id`,
+    );
+    const byId = new Map(rows.map((r) => [r.id, r.category]));
+    expect(byId.get('p-food')).toBe('food');
+    expect(byId.get('p-activity')).toBe('activities');
+    expect(byId.get('p-place')).toBeNull();
+    expect(byId.get('p-null')).toBeNull();
+  });
+
+  it('is idempotent on re-run (no UPDATE matches the second time)', async () => {
+    const db = await dbAtV7();
+    await seedPlace(db, 'p-activity', 'activity');
+    await runMigrations(db, migrations);
+    // Re-running the same migration set again must not break: the schema
+    // version is already at the latest, so runMigrations skips both new ones.
+    await runMigrations(db, migrations);
+    const row = await db.getFirstAsync<{ category: string | null }>(
+      `SELECT category FROM places WHERE id = 'p-activity'`,
+    );
+    expect(row?.category).toBe('activities');
+  });
+});
+
+describe('drop tags migration (0009)', () => {
+  it('drops the tags table', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    const tables = await db.getAllAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name = 'tags'`,
+    );
+    expect(tables).toEqual([]);
+  });
+
+  it('sources_fts still indexes ocr_text + trip name on INSERT and UPDATE', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    await db.runAsync(
+      `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+       VALUES ('t1', 'Japan', 'o1', ?, ?)`,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
+    );
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, trip_id, content_hash, origin,
+                            ocr_text, captured_at, owner_id, created_at, updated_at)
+       VALUES ('s1', 'image', 't1', 'h1', 'share', 'tonkatsu ramen', ?, 'o1', ?, ?)`,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
+    );
+
+    let row = await db.getFirstAsync<{ content: string }>(
+      `SELECT content FROM sources_fts WHERE source_id = 's1'`,
+    );
+    expect(row?.content).toMatch(/tonkatsu ramen/);
+    expect(row?.content).toMatch(/Japan/);
+
+    await db.runAsync(
+      `UPDATE sources SET ocr_text = 'soba udon', updated_at = ? WHERE id = 's1'`,
+      '2026-05-10T10:01:00Z',
+    );
+    row = await db.getFirstAsync<{ content: string }>(
+      `SELECT content FROM sources_fts WHERE source_id = 's1'`,
+    );
+    expect(row?.content).toMatch(/soba udon/);
+    expect(row?.content).not.toMatch(/tonkatsu ramen/);
+  });
+
+  it('removes the source_fts row when its source is DELETEd', async () => {
+    const db = await openDatabase(':memory:');
+    await runMigrations(db, migrations);
+    await db.runAsync(
+      `INSERT INTO sources (id, kind, content_hash, origin, ocr_text,
+                            captured_at, owner_id, created_at, updated_at)
+       VALUES ('s1', 'image', 'h1', 'share', 'noodles', ?, 'o1', ?, ?)`,
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
+      '2026-05-10T10:00:00Z',
+    );
+    await db.runAsync(`DELETE FROM sources WHERE id = 's1'`);
+    const row = await db.getFirstAsync<{ content: string }>(
+      `SELECT content FROM sources_fts WHERE source_id = 's1'`,
+    );
+    expect(row).toBeNull();
   });
 });

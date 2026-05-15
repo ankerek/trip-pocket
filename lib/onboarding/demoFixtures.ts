@@ -3,10 +3,12 @@
 // real-world places shown for illustration only. Spec:
 // docs/superpowers/specs/2026-05-13-onboarding-redesign-design.md.
 
+import type { PlaceCategory } from '@/components/PlaceTile';
+
 export type DemoPlaceFixture = {
   name: string;
   city: string;
-  category: 'food' | 'place' | 'activity';
+  category: PlaceCategory;
   /** Unsplash CDN URL. Replace with a bundled asset if you'd rather not
    *  rely on a third-party CDN at first-launch. */
   photoUrl: string;
@@ -68,7 +70,7 @@ export const DEMO_SHARE: DemoShareFixture = {
   reveal: {
     name: 'Fushimi Inari Taisha',
     city: 'Kyoto',
-    category: 'place',
+    category: 'sights',
     photoUrl: 'https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=400&q=70',
   },
 };

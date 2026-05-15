@@ -8,7 +8,7 @@ export const placeSchema = z.object({
   name: z.string().min(1),
   city: z.string(), // empty string allowed — LLM signals truly ambiguous
   address: z.string(), // empty string when text has no street address
-  category: z.enum(['place', 'food', 'activity']),
+  category: z.enum(['food', 'drinks', 'stays', 'sights', 'activities', 'shops']),
   // ISO 3166-1 alpha-2. Lenient parser: any non-conforming value (missing,
   // wrong case, 3-letter, full name, non-string, …) coerces to empty
   // string. Rationale: a single malformed country_code from the LLM

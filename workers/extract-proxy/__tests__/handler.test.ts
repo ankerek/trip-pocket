@@ -162,7 +162,7 @@ describe('handleExtract', () => {
       jest.fn(async () =>
         geminiOkResponse([
           { name: 'Maru Tonkatsu', city: 'Tokyo', category: 'food' },
-          { name: 'Tsukiji Market', city: 'Tokyo', category: 'place' },
+          { name: 'Tsukiji Market', city: 'Tokyo', category: 'sights' },
         ]),
       ) as unknown as typeof fetch,
     );

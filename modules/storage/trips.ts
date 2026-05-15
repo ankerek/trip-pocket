@@ -147,12 +147,8 @@ export async function deleteTrip(
     );
     const affectedPlaceIds = affectedPlaceRows.map((r) => r.place_id);
 
-    // FK-leaf cleanup: tags first, then junctions, then orphan-prune places,
-    // then defensive-untriage shared places, then the sources, then the trip.
-    await db.runAsync(
-      `DELETE FROM tags WHERE source_id IN (SELECT id FROM sources WHERE trip_id = ?)`,
-      id,
-    );
+    // FK-leaf cleanup: junctions, then orphan-prune places, then
+    // defensive-untriage shared places, then the sources, then the trip.
     await db.runAsync(
       `DELETE FROM place_sources WHERE source_id IN (SELECT id FROM sources WHERE trip_id = ?)`,
       id,

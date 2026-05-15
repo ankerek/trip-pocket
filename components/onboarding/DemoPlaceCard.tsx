@@ -1,5 +1,6 @@
 import { Image, Text, View } from '@/tw';
 import { Icon } from '@/components/Icon';
+import { CATEGORY_ICON, CATEGORY_LABEL } from '@/components/PlaceTile';
 import { useThemeColors } from '@/tw/theme';
 import type { DemoPlaceFixture } from '@/lib/onboarding/demoFixtures';
 
@@ -7,18 +8,6 @@ import type { DemoPlaceFixture } from '@/lib/onboarding/demoFixtures';
 // components/PlaceRow.tsx (44pt photo + name + city/category subtitle)
 // but it's pure presentational — no DB lookup, no enrichment trigger,
 // no routing. Spec: 2026-05-13-onboarding-redesign-design.md.
-
-const CATEGORY_ICON: Record<DemoPlaceFixture['category'], string> = {
-  food: 'fork.knife',
-  activity: 'figure.walk',
-  place: 'mappin.circle',
-};
-
-const CATEGORY_LABEL: Record<DemoPlaceFixture['category'], string> = {
-  food: 'Food',
-  activity: 'Activity',
-  place: 'Place',
-};
 
 export function DemoPlaceCard({ place }: { place: DemoPlaceFixture }) {
   const colors = useThemeColors();

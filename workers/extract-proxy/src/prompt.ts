@@ -7,7 +7,14 @@ For each place return:
 - name: the proper name of the venue (e.g. "Maru Tonkatsu", "Tsukiji Outer Market"). Not generic categories ("a ramen shop"). Not descriptions ("the place near the station").
 - city: the city the place is in. Infer from context if possible (neighborhood names, country names, surrounding text). Empty string if truly ambiguous — never guess wildly.
 - address: the full street address as it appears in the text, verbatim — including neighborhood, postal code, and country if present (e.g. "1 Chome-24-23 Jiyugaoka, Meguro City, Tokyo 152-0035, Japan"). Translate the country to English if the text uses another language ("Japon" → "Japan"). Empty string if no street address is present in the text. Do not invent or guess an address.
-- category: "food" for restaurants / cafés / bars / markets. "activity" for things to do (hikes, museums, viewpoints, tours, day-trips). "place" for everything else (hotels, neighborhoods, generic locations).
+- category: one of:
+    "food"       — restaurants, cafés, bakeries, food markets, food halls
+    "drinks"     — bars, cocktail lounges, breweries, wineries, nightlife
+    "stays"      — hotels, hostels, ryokans, guesthouses, vacation rentals
+    "sights"     — landmarks, viewpoints, museums, galleries, neighborhoods, parks
+    "activities" — hikes, tours, classes, experiences, day-trips, surf spots
+    "shops"      — boutiques, malls, souvenir markets, bookstores
+  Pick the bucket that matches the place's primary daytime intent. A café that becomes a bar at night is "food". A museum gift shop named as the venue itself is "shops"; a museum that mentions its gift shop in passing is "sights".
 - country_code: ISO 3166-1 alpha-2 UPPERCASE code of the country the place is in (e.g. "JP", "US", "FR"). Always uppercase, exactly two letters. Infer from context (country name, currency, language, city). Empty string if truly ambiguous — never guess. Never emit 3-letter codes or full country names.
 
 If the text has no travel places, return {"places": []}. This includes memes, screenshots of conversations, app UI, recipes without a venue, generic inspirational quotes, and travel imagery without a named place. Empty array is the correct answer for noise — do not invent.
@@ -30,7 +37,10 @@ export const GEMINI_RESPONSE_SCHEMA = {
           name: { type: 'STRING' },
           city: { type: 'STRING' },
           address: { type: 'STRING' },
-          category: { type: 'STRING', enum: ['place', 'food', 'activity'] },
+          category: {
+            type: 'STRING',
+            enum: ['food', 'drinks', 'stays', 'sights', 'activities', 'shops'],
+          },
           country_code: { type: 'STRING' },
         },
         required: ['name', 'city', 'address', 'category', 'country_code'],

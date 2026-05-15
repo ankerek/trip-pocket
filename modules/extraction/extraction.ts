@@ -10,7 +10,7 @@ export type ExtractedPlaceInput = {
   // Street address from the OCR text, verbatim (or empty string when none).
   // Persisted on the place_sources junction row and used by /enrich as a hint.
   address: string;
-  category: 'place' | 'food' | 'activity';
+  category: 'food' | 'drinks' | 'stays' | 'sights' | 'activities' | 'shops';
   // ISO 3166-1 alpha-2 uppercase, or empty when the LLM couldn't infer.
   // Empty normalises to NULL on the way into `places.country_code`. The
   // extractor implements asymmetric-fill on dedup-match: NULL columns get

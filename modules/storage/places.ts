@@ -253,7 +253,6 @@ export async function deletePlace(
           `SELECT file_path FROM sources WHERE id = ?`,
           sourceId,
         );
-        await db.runAsync(`DELETE FROM tags WHERE source_id = ?`, sourceId);
         await db.runAsync(`DELETE FROM sources WHERE id = ?`, sourceId);
         if (fileRow?.file_path) filesToUnlink.push(fileRow.file_path);
       }

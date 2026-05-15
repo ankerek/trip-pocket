@@ -8,7 +8,7 @@ const responseSchema = z.object({
       name: z.string().min(1),
       city: z.string(),
       address: z.string(),
-      category: z.enum(['place', 'food', 'activity']),
+      category: z.enum(['food', 'drinks', 'stays', 'sights', 'activities', 'shops']),
       // Lenient per-place coercion. The worker normalises country_code
       // already; this is defense-in-depth for the case where the worker
       // version lags the client. Any non-conforming value (missing,

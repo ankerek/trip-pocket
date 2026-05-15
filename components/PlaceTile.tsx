@@ -10,12 +10,14 @@ import { SkeletonBlock } from './Skeleton';
 import { getEnricher } from '@/modules/enrichment';
 import { useThemeColors } from '@/tw/theme';
 
+export type PlaceCategory = 'food' | 'drinks' | 'stays' | 'sights' | 'activities' | 'shops';
+
 export type PlaceTileData = {
   id: string;
   name: string;
   city: string | null;
   country_code: string | null;
-  category: 'place' | 'food' | 'activity' | null;
+  category: PlaceCategory | null;
   photo_name: string | null;
   rating: number | null;
   price_level: number | null;
@@ -29,10 +31,25 @@ export type PlaceTileData = {
   trip_name?: string | null;
 };
 
-const CATEGORY_ICON: Record<NonNullable<PlaceTileData['category']>, string> = {
+export const CATEGORY_ICON: Record<PlaceCategory, string> = {
   food: 'fork.knife',
-  activity: 'figure.walk',
-  place: 'mappin.circle',
+  drinks: 'wineglass',
+  stays: 'bed.double',
+  sights: 'binoculars',
+  activities: 'figure.hiking',
+  shops: 'bag',
+};
+
+/** Singular instance label, used wherever a single place is described
+ *  (triage card, demo card, accessibilityHint). Plural-noun storage keys
+ *  → singular display labels for instance contexts. */
+export const CATEGORY_LABEL: Record<PlaceCategory, string> = {
+  food: 'Food',
+  drinks: 'Drink',
+  stays: 'Stay',
+  sights: 'Sight',
+  activities: 'Activity',
+  shops: 'Shop',
 };
 
 /**
@@ -61,9 +78,7 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
       haptic={false}
       accessibilityRole="button"
       accessibilityLabel={place.name}
-      accessibilityHint={
-        place.city ? `In ${place.city}. Opens place detail.` : 'Opens place detail.'
-      }
+      accessibilityHint={buildAccessibilityHint(place)}
     >
       <View className="relative aspect-square w-full">
         {photoUrl ? (
@@ -129,24 +144,68 @@ export function PlaceTile({ place }: { place: PlaceTileData }) {
           >
             {place.name}
           </Text>
-          {place.rating !== null || place.city ? (
-            <Text
-              numberOfLines={1}
-              style={{
-                fontSize: 11,
-                color: 'rgba(255,255,255,0.85)',
-                fontVariant: ['tabular-nums'],
-              }}
-            >
-              {place.city ?? ''}
-              {place.city && place.rating !== null ? ' · ' : ''}
-              {place.rating !== null ? `★ ${place.rating.toFixed(1)}` : ''}
-            </Text>
+          {place.category || place.city || place.rating !== null ? (
+            <SecondaryLine category={place.category} city={place.city} rating={place.rating} />
           ) : null}
         </View>
       </View>
     </PressableScale>
   );
+}
+
+function SecondaryLine({
+  category,
+  city,
+  rating,
+}: {
+  category: PlaceCategory | null;
+  city: string | null;
+  rating: number | null;
+}) {
+  const text = [city ?? '', rating !== null ? `★ ${rating.toFixed(1)}` : '']
+    .filter(Boolean)
+    .join(' · ');
+  // Icon + text share the same 11pt visual weight. Icon goes through a
+  // wrapping View so its shadow plays nicely with the surrounding gradient.
+  return (
+    <View className="flex-row items-center" style={{ gap: 4 }}>
+      {category ? (
+        <View
+          style={{
+            shadowColor: 'rgba(0,0,0,0.45)',
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 1,
+            shadowRadius: 2,
+          }}
+        >
+          <Icon name={CATEGORY_ICON[category]} size={11} tintColor="rgba(255,255,255,0.85)" />
+        </View>
+      ) : null}
+      {text ? (
+        <Text
+          numberOfLines={1}
+          style={{
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.85)',
+            fontVariant: ['tabular-nums'],
+            textShadowColor: 'rgba(0,0,0,0.45)',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 2,
+          }}
+        >
+          {text}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function buildAccessibilityHint(place: PlaceTileData): string {
+  const parts: string[] = [];
+  if (place.category) parts.push(CATEGORY_LABEL[place.category]);
+  if (place.city) parts.push(`in ${place.city}`);
+  const lead = parts.length > 0 ? parts.join(' ') + '. ' : '';
+  return `${lead}Opens place detail.`;
 }
 
 function buildPhotoUrl(photoName: string | null): string | null {

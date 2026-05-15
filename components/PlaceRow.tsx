@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { Text, View } from '@/tw';
 import { Icon } from './Icon';
+import { CATEGORY_ICON, type PlaceCategory } from './PlaceTile';
 import { PressableScale } from './PressableScale';
 import { buildMapUrl, type MapTarget } from '@/lib/openInMaps';
 import { getEnricher } from '@/modules/enrichment';
@@ -15,7 +16,7 @@ export type PlaceRowData = {
   city: string;
   /** OCR-extracted street address. NULL when the source text didn't include one. */
   address: string | null;
-  category: 'place' | 'food' | 'activity';
+  category: PlaceCategory | null;
   /** Per-row enrichment state. Drives whether to fire /enrich on mount. */
   enrichment_status: 'pending' | 'enriched' | 'not-found' | 'failed';
   external_place_id: string | null;
@@ -34,12 +35,6 @@ export type PlaceRowData = {
   external_url: string | null;
   /** Optional source-screenshot count, shown when > 1 in the trip Places tab. */
   source_count?: number;
-};
-
-const CATEGORY_ICON: Record<PlaceRowData['category'], string> = {
-  food: 'fork.knife',
-  activity: 'figure.walk',
-  place: 'mappin.circle',
 };
 
 // Inputs to the Maps URL builder. Narrow subset of PlaceRowData so debug
@@ -87,7 +82,11 @@ export function PlaceRow({ place }: { place: PlaceRowData }) {
         />
       ) : (
         <View className="bg-surface h-11 w-11 items-center justify-center rounded-lg">
-          <Icon name={CATEGORY_ICON[place.category]} size={20} tintColor={colors.text} />
+          <Icon
+            name={place.category ? CATEGORY_ICON[place.category] : 'mappin.circle'}
+            size={20}
+            tintColor={colors.text}
+          />
         </View>
       )}
       <View className="flex-1">

@@ -43,7 +43,7 @@ describe('extract-proxy schema', () => {
             name: 'Tsukiji Outer Market',
             city: 'Tokyo',
             address: '5 Chome-2-1 Tsukiji, Chuo City, Tokyo 104-0045, Japan',
-            category: 'place',
+            category: 'sights',
             country_code: 'JP',
           },
         ],
@@ -73,7 +73,7 @@ describe('extract-proxy schema', () => {
     it('accepts empty city string (LLM signaling truly ambiguous location)', () => {
       const result = extractionResponseSchema.safeParse({
         places: [
-          { name: 'Mystery Place', city: '', address: '', category: 'place', country_code: '' },
+          { name: 'Mystery Place', city: '', address: '', category: 'sights', country_code: '' },
         ],
       });
       expect(result.success).toBe(true);

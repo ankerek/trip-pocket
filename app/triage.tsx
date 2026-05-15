@@ -22,10 +22,10 @@ import {
   type Source,
 } from '@/modules/storage';
 import { Icon } from '@/components/Icon';
+import { CATEGORY_ICON, CATEGORY_LABEL, type PlaceCategory } from '@/components/PlaceTile';
 import { SkeletonRow } from '@/components/Skeleton';
 import { TripPicker } from '@/components/TripPicker';
 import { useDatabase } from '@/components/useDatabase';
-import { formatCapturedAt } from '@/lib/relativeTime';
 import { openSourceUrl } from '@/lib/openInSocial';
 import { useThemeColors } from '@/tw/theme';
 
@@ -34,7 +34,7 @@ type ExtractedPlace = {
   place_id: string;
   name: string;
   city: string | null;
-  category: 'place' | 'food' | 'activity' | null;
+  category: PlaceCategory | null;
   enrichment_status: 'pending' | 'enriched' | 'not-found' | 'failed';
   photo_name: string | null;
   extracted_at: string;
@@ -64,12 +64,11 @@ type SourceStatusRow = {
 // working" is the safer default.
 type CardStatus = 'loading' | 'processing' | 'settled';
 
-const CATEGORY_ICON: Record<NonNullable<ExtractedPlace['category']> | 'null', string> = {
-  food: 'fork.knife',
-  activity: 'figure.walk',
-  place: 'mappin.circle',
-  null: 'mappin.circle',
-};
+const NULL_CATEGORY_ICON = 'mappin.circle';
+
+function categoryIconFor(category: PlaceCategory | null): string {
+  return category ? CATEGORY_ICON[category] : NULL_CATEGORY_ICON;
+}
 
 // Approximate vertical extent of the CTA tray above the bottom safe-area
 // inset. Used to pad the sheet's scrollable content and position the
@@ -92,11 +91,10 @@ export default function Triage() {
   const [selections, setSelections] = useState<SelectionMap>(new Map());
   const [preview, setPreview] = useState<Source | null>(null);
 
-  // The hero is a fixed preview area, not a draggable surface. Sized to
-  // give portrait social-media content (Reels/TikTok) enough room without
-  // crowding the place list. Tap-to-fullscreen handles the rare case
-  // where the user wants to inspect the image in detail.
-  const HERO_HEIGHT = Math.min(Math.round(height * 0.55), 540);
+  // The hero is a fixed preview area, not a draggable surface. Kept short
+  // so the place list — which can hold many extracted rows — gets the
+  // bulk of the screen. Tap-to-fullscreen handles inspecting the image.
+  const HERO_HEIGHT = Math.min(Math.round(height * 0.38), 360);
 
   // Live query so AI extraction surfacing mid-triage updates the bottom card.
   const extractedRows = useLiveQuery<ExtractedPlace>(
@@ -337,7 +335,9 @@ export default function Triage() {
             hitSlop={8}
             className="absolute self-center rounded-full px-3 py-1.5"
             style={{
-              bottom: insets.bottom + TRAY_HEIGHT + 22,
+              // Sits inside the tray's transparent top fade so it reads as
+              // attached to the "Choose a trip" button just below it.
+              bottom: insets.bottom + TRAY_HEIGHT - 6,
               backgroundColor: 'rgba(15,23,42,0.85)',
             }}
           >
@@ -493,6 +493,7 @@ function TriageCard({
         accessibilityRole={hasImage ? 'button' : undefined}
         accessibilityLabel={hasImage ? 'View full image' : undefined}
         accessibilityHint={hasImage ? 'Opens the source image fullscreen' : undefined}
+        style={{ marginTop: topInset }}
       >
         <View className="bg-surface" style={{ height: heroHeight, overflow: 'hidden' }}>
           {source.filePath ? (
@@ -537,7 +538,7 @@ function TriageCard({
             </View>
           ) : null}
           {source.kind === 'url' && source.platform && source.url ? (
-            <View className="absolute" style={{ top: topInset + 46, right: 10 }}>
+            <View className="absolute" style={{ top: 46, right: 10 }}>
               <Pressable
                 onPress={() => {
                   if (process.env.EXPO_OS === 'ios') {
@@ -607,13 +608,6 @@ function TriageCard({
                 COULDN&apos;T READ
               </Text>
             )}
-            <Text
-              className="text-text mt-1"
-              style={{ fontSize: 16, fontWeight: '700', letterSpacing: -0.2 }}
-              numberOfLines={1}
-            >
-              {formatCapturedAt(source.capturedAt)}
-            </Text>
             {!inFlight && total === 0 ? (
               <Text className="text-text-muted mt-1" style={{ fontSize: 13 }}>
                 Save it anyway and label it later.
@@ -670,7 +664,7 @@ function PlaceSelectRow({
   const colors = useThemeColors();
   const photoUrl = buildPhotoUrl(place.enrichment_status === 'enriched' ? place.photo_name : null);
   const subtitle = [place.city, prettyCategory(place.category)].filter(Boolean).join(' · ');
-  const categoryIcon = CATEGORY_ICON[place.category ?? 'null'];
+  const categoryIcon = categoryIconFor(place.category);
 
   return (
     <Pressable
@@ -840,8 +834,5 @@ function buildPhotoUrl(photoName: string | null): string | null {
 }
 
 function prettyCategory(category: ExtractedPlace['category']): string {
-  if (!category) return '';
-  if (category === 'food') return 'Restaurant';
-  if (category === 'activity') return 'Activity';
-  return 'Place';
+  return category ? CATEGORY_LABEL[category] : '';
 }
