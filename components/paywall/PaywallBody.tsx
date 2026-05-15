@@ -1,10 +1,13 @@
-import { useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from '@/tw';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Image, Pressable, ScrollView, Text, View } from '@/tw';
 import { Stack } from 'expo-router';
 import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import type { PurchasesPackage } from 'react-native-purchases';
+import Purchases, {
+  INTRO_ELIGIBILITY_STATUS,
+  type PurchasesPackage,
+} from 'react-native-purchases';
 import { Icon } from '@/components/Icon';
 import { PrimaryButton } from '@/components/onboarding/PrimaryButton';
 import { useThemeColors } from '@/tw/theme';
@@ -17,13 +20,28 @@ import {
 import { useEntitlement } from '@/lib/entitlement/provider';
 import { showToast } from '@/lib/toast/toast';
 
-const FALLBACK_PRICES: Record<PlanId, { price: string; per: string; note: string }> = {
-  yearly: { price: '$39.99', per: '/yr', note: 'Save 83%. Billed yearly after the trial.' },
-  weekly: { price: '$4.49', per: '/wk', note: 'Billed weekly after the trial.' },
+const FALLBACK_PRICES: Record<PlanId, { price: string; per: string; trialNote: string; subNote: string }> = {
+  yearly: {
+    price: '$39.99',
+    per: '/yr',
+    trialNote: 'Save 83%. Billed yearly after the trial.',
+    subNote: 'Save 83%. Billed yearly, auto-renews.',
+  },
+  weekly: {
+    price: '$4.49',
+    per: '/wk',
+    trialNote: 'Billed weekly after the trial.',
+    subNote: 'Billed weekly, auto-renews.',
+  },
 };
 
-function deriveNoteFromPackage(_pkg: PurchasesPackage, plan: PlanConfig): string {
-  return `Billed ${plan.label.toLowerCase()} after the trial.`;
+function deriveNoteFromPackage(
+  _pkg: PurchasesPackage,
+  plan: PlanConfig,
+  trialEligible: boolean,
+): string {
+  if (trialEligible) return `Billed ${plan.label.toLowerCase()} after the trial.`;
+  return `Billed ${plan.label.toLowerCase()}, auto-renews.`;
 }
 
 function trialDaysFromPackage(pkg: PurchasesPackage | undefined): number | null {
@@ -70,19 +88,70 @@ export function PaywallBody({
   const insets = useSafeAreaInsets();
   const [plan, setPlan] = useState<PlanId>(DEFAULT_SELECTED_PLAN);
   const [busy, setBusy] = useState(false);
-  const { offerings, purchasePlan, restore } = useEntitlement();
+  const { offerings, customerInfo, purchasePlan, restore } = useEntitlement();
 
   const selectedPlanCfg = PLANS.find((pl) => pl.id === plan);
   const selectedPkg = offerings?.current?.availablePackages.find(
     (p) => p.product.identifier === selectedPlanCfg?.productId,
   );
-  const trialDays = trialDaysFromPackage(selectedPkg);
-  const trialCtaLabel = trialDays
-    ? `Start your ${trialDays}-day free trial`
-    : 'Start your free trial';
-  const trialFooterCopy = trialDays
-    ? `Cancel anytime. No charge for ${trialDays} days. Then your plan auto-renews.`
-    : 'Cancel anytime during the free trial. Then your plan auto-renews.';
+
+  // Whether *this* Apple ID is still eligible for the intro offer per plan.
+  // Two signals, both required to count as eligible:
+  //
+  //   1. RC's checkTrialOrIntroductoryPriceEligibility — the API source of
+  //      truth in production. Treat UNKNOWN as ineligible so we never promise
+  //      a trial that StoreKit will reject.
+  //
+  //   2. customerInfo.allPurchasedProductIdentifiers must NOT contain the
+  //      product. Apple's sandbox keeps users "eligible" for trial offers
+  //      across cancel/expire cycles so renewals can be tested, but the
+  //      subscription has already lapsed — at that point a repeat trial is
+  //      misleading even if the sandbox accepts it. If the user has ever
+  //      purchased the product, the trial copy is wrong.
+  const [trialEligibility, setTrialEligibility] = useState<Record<PlanId, boolean>>({
+    yearly: false,
+    weekly: false,
+  });
+  useEffect(() => {
+    const ids = PLANS.map((p) => p.productId);
+    let cancelled = false;
+    Purchases.checkTrialOrIntroductoryPriceEligibility(ids)
+      .then((map) => {
+        if (cancelled) return;
+        const next: Record<PlanId, boolean> = { yearly: false, weekly: false };
+        for (const planCfg of PLANS) {
+          next[planCfg.id] =
+            map[planCfg.productId]?.status ===
+            INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE;
+        }
+        setTrialEligibility(next);
+      })
+      .catch((err) => {
+        console.warn('[paywall] checkTrialOrIntroductoryPriceEligibility failed', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const everPurchased = new Set(customerInfo?.allPurchasedProductIdentifiers ?? []);
+  const eligibleForSelected =
+    trialEligibility[plan] &&
+    selectedPlanCfg != null &&
+    !everPurchased.has(selectedPlanCfg.productId);
+  const trialDays = eligibleForSelected ? trialDaysFromPackage(selectedPkg) : null;
+  const ctaLabel = eligibleForSelected
+    ? trialDays
+      ? `Start your ${trialDays}-day free trial`
+      : 'Start your free trial'
+    : selectedPlanCfg
+      ? `Subscribe ${selectedPlanCfg.label.toLowerCase()}`
+      : 'Subscribe';
+  const footerCopy = eligibleForSelected
+    ? trialDays
+      ? `Cancel anytime. No charge for ${trialDays} days. Then your plan auto-renews.`
+      : 'Cancel anytime during the free trial. Then your plan auto-renews.'
+    : 'Cancel anytime. Your subscription auto-renews until cancelled.';
 
   async function handleStartTrial() {
     if (busy) return;
@@ -95,7 +164,12 @@ export function PaywallBody({
     }
     setBusy(false);
     if (result.reason === 'user-cancelled') return;
-    showToast({ kind: 'error', message: "Couldn't start your trial. Try again." });
+    showToast({
+      kind: 'error',
+      message: eligibleForSelected
+        ? "Couldn't start your trial. Try again."
+        : "Couldn't start your subscription. Try again.",
+    });
   }
 
   async function handleRestore() {
@@ -142,12 +216,12 @@ export function PaywallBody({
 
         <ScrollView contentContainerClassName="px-6 pb-6" showsVerticalScrollIndicator={false}>
           <View className="items-center" style={{ marginTop: 8 }}>
-            <View
-              className="h-12 w-12 items-center justify-center rounded-2xl"
-              style={{ backgroundColor: colors.accent }}
-            >
-              <Icon name="tray.full" size={26} tintColor="#ffffff" />
-            </View>
+            <Image
+              source={require('@/assets/pocket-trip-icon-2.png')}
+              style={{ width: 56, height: 56, borderRadius: 14 }}
+              contentFit="cover"
+              accessibilityIgnoresInvertColors
+            />
             <Text
               className="text-text mt-3"
               style={{ fontSize: 13, fontWeight: '600', letterSpacing: 0.4 }}
@@ -180,7 +254,13 @@ export function PaywallBody({
               );
               const price = pkg?.product.priceString ?? FALLBACK_PRICES[p].price;
               const per = FALLBACK_PRICES[p].per;
-              const note = pkg ? deriveNoteFromPackage(pkg, planCfg) : FALLBACK_PRICES[p].note;
+              const eligibleForThisPlan =
+                trialEligibility[p] && !everPurchased.has(planCfg.productId);
+              const note = pkg
+                ? deriveNoteFromPackage(pkg, planCfg, eligibleForThisPlan)
+                : eligibleForThisPlan
+                  ? FALLBACK_PRICES[p].trialNote
+                  : FALLBACK_PRICES[p].subNote;
               return (
                 <Pressable
                   key={p}
@@ -192,7 +272,7 @@ export function PaywallBody({
                   accessibilityState={{ selected: isPicked }}
                   className="bg-surface flex-row items-center rounded-2xl px-4 py-4"
                   style={{
-                    borderWidth: isPicked ? 2 : 1,
+                    borderWidth: 2,
                     borderColor: isPicked ? colors.accent : colors.hairline,
                   }}
                 >
@@ -255,12 +335,12 @@ export function PaywallBody({
           className="border-hairline bg-bg border-t px-6 pt-3"
           style={{ paddingBottom: Math.max(16, insets.bottom) }}
         >
-          <PrimaryButton label={trialCtaLabel} onPress={handleStartTrial} loading={busy} />
+          <PrimaryButton label={ctaLabel} onPress={handleStartTrial} loading={busy} />
           <Text
             className="text-text-muted mt-2 text-center"
             style={{ fontSize: 11, lineHeight: 16 }}
           >
-            {trialFooterCopy}
+            {footerCopy}
           </Text>
           <View className="mt-2 flex-row items-center justify-center" style={{ gap: 14 }}>
             <Pressable

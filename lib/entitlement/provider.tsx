@@ -12,6 +12,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Sentry from '@sentry/react-native';
 import Purchases, {
+  LOG_LEVEL,
   PURCHASES_ERROR_CODE,
   type CustomerInfo,
   type PurchasesOfferings,
@@ -144,6 +145,27 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
       }
       // configure() is synchronous in RC v10 (returns void).
       Purchases.configure({ apiKey: RC_API_KEY });
+      // Replace the SDK's default log handler so cold-launch dedup notices
+      // (RC posts the same /v1/receipts twice when its auto-sync races our
+      // getCustomerInfo() call) don't surface as Metro red-box overlays.
+      // The duplicate is harmless — RC's serial queue dedupes correctly —
+      // but the SDK logs the dedup at ERROR level, which trips the overlay.
+      Purchases.setLogHandler((level, message) => {
+        if (
+          level === LOG_LEVEL.ERROR &&
+          message.includes('operation is already in progress')
+        ) {
+          console.warn(`[RevenueCat] ${message}`);
+          return;
+        }
+        const prefix = `[RevenueCat] ${message}`;
+        if (level === LOG_LEVEL.ERROR) console.error(prefix);
+        else if (level === LOG_LEVEL.WARN) console.warn(prefix);
+        else if (level === LOG_LEVEL.INFO) console.info(prefix);
+        else if (level === LOG_LEVEL.DEBUG || level === LOG_LEVEL.VERBOSE)
+          console.debug(prefix);
+        else console.log(prefix);
+      });
       if (__DEV__) {
         // Surface the anon RC user ID so dev can grant entitlements in the
         // RC dashboard after a reinstall without spelunking the debugger.
