@@ -102,6 +102,8 @@ async function getPlace(
   db: Database,
   id: string,
 ): Promise<{
+  name: string;
+  normalized_key: string;
   enrichment_status: string;
   external_place_id: string | null;
   enriched_at: string | null;
@@ -112,6 +114,8 @@ async function getPlace(
   country_code: string | null;
 }> {
   const row = await db.getFirstAsync<{
+    name: string;
+    normalized_key: string;
     enrichment_status: string;
     external_place_id: string | null;
     enriched_at: string | null;
@@ -121,8 +125,8 @@ async function getPlace(
     city: string | null;
     country_code: string | null;
   }>(
-    `SELECT enrichment_status, external_place_id, enriched_at, description, latitude, trip_id,
-            city, country_code
+    `SELECT name, normalized_key, enrichment_status, external_place_id, enriched_at,
+            description, latitude, trip_id, city, country_code
        FROM places WHERE id = ?`,
     id,
   );
@@ -143,6 +147,7 @@ const enrichedOutcome: Extract<EnrichOutcome, { kind: 'enriched' }> = {
   external_url: 'https://maps.google.com/?cid=1',
   city: 'Tokyo',
   country_code: 'JP',
+  display_name: null,
   model: 'gemini-2.5-flash-lite',
 };
 
@@ -342,6 +347,7 @@ describe('createEnricher', () => {
         external_url: 'https://maps/x',
         city: null,
         country_code: null,
+        display_name: null,
         model: 'gemini-2.5-flash-lite',
       };
 
@@ -487,6 +493,187 @@ describe('createEnricher', () => {
       await enricher._awaitIdle();
 
       expect((await getPlace(db, 'p1')).external_place_id).toBe('ChIJ-test');
+    });
+  });
+
+  describe('canonical name from Google display_name', () => {
+    it('writes Google display_name into places.name on first enrichment', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'cozy tea house');
+      // LLM extracted a quirky variant; Google has the canonical name.
+      await seedPlace(db, { id: 'p1', name: "joe's pizza & bar", city: 'New York' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const enrich = jest.fn(async () => ({
+        ...enrichedOutcome,
+        display_name: "Joe's Pizza",
+      }));
+      const enricher = makeEnricher(db, enrich);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.name).toBe("Joe's Pizza");
+      // normalized_key follows the final name and final city.
+      expect(row.normalized_key).toBe("joe's pizza|tokyo");
+      expect(row.external_place_id).toBe('ChIJ-test');
+    });
+
+    it('refreshes places.name on re-enrichment when Google display_name changes', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'caption');
+      // Seed an already-enriched row with description=null so the blurb-retry
+      // path fires a second /enrich call.
+      await seedPlace(db, {
+        id: 'p1',
+        name: 'Old Name',
+        city: 'Tokyo',
+        status: 'enriched',
+        externalPlaceId: 'ChIJ-test',
+        description: null,
+      });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const enricher = makeEnricher(db, async () => ({
+        ...enrichedOutcome,
+        display_name: 'Refreshed Name',
+      }));
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.name).toBe('Refreshed Name');
+      expect(row.normalized_key).toBe('refreshed name|tokyo');
+    });
+
+    it('keeps the existing name when worker returns display_name=null', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'caption');
+      await seedPlace(db, { id: 'p1', name: 'LLM Name', city: 'Tokyo' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const enricher = makeEnricher(db, async () => ({
+        ...enrichedOutcome,
+        display_name: null,
+      }));
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.name).toBe('LLM Name');
+      expect(row.normalized_key).toBe('llm name|tokyo');
+      // Other enrichment columns are still written.
+      expect(row.description).toBe('Cozy 1950s tea house.');
+      expect(row.external_place_id).toBe('ChIJ-test');
+    });
+
+    it('uses Google city when recomputing normalized_key', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', 'caption');
+      // LLM misspelled the city; Google's addressComponents has the canonical form.
+      await seedPlace(db, { id: 'p1', name: 'Tower', city: 'tokio' });
+      await attachSourceToPlace(db, 'p1', 's1', null);
+
+      const enricher = makeEnricher(db, async () => ({
+        ...enrichedOutcome,
+        display_name: 'Tokyo Tower',
+        city: 'Tokyo',
+      }));
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      const row = await getPlace(db, 'p1');
+      expect(row.name).toBe('Tokyo Tower');
+      expect(row.city).toBe('Tokyo');
+      // normalized_key uses Google's city, not the stale LLM "tokio".
+      expect(row.normalized_key).toBe('tokyo tower|tokyo');
+    });
+
+    it('writes Google name onto the merge winner', async () => {
+      const db = await freshDb();
+      // Same trip, two LLM-name variants for the same Google place.
+      await db.runAsync(
+        `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+         VALUES ('t1', 'NYC', 'owner-1', ?, ?)`,
+        NOW,
+        NOW,
+      );
+      // p-existing is older, will become winner (older created_at).
+      await seedPlace(db, {
+        id: 'p-existing',
+        name: "joe's pizza",
+        city: 'New York',
+        tripId: 't1',
+        status: 'enriched',
+        externalPlaceId: 'ChIJ-test',
+      });
+      await seedSource(db, 's-incoming');
+      // p-incoming has a different LLM-rendered name; same Google ID will collide.
+      await seedPlace(db, {
+        id: 'p-incoming',
+        name: "joe's pizza & bar",
+        city: 'New York',
+        tripId: 't1',
+      });
+      await attachSourceToPlace(db, 'p-incoming', 's-incoming', null);
+
+      const enricher = makeEnricher(db, async () => ({
+        ...enrichedOutcome,
+        display_name: "Joe's Pizza",
+      }));
+      enricher.enqueueEnrichment('p-incoming');
+      await enricher._awaitIdle();
+
+      // Winner is p-existing (older, already enriched). Its prior enrichment
+      // already chose a canonical name from its own /enrich pass; the merge
+      // does NOT overwrite that with this attempt's display_name (the existing
+      // row may have richer data this attempt couldn't reproduce). The
+      // incoming row is gone.
+      const winner = await getPlace(db, 'p-existing');
+      expect(winner.external_place_id).toBe('ChIJ-test');
+      expect(winner.name).toBe("joe's pizza"); // not overwritten — collision wins
+      await expect(getPlace(db, 'p-incoming')).rejects.toThrow();
+    });
+
+    it('writes Google name + descriptive cols on incoming when merge is skipped (different trips)', async () => {
+      const db = await freshDb();
+      await db.runAsync(
+        `INSERT INTO trips (id, name, owner_id, created_at, updated_at)
+         VALUES ('t1', 'Japan', 'owner-1', ?, ?), ('t2', 'Spain', 'owner-1', ?, ?)`,
+        NOW,
+        NOW,
+        NOW,
+        NOW,
+      );
+      await seedPlace(db, {
+        id: 'p-existing',
+        name: 'Kosoan',
+        city: 'Tokyo',
+        tripId: 't1',
+        status: 'enriched',
+        externalPlaceId: 'ChIJ-test',
+      });
+      await seedSource(db, 's-incoming');
+      await seedPlace(db, { id: 'p-incoming', name: 'kosoan tea', city: 'Tokyo', tripId: 't2' });
+      await attachSourceToPlace(db, 'p-incoming', 's-incoming', null);
+
+      const enricher = makeEnricher(db, async () => ({
+        ...enrichedOutcome,
+        display_name: 'Kosoan',
+      }));
+      enricher.enqueueEnrichment('p-incoming');
+      await enricher._awaitIdle();
+
+      const existing = await getPlace(db, 'p-existing');
+      const incoming = await getPlace(db, 'p-incoming');
+      // Both rows still exist — different trips, merge skipped.
+      expect(existing.external_place_id).toBe('ChIJ-test');
+      expect(incoming.external_place_id).toBeNull(); // UNIQUE forbids two live.
+      // Incoming gets Google's canonical name + descriptive cols, just no ID.
+      expect(incoming.name).toBe('Kosoan');
+      expect(incoming.normalized_key).toBe('kosoan|tokyo');
+      expect(incoming.description).toBe('Cozy 1950s tea house.');
+      expect(incoming.enrichment_status).toBe('enriched');
     });
   });
 

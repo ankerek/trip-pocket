@@ -1,6 +1,6 @@
 import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
-import { findCollidingByExternalId } from '@/modules/storage/places';
+import { findCollidingByExternalId, normalizePlaceKey } from '@/modules/storage/places';
 import { transferJunctions } from '@/modules/storage/place_sources';
 import { startStage } from '@/modules/pipeline-log';
 
@@ -31,6 +31,10 @@ export type EnrichOutcome =
       // write path then preserves the LLM-extracted value.
       city: string | null;
       country_code: string | null;
+      // Google's authoritative `displayName`. Null when Google didn't return
+      // one, when it was empty/whitespace, or when an older worker omitted
+      // the field. When non-null, replaces `places.name` (canonical name).
+      display_name: string | null;
       model: string;
       _debug?: EnrichDebugEcho;
     }
@@ -311,7 +315,9 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     );
 
     if (!collision) {
-      await writeEnrichmentColumns(place.id, outcome);
+      await writeEnrichmentColumns(place.id, place.name, place.city, outcome, {
+        withholdExternalId: false,
+      });
       return;
     }
 
@@ -320,9 +326,15 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       place.trip_id === collision.tripId || place.trip_id === null || collision.tripId === null;
 
     if (!eligible) {
-      // Skip the merge: leave both places live, do not write external_place_id
-      // on incoming (UNIQUE constraint forbids two live rows). Telemetry hook
-      // is intentionally absent in this slice — see spec.
+      // Skip the merge: leave both places live and don't claim the
+      // external_place_id on the incoming row (partial UNIQUE forbids two
+      // live rows holding the same id). But Google's `display_name` and
+      // the descriptive enrichment columns ARE canonical regardless of
+      // identity ownership — write them on the incoming row so the user
+      // sees Google's name on both halves of the split.
+      await writeEnrichmentColumns(place.id, place.name, place.city, outcome, {
+        withholdExternalId: true,
+      });
       return;
     }
 
@@ -343,7 +355,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
     }
 
     await opts.db.withTransactionAsync(async () => {
-      // Order matters with hard-delete + non-partial UNIQUE on external_place_id:
+      // Order matters with the partial UNIQUE on external_place_id:
       //   1. Re-home all loser junctions onto the winner.
       //   2. DELETE the loser place row (FK-safe now: junctions are on the winner).
       //   3. Promote winner with enrichment columns (external_place_id passes
@@ -351,22 +363,72 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       await transferJunctions(opts.db, loserId, winnerId);
       await opts.db.runAsync(`DELETE FROM places WHERE id = ?`, loserId);
       if (winnerId === place.id) {
-        await writeEnrichmentColumns(place.id, outcome);
+        await writeEnrichmentColumns(place.id, place.name, place.city, outcome, {
+          withholdExternalId: false,
+        });
       }
+      // winnerId === collision.id case: the collision was previously enriched
+      // and already holds a canonical name + external_place_id from its prior
+      // enrichment. Skipping the rewrite preserves any data that's richer on
+      // the existing row (e.g., a description that this attempt couldn't reproduce).
     });
   }
 
+  // `currentName` / `currentCity` are the row's existing values, used as
+  // fallbacks when Google didn't supply `display_name` / `city`. Computing
+  // the final values in TS (rather than letting SQL do it inline) keeps
+  // `normalized_key` consistent with the final-name + final-city pair —
+  // a SQL-side COALESCE on city would otherwise let normalized_key be
+  // recomputed against the *old* city while a new city is being written.
   async function writeEnrichmentColumns(
     placeId: string,
+    currentName: string,
+    currentCity: string,
     outcome: Extract<EnrichOutcome, { kind: 'enriched' }>,
+    writeOpts: { withholdExternalId: boolean },
   ): Promise<void> {
     const ts = getNow();
-    // `city` and `country_code` use COALESCE(?, col) so a NULL from Google
-    // never clobbers the LLM-extracted value. Non-null Google values are the
-    // authoritative override (the whole point of dual-write).
+    const finalName = outcome.display_name ?? currentName;
+    const finalCity = outcome.city ?? currentCity;
+    const normalizedKey = normalizePlaceKey(finalName, finalCity);
+
+    if (writeOpts.withholdExternalId) {
+      // Skip-path: same columns as the normal path minus external_place_id.
+      await opts.db.runAsync(
+        `UPDATE places
+            SET name = ?, normalized_key = ?,
+                photo_name = ?, description = ?,
+                rating = ?, price_level = ?, external_url = ?,
+                latitude = ?, longitude = ?, formatted_address = ?,
+                city = COALESCE(?, city),
+                country_code = COALESCE(?, country_code),
+                enrichment_status = 'enriched', enriched_at = ?,
+                enrichment_model = ?, updated_at = ?
+          WHERE id = ?`,
+        finalName,
+        normalizedKey,
+        outcome.photo_name,
+        outcome.description,
+        outcome.rating,
+        outcome.price_level,
+        outcome.external_url,
+        outcome.latitude,
+        outcome.longitude,
+        outcome.formatted_address,
+        outcome.city,
+        outcome.country_code,
+        ts,
+        outcome.model,
+        ts,
+        placeId,
+      );
+      return;
+    }
+
     await opts.db.runAsync(
       `UPDATE places
-          SET external_place_id = ?, photo_name = ?, description = ?,
+          SET name = ?, normalized_key = ?,
+              external_place_id = ?, photo_name = ?, description = ?,
               rating = ?, price_level = ?, external_url = ?,
               latitude = ?, longitude = ?, formatted_address = ?,
               city = COALESCE(?, city),
@@ -374,6 +436,8 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
               enrichment_status = 'enriched', enriched_at = ?,
               enrichment_model = ?, updated_at = ?
         WHERE id = ?`,
+      finalName,
+      normalizedKey,
       outcome.external_place_id,
       outcome.photo_name,
       outcome.description,

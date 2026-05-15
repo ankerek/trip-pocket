@@ -51,6 +51,10 @@ const responseSchema = z.union([
       .string()
       .regex(/^[A-Z]{2}$/)
       .nullable(),
+    // Google's authoritative `displayName.text`. Worker trims and emits null
+    // when empty. `optional()` keeps backward compat with older workers that
+    // predate this field — those manifest as `display_name: null` here.
+    display_name: z.string().nullable().optional(),
     model: z.string().min(1),
     _debug: debugSchema.optional(),
   }),
@@ -153,6 +157,7 @@ export async function enrichFromProxy(
     external_url: parsed.data.external_url,
     city: parsed.data.city,
     country_code: parsed.data.country_code,
+    display_name: parsed.data.display_name ?? null,
     model: parsed.data.model,
     _debug: parsed.data._debug,
   };

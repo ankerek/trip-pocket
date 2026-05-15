@@ -381,6 +381,84 @@ describe('handleEnrich', () => {
     expect(String(searchCall![0])).not.toContain('places-key');
   });
 
+  // --- languageCode + display_name ---
+
+  it('sends languageCode=en in the Places searchText body', async () => {
+    const fetchSpy = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      { match: isPlaceDetails, response: () => placesDetailsOk() },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+    globalThis.fetch = fetchSpy;
+
+    await handleEnrich(postJson(validBody), makeEnv());
+    const searchCall = (fetchSpy as unknown as jest.Mock).mock.calls.find((c) =>
+      isSearchText(String(c[0])),
+    );
+    const reqBody = JSON.parse((searchCall![1] as RequestInit).body as string);
+    expect(reqBody.languageCode).toBe('en');
+  });
+
+  it('sends ?languageCode=en in the Places details URL', async () => {
+    const fetchSpy = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      { match: isPlaceDetails, response: () => placesDetailsOk() },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+    globalThis.fetch = fetchSpy;
+
+    await handleEnrich(postJson(validBody), makeEnv());
+    const detailsCall = (fetchSpy as unknown as jest.Mock).mock.calls.find((c) =>
+      isPlaceDetails(String(c[0])),
+    );
+    expect(String(detailsCall![0])).toContain('languageCode=en');
+  });
+
+  it('includes display_name from details.displayName in the enriched response', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () => placesDetailsOk({ displayName: { text: 'Kōsōan' } }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.display_name).toBe('Kōsōan');
+  });
+
+  it('returns display_name=null when Google displayName is empty or whitespace', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () => placesDetailsOk({ displayName: { text: '   ' } }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.display_name).toBeNull();
+  });
+
+  it('returns display_name=null when Google omits displayName entirely', async () => {
+    globalThis.fetch = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      {
+        match: isPlaceDetails,
+        response: () => placesDetailsOk({ displayName: undefined }),
+      },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+
+    const res = await handleEnrich(postJson(validBody), makeEnv());
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.display_name).toBeNull();
+  });
+
   // --- not found ---
 
   it('returns status:not-found when searchText returns no places', async () => {

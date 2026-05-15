@@ -68,6 +68,10 @@ export const enrichResponseSchema = z.union([
     // ISO-2; the worker normalises before serialising.
     city: z.string().nullable(),
     country_code: z.string().nullable(),
+    // Google's authoritative `displayName.text`. Trimmed; null when Google
+    // didn't return one or it was empty/whitespace-only. The client writes
+    // this into `places.name` as the canonical place name.
+    display_name: z.string().nullable(),
     model: z.string(),
     _debug: enrichDebugSchema.optional(),
   }),
@@ -181,6 +185,7 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
     external_url: details.googleMapsUri,
     city: details.city,
     country_code: details.countryCode,
+    display_name: trimToNull(details.displayName),
     model: GEMINI_MODEL,
     _debug: {
       searchOutcome: 'ok',
@@ -189,6 +194,12 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
     },
   };
   return jsonResponse(response);
+}
+
+function trimToNull(value: string | null): string | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 // --- Google Places client ---
@@ -214,7 +225,10 @@ async function searchText(req: EnrichRequest, env: Env): Promise<string | null> 
       'X-Goog-Api-Key': env.GOOGLE_PLACES_API_KEY,
       'X-Goog-FieldMask': 'places.id',
     },
-    body: JSON.stringify({ textQuery, maxResultCount: 1 }),
+    // languageCode=en forces English `displayName` on the details call
+    // downstream; sent on searchText too for consistency and to keep
+    // tie-breaking deterministic across locales.
+    body: JSON.stringify({ textQuery, maxResultCount: 1, languageCode: 'en' }),
   });
 
   if (!resp.ok) {
@@ -267,7 +281,7 @@ async function getPlaceDetails(placeId: string, env: Env): Promise<PlaceDetails>
   ].join(',');
 
   const resp = await fetch(
-    `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
+    `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?languageCode=en`,
     {
       method: 'GET',
       headers: {
