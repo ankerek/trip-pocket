@@ -48,18 +48,18 @@ The first user is anyone with a camera roll full of screenshots — or a hidden 
 **At launch:**
 
 - Import via the iOS share sheet (with a trip picker inside the extension itself, so capture-to-trip is one tap from Photos)
-- Share directly from Instagram and TikTok — share a post (including TikTok slideshow posts) to Trip Pocket and we extract the media and caption automatically, so you skip the screenshot entirely
+- Share directly from Instagram and TikTok — share a post (including IG carousels and TikTok slideshow posts) to Trip Pocket as a URL and we fetch the media and caption automatically, so you skip the screenshot entirely. Tap the saved item to jump back into the original IG or TikTok post.
 - Import from the camera roll inside the app
 - Dedicated storage outside the camera roll
 - Trip collections (e.g. "Japan", "Lisbon weekend")
-- A places-first home — every screenshot becomes a place tile, filterable by trip or by what's still untriaged
-- A triage flow for sorting new screenshots into trips one at a time
-- On-device OCR so the text inside screenshots is searchable
-- AI extraction of place names, cities, and category (place / food / activity) from screenshots
+- A places-first home — every screenshot or shared post becomes a place tile, filterable by trip or by what's still untriaged
+- A triage flow for sorting new captures into trips one at a time, with multi-place selection per source
+- On-device OCR — including all slides of an IG carousel or TikTok slideshow — so the text behind the image is searchable
+- AI extraction of place names, cities, countries, and a six-bucket category (food / drinks / stays / sights / activities / shops) from screenshots and shared posts. The category icon is visible on every tile.
 - Rich place cards — a real photo of the venue, a 1–2 sentence summary of what it is, address, rating, and price level, fetched on demand the first time you open a place. The screenshot you saved three months ago becomes "oh right, that's the cozy bakery I wanted to try" without re-opening the original.
-- A "Places" view per trip that lists everything we've found
+- A "Places" view per trip that lists everything we've found, grouped by country for multi-country trips
 - Tap any extracted place to open Google or Apple Maps
-- Search across place names, cities, descriptions, and the OCR text behind the screenshots that produced them
+- Search across place names, cities, countries, descriptions, addresses, and the OCR text + captions behind the captures that produced them
 
 **Later:**
 
@@ -85,13 +85,16 @@ Each of those is a tarpit. The wedge is _save it before it's lost_, and that's w
 
 ## Business model
 
-Paid subscription with a 7-day free trial. No free tier.
+Paid subscription with a free trial on every plan. No free tier.
 
-The app is behind a paywall from day one. Anyone can start a 7-day trial that unlocks the whole thing — capture, OCR-search, AI place extraction, the Places view, tap-to-open in Maps, unlimited trips. After 7 days the subscription auto-renews (monthly or yearly) unless the user cancels through the App Store.
+The app is behind a paywall from day one. Two plans, both with an introductory free trial:
 
-The trial is the only on-ramp. The pitch: a week is enough to see whether the screenshots-to-places loop saves you the time it costs. People who get value will keep it; people who don't, won't.
+- **Yearly · $39.99/yr · 7-day free trial.** The lead offer — a week is enough to see whether the screenshots-to-places loop saves you the time it costs.
+- **Weekly · $4.49/wk · 3-day free trial.** The low-commitment way in for people planning a single upcoming trip.
 
-Pricing (monthly + yearly) is decided at launch from beta data.
+Monthly was dropped from the original plan: the yearly is the value plan, the weekly is the low-commit plan, and a middle tier would just split conversion. After the trial the subscription auto-renews unless cancelled through the App Store.
+
+If a subscription lapses (trial ended without conversion, paid sub cancelled, billing failed) we don't wipe anything — local data is preserved and the app stays open in a read-only state, with the paywall one tap away. Resubscribing restores extraction, enrichment, and new captures without data loss.
 
 ## Positioning
 
