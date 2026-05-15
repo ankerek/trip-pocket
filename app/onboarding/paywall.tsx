@@ -106,8 +106,16 @@ export default function PaywallScreen() {
     // leaves the modal mounted — the user lands on the start of
     // onboarding again. We follow it with router.dismiss() to pop the
     // modal off the root Stack so (tabs) becomes visible underneath.
+    //
+    // The second call is deferred to the next frame: after a
+    // successful RC purchase the customer-info listener fires
+    // setStatus('active') during the awaited purchasePackage(), and
+    // calling dismiss() back-to-back races those React commits — the
+    // modal got stranded on screen. requestAnimationFrame yields long
+    // enough for the inner pop and the listener-driven re-render to
+    // settle before we cross into the parent navigator.
     router.dismissAll();
-    router.dismiss();
+    requestAnimationFrame(() => router.dismiss());
   }
 
   async function handleStartTrial() {
@@ -115,12 +123,15 @@ export default function PaywallScreen() {
     setBusy(true);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const result = await purchasePlan(plan);
-    setBusy(false);
     if (result.ok) {
+      // Stay in the spinner state through the dismiss animation so the
+      // button doesn't flash back to its idle label between the
+      // StoreKit success alert and the modal fade-out.
       markOnboardingComplete();
       exitOnboarding();
       return;
     }
+    setBusy(false);
     if (result.reason === 'user-cancelled') return; // silent
     showToast({ kind: 'error', message: "Couldn't start your trial. Try again." });
   }
@@ -130,12 +141,14 @@ export default function PaywallScreen() {
     setBusy(true);
     void Haptics.selectionAsync();
     const result = await restore();
-    setBusy(false);
     if (result.ok && result.entitled) {
+      // Same reasoning as handleStartTrial — hold the spinner until the
+      // modal is gone.
       markOnboardingComplete();
       exitOnboarding();
       return;
     }
+    setBusy(false);
     if (result.ok) {
       showToast({ kind: 'success', message: 'No purchases to restore.' });
       return;
@@ -287,7 +300,7 @@ export default function PaywallScreen() {
           className="border-hairline bg-bg border-t px-6 pt-3"
           style={{ paddingBottom: Math.max(16, insets.bottom) }}
         >
-          <PrimaryButton label={trialCtaLabel} onPress={handleStartTrial} disabled={busy} />
+          <PrimaryButton label={trialCtaLabel} onPress={handleStartTrial} loading={busy} />
           <Text
             className="text-text-muted mt-2 text-center"
             style={{ fontSize: 11, lineHeight: 16 }}

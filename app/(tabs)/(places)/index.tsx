@@ -25,7 +25,7 @@ const PLACES_SQL = `SELECT p.id, p.name, p.city, p.category, p.photo_name,
                            t.name AS trip_name, p.trip_id
                       FROM places p
                  LEFT JOIN trips t ON t.id = p.trip_id
-                  ORDER BY p.enriched_at DESC NULLS LAST, p.created_at DESC`;
+                  ORDER BY COALESCE(p.enriched_at, p.created_at) DESC, p.created_at DESC`;
 
 // "Untriaged" means the user hasn't decided which trip the source
 // belongs to yet — it's independent of whether AI extraction has

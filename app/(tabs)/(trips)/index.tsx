@@ -30,7 +30,7 @@ const COUNT_SQL = `SELECT trip_id, COUNT(*) AS n
 const PREVIEWS_SQL = `SELECT id, name, photo_name, external_place_id
                         FROM places
                        WHERE trip_id = ?
-                    ORDER BY enriched_at DESC NULLS LAST, created_at DESC
+                    ORDER BY COALESCE(enriched_at, created_at) DESC, created_at DESC
                        LIMIT 5`;
 
 export default function Trips() {

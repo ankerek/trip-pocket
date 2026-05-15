@@ -1,3 +1,4 @@
+import { ActivityIndicator } from 'react-native';
 import { Pressable, Text } from '@/tw';
 import { useThemeColors } from '@/tw/theme';
 import * as Haptics from 'expo-haptics';
@@ -6,40 +7,48 @@ type Props = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  loading?: boolean;
   accessibilityHint?: string;
 };
 
-export function PrimaryButton({ label, onPress, disabled, accessibilityHint }: Props) {
+export function PrimaryButton({ label, onPress, disabled, loading, accessibilityHint }: Props) {
   const colors = useThemeColors();
+  const isBlocked = disabled || loading;
   return (
     <Pressable
       onPress={() => {
-        if (disabled) return;
+        if (isBlocked) return;
         void Haptics.selectionAsync();
         onPress();
       }}
-      disabled={disabled}
+      disabled={isBlocked}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ disabled: !!disabled }}
+      accessibilityState={{ disabled: !!isBlocked, busy: !!loading }}
       className="items-center justify-center rounded-2xl"
       style={{
         height: 52,
-        backgroundColor: disabled ? colors.hairline : colors.accent,
-        opacity: disabled ? 0.7 : 1,
+        // While loading we keep the accent fill so it reads as "working on it",
+        // not "you can't tap this".
+        backgroundColor: loading ? colors.accent : disabled ? colors.hairline : colors.accent,
+        opacity: disabled && !loading ? 0.7 : 1,
       }}
     >
-      <Text
-        style={{
-          fontSize: 17,
-          fontWeight: '700',
-          color: disabled ? colors.textMuted : '#ffffff',
-          letterSpacing: -0.2,
-        }}
-      >
-        {label}
-      </Text>
+      {loading ? (
+        <ActivityIndicator color="#ffffff" />
+      ) : (
+        <Text
+          style={{
+            fontSize: 17,
+            fontWeight: '700',
+            color: disabled ? colors.textMuted : '#ffffff',
+            letterSpacing: -0.2,
+          }}
+        >
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }

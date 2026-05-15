@@ -35,7 +35,7 @@ const TRIP_PLACES_SQL = `SELECT id, name, city, country_code, category, photo_na
                                 latitude, longitude, formatted_address
                            FROM places
                           WHERE trip_id = ?
-                       ORDER BY enriched_at DESC NULLS LAST, created_at DESC`;
+                       ORDER BY COALESCE(enriched_at, created_at) DESC, created_at DESC`;
 
 // Global source-level in-flight count — same semantics as the Pocket banner.
 // Not filtered by trip: OCR/extraction run regardless of trip assignment, and
