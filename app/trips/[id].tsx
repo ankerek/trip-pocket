@@ -9,16 +9,33 @@ import * as Haptics from 'expo-haptics';
 import { getTrip, useLiveQuery, PROCESSING_SOURCES_WHERE, type Trip } from '@/modules/storage';
 import { useDatabase } from '@/components/useDatabase';
 import { PlaceGrid, type GridItem } from '@/components/PlaceGrid';
-import { PlaceTile, type PlaceTileData } from '@/components/PlaceTile';
+import {
+  PlaceTile,
+  type PlaceTileData,
+  type PlaceCategory,
+  CATEGORY_ICON,
+  CATEGORY_LABEL,
+} from '@/components/PlaceTile';
 import { ProcessingBanner } from '@/components/ProcessingBanner';
-import { groupPlacesByCountry } from '@/components/groupPlacesByCountry';
-import { displayCountry } from '@/components/CountryDisplay';
+import { FilterPills, type FilterOption } from '@/components/FilterPills';
 import { Icon } from '@/components/Icon';
 import { EmptyState } from '@/components/EmptyState';
 import { pickPhotosForImport } from '@/components/pickPhotos';
 import { DetailHeaderIconButton, DetailHeaderOverlay } from '@/components/DetailHeaderOverlay';
 import { cn } from '@/tw/cn';
 import { useThemeColors } from '@/tw/theme';
+
+// Fixed taxonomy order — pills render in this sequence regardless of count,
+// so a trip's pill row layout is stable as places get added or filtered.
+const CATEGORY_ORDER: readonly PlaceCategory[] = [
+  'food',
+  'drinks',
+  'stays',
+  'sights',
+  'activities',
+  'shops',
+];
+const ALL_CATEGORY_FILTER = '__all__';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
                                  s.extraction_paused_reason, s.url_fetch_paused_reason,
@@ -47,8 +64,6 @@ const PROCESSING_COUNT_SQL = `SELECT COUNT(*) AS n
                                 FROM sources
                                WHERE ${PROCESSING_SOURCES_WHERE}`;
 
-type ViewMode = 'grid' | 'map';
-
 export default function TripDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -57,7 +72,7 @@ export default function TripDetail() {
   const { status: entitlementStatus } = useEntitlement();
   const [trip, setTrip] = useState<Trip | null | 'loading'>('loading');
   const [tab, setTab] = useState<'photos' | 'places'>('places');
-  const [view, setView] = useState<ViewMode>('grid');
+  const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORY_FILTER);
 
   const sources = useLiveQuery<GridItem>(TRIP_SOURCES_SQL, id ? [id] : [], [
     'sources',
@@ -66,6 +81,42 @@ export default function TripDetail() {
   const places = useLiveQuery<PlaceTileData>(TRIP_PLACES_SQL, id ? [id] : [], ['places']);
   const processingRows = useLiveQuery<{ n: number }>(PROCESSING_COUNT_SQL, [], ['sources']);
   const processingCount = processingRows?.[0]?.n ?? 0;
+
+  const categoryCounts = useMemo(() => {
+    const counts: Partial<Record<PlaceCategory, number>> = {};
+    for (const p of places ?? []) {
+      if (p.category) counts[p.category] = (counts[p.category] ?? 0) + 1;
+    }
+    return counts;
+  }, [places]);
+
+  const categoryFilterOptions = useMemo<FilterOption[]>(() => {
+    if (!places) return [];
+    const opts: FilterOption[] = [{ id: ALL_CATEGORY_FILTER, label: 'All', count: places.length }];
+    for (const cat of CATEGORY_ORDER) {
+      const count = categoryCounts[cat];
+      if (count) {
+        opts.push({ id: cat, label: CATEGORY_LABEL[cat], count, icon: CATEGORY_ICON[cat] });
+      }
+    }
+    return opts;
+  }, [places, categoryCounts]);
+
+  // If the selected category no longer has any places (e.g. user deleted
+  // the last one via place detail), the pill disappears — fall back to
+  // "All" for both the filter and the highlighted pill, derived inline so
+  // we don't need a useEffect to sync state.
+  const effectiveCategoryFilter =
+    categoryFilter === ALL_CATEGORY_FILTER ||
+    categoryCounts[categoryFilter as PlaceCategory] !== undefined
+      ? categoryFilter
+      : ALL_CATEGORY_FILTER;
+
+  const filteredPlaces = useMemo(() => {
+    if (!places) return [];
+    if (effectiveCategoryFilter === ALL_CATEGORY_FILTER) return places;
+    return places.filter((p) => p.category === effectiveCategoryFilter);
+  }, [places, effectiveCategoryFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -169,27 +220,27 @@ export default function TripDetail() {
           </View>
         ) : (
           <>
-            {/* View toggle — Grid | Map. Map is "Coming soon" v1 (spec §4.5). */}
-            <View className="pt-3">
-              <ViewToggle view={view} onChange={setView} />
-            </View>
-
-            {view === 'map' ? (
-              <MapPlaceholder />
-            ) : (
+            <SubTabToggle
+              tab={tab}
+              onChange={setTab}
+              placesCount={places.length}
+              sourcesCount={sources.length}
+            />
+            {tab === 'places' ? (
               <>
-                <SubTabToggle
-                  tab={tab}
-                  onChange={setTab}
-                  placesCount={places.length}
-                  sourcesCount={sources.length}
-                />
-                {tab === 'places' ? (
-                  <PlacesByCountry places={places} />
-                ) : (
-                  <PlaceGrid data={sources} />
-                )}
+                {/* Hide the pill row when only the "All" entry exists —
+                    no categories means nothing to filter. */}
+                {categoryFilterOptions.length > 1 ? (
+                  <FilterPills
+                    options={categoryFilterOptions}
+                    selectedId={effectiveCategoryFilter}
+                    onSelect={setCategoryFilter}
+                  />
+                ) : null}
+                <PlacesGrid places={filteredPlaces} />
               </>
+            ) : (
+              <PlaceGrid data={sources} />
             )}
           </>
         )}
@@ -288,57 +339,6 @@ function TripHero({
   );
 }
 
-function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
-  return (
-    <View className="bg-hairline mx-4 flex-row rounded-full p-1" accessibilityRole="tablist">
-      <ToggleSegment label="Grid" active={view === 'grid'} onPress={() => onChange('grid')} />
-      <ToggleSegment label="Map" active={view === 'map'} onPress={() => onChange('map')} />
-    </View>
-  );
-}
-
-function ToggleSegment({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  // Active = `bg` (the page surface, white in light / near-black in dark)
-  // so the active pill reads as "lifted" on either theme. Text uses
-  // theme `text` / `text-muted` tokens.
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
-      accessibilityLabel={label}
-      className={cn('flex-1 items-center rounded-full py-2', active && 'bg-bg')}
-    >
-      <Text
-        className={active ? 'text-text' : 'text-text-muted'}
-        style={{ fontSize: 13, fontWeight: active ? '600' : '500' }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function MapPlaceholder() {
-  const colors = useThemeColors();
-  return (
-    <View className="bg-hairline mx-4 mt-2 items-center justify-center rounded-2xl py-12">
-      <Icon name="map" size={28} tintColor={colors.textMuted} />
-      <Text className="text-text-muted mt-2" style={{ fontSize: 13, fontWeight: '500' }}>
-        Map view coming soon
-      </Text>
-    </View>
-  );
-}
-
 function SubTabToggle({
   tab,
   onChange,
@@ -404,69 +404,17 @@ function buildCoverUrl(photoName: string | null): string | null {
   return `${base.replace(/\/$/, '')}/${photoName}?w=1200&h=1500`;
 }
 
-// Places tab body. Single-country trips stay on the existing flat 2-col grid
-// (no headers). Multi-country trips get a header per group. The "one country
-// + an unknown bucket" case shows the country flat and a single "Other"
-// header above the unknown bucket — so single-country UX is never disturbed
-// by a stray unenriched row.
-function PlacesByCountry({ places }: { places: PlaceTileData[] }) {
-  const groups = groupPlacesByCountry(places);
-
-  if (groups.length === 0) {
-    return null;
-  }
-
-  if (groups.length === 1) {
-    return (
-      <View className="flex-row flex-wrap px-2.5 pt-1">
-        {groups[0]!.places.map((p) => (
-          <View key={p.id} className="w-1/2 p-1">
-            <PlaceTile place={p} />
-          </View>
-        ))}
-      </View>
-    );
-  }
-
-  const hideHeaderOnLeader = groups.length === 2 && groups[1]!.code === null;
-
+// Flat 2-col grid of places. No section headers — categories surface via
+// the filter pill row above, not via grouping.
+function PlacesGrid({ places }: { places: PlaceTileData[] }) {
+  if (places.length === 0) return null;
   return (
-    <View>
-      {groups.map((group, idx) => {
-        const isLeaderInTwoGroupCase = idx === 0 && hideHeaderOnLeader;
-        const label = group.code === null ? 'Other' : (displayCountry(group.code) ?? group.code);
-        return (
-          <View key={group.code ?? '__unknown'}>
-            {!isLeaderInTwoGroupCase && <CountrySectionHeader label={label!} />}
-            <View className="flex-row flex-wrap px-2.5 pt-1">
-              {group.places.map((p) => (
-                <View key={p.id} className="w-1/2 p-1">
-                  <PlaceTile place={p} />
-                </View>
-              ))}
-            </View>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
-function CountrySectionHeader({ label }: { label: string }) {
-  return (
-    <View className="px-4 pt-5 pb-2">
-      <Text
-        className="text-text-muted"
-        style={{
-          fontSize: 12,
-          fontWeight: '600',
-          letterSpacing: 0.6,
-          textTransform: 'uppercase',
-        }}
-        accessibilityRole="header"
-      >
-        {label}
-      </Text>
+    <View className="flex-row flex-wrap px-2.5 pt-1">
+      {places.map((p) => (
+        <View key={p.id} className="w-1/2 p-1">
+          <PlaceTile place={p} />
+        </View>
+      ))}
     </View>
   );
 }

@@ -1,10 +1,15 @@
 import { Pressable, ScrollView, Text } from '@/tw';
 import { cn } from '@/tw/cn';
+import { Icon } from './Icon';
+import { useThemeColors } from '@/tw/theme';
 
 export type FilterOption = {
   id: string;
   label: string;
   count?: number;
+  /** SF Symbol name (without the `sf:` prefix). When set, renders a 13pt
+   *  icon before the label — tint follows the active/inactive text colour. */
+  icon?: string;
 };
 
 type FilterPillsProps = {
@@ -20,6 +25,7 @@ type FilterPillsProps = {
  * between dark-on-light and light-on-dark via the CSS variable.
  */
 export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps) {
+  const colors = useThemeColors();
   return (
     <ScrollView
       horizontal
@@ -40,6 +46,9 @@ export function FilterPills({ options, selectedId, onSelect }: FilterPillsProps)
               active ? 'bg-accent' : 'bg-hairline',
             )}
           >
+            {opt.icon ? (
+              <Icon name={opt.icon} size={13} tintColor={active ? '#ffffff' : colors.textMuted} />
+            ) : null}
             <Text
               className={cn('text-[13px]', active ? 'text-white' : 'text-text-muted')}
               style={{
