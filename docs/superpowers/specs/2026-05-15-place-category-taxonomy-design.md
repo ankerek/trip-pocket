@@ -1,7 +1,7 @@
 # Place category taxonomy — design
 
-**Status:** draft (2026-05-15) · awaiting review before implementation plan
-**Touches:** `workers/extract-proxy/src/prompt.ts` (SYSTEM_PROMPT + GEMINI_RESPONSE_SCHEMA), `workers/extract-proxy/src/schema.ts` (placeSchema enum), `workers/extract-proxy/__tests__/`, `modules/extraction/extraction.ts` (ExtractedPlaceInput type), `modules/extraction/proxy.ts` (response schema enum), `modules/storage/migrations/0008_category_rename.ts` (new), `components/PlaceTile.tsx`, `components/PlaceRow.tsx`, `app/triage.tsx`, `components/onboarding/DemoPlaceCard.tsx`.
+**Status:** draft (2026-05-15, rev 2) · awaiting review before implementation plan
+**Touches:** `workers/extract-proxy/src/prompt.ts` (SYSTEM_PROMPT + GEMINI_RESPONSE_SCHEMA), `workers/extract-proxy/src/schema.ts` (placeSchema enum), `workers/extract-proxy/__tests__/`, `modules/extraction/extraction.ts` (ExtractedPlaceInput type), `modules/extraction/proxy.ts` (response schema enum), `modules/storage/migrations/0008_category_rename.ts` (new), `modules/storage/migrations/0009_drop_tags.ts` (new), `modules/storage/trips.ts` (drop tags cascade), `modules/storage/sources.ts` (drop tags cascade), `modules/storage/places.ts` (drop tags cascade), `components/PlaceTile.tsx` (icon map + new visible category icon on the overlay), `components/PlaceRow.tsx`, `app/triage.tsx`, `components/onboarding/DemoPlaceCard.tsx`.
 **Milestone:** v0.4 — extraction quality / canonicalisation.
 
 ## Why
@@ -15,6 +15,8 @@ That collapses meaningfully different saves — a hotel, a viewpoint, a neighbor
 The grouping the user actually wants when scanning a saved trip is closer to:
 "where will I eat / drink / sleep / sight-see / do / shop?" — the canonical travel-guidebook split. Six buckets, not three, with the existing junk-drawer (`place`) broken up.
 
+Bundled into this change is the **removal of the `tags` table.** It was introduced in `0001_init` for free-form `('place'|'food'|'activity')` tagging of sources, contributes to the `sources_fts` index, and has cascade-delete code in `trips.ts`, `sources.ts`, and `places.ts`. Nothing in the app writes to it — confirmed by a grep for `INSERT INTO tags` / `insertTag` returning zero hits. It's dead schema. Dropping it now (rather than later) keeps the FTS triggers focused on `ocr_text + trip name`, removes three defensive cascade DELETEs, and avoids confusing future readers who see a `tags` table and assume it's load-bearing.
+
 ## Scope
 
 In scope:
@@ -22,10 +24,13 @@ In scope:
 - LLM prompt and Gemini response schema updated to six categories (`food`, `drinks`, `stays`, `sights`, `activities`, `shops`).
 - Worker Zod schema (`placeSchema.category`) updated to the new enum.
 - Client-side type and Zod schema (`ExtractedPlaceInput`, `modules/extraction/proxy.ts`) updated to the same enum.
-- One-shot migration rewrites legacy values: `'activity'` → `'activities'`, `'place'` → `NULL`. `'food'` stays as-is (meaning preserved).
+- One-shot migration `0008_category_rename` rewrites legacy values: `'activity'` → `'activities'`, `'place'` → `NULL`. `'food'` stays as-is (meaning preserved).
 - Icon map updates in `PlaceTile`, `PlaceRow`, triage, and the onboarding `DemoPlaceCard`. New SF Symbols chosen below.
 - Triage label dictionary updated.
+- **`tags` table removed.** Migration `0009_drop_tags` drops the table and rebuilds the `sources_fts_ai` / `sources_fts_au` triggers without the tag subquery. The three cascade DELETEs in `trips.ts:153`, `sources.ts:308`, and `places.ts:256` are removed.
+- **Category icon visible on `PlaceTile`.** Today the category icon only renders in the no-photo fallback path; once a place is enriched (the common case), the icon disappears. New behaviour: small icon shown on every tile in the bottom overlay, prefixing the secondary line (`[icon] Tokyo · ★ 4.5`). Detailed in the UI section below.
 - Worker + client tests for the new enum at both proxy and storage boundaries.
+- Migration tests for both `0008_category_rename` and `0009_drop_tags`.
 
 Not in scope (each can be its own sub-project):
 
@@ -33,7 +38,6 @@ Not in scope (each can be its own sub-project):
 - **Plumbing Google Places `types[]` through to the client** ("Option B" from brainstorm 2026-05-15). The enrichment worker already fetches `types` but discards them. Layering them in as a subtype tag ("Food · Ramen shop") is a follow-up spec — adds a column, a worker field, and tile work. Independent.
 - **Backfilling old `'place'` rows by re-running extraction.** Existing rows that were categorised `'place'` keep their fallback (generic pin); a user-triggered re-extract or a new save in the same place will reclassify. No automatic re-extraction sweep.
 - **CHECK constraint on `places.category`.** SQLite can't `ALTER … ADD CONSTRAINT` so adding one needs a table rebuild. The Zod schemas at the proxy boundary and the client extraction boundary already enforce the enum; DB-level CHECK is belt-and-suspenders and not worth the migration churn.
-- **Removing the `source_tags` table.** Separate cleanup; the tags table has its own `kind IN ('place','food','activity')` CHECK but doesn't interact with `places.category`.
 - **Multi-category per place.** Single primary category per place stays the model; the eventual `types[]` subtype carries the secondary nuance.
 - **Localized labels.** English-only labels, matching the rest of the app.
 
@@ -98,7 +102,11 @@ Enrichment (Google Places) is unchanged for now. It writes `name`, `city`, `form
 
 (Future work in spec B will let enrichment also write a `place_types` array as a subtype, with the bucket label still LLM-driven.)
 
-## Migration: `0008_category_rename`
+## Migrations
+
+Two migrations, in order. Both run inside the standard migration transaction, no FK toggling.
+
+**`0008_category_rename`** — rewrite legacy `places.category` values:
 
 ```sql
 UPDATE places SET category = 'activities' WHERE category = 'activity';
@@ -106,13 +114,94 @@ UPDATE places SET category = NULL         WHERE category = 'place';
 -- 'food' rows keep their value (meaning unchanged).
 ```
 
-Two `UPDATE`s. Both run inside the standard migration transaction. No table rebuild. No FK toggling (no FK on `category`). Idempotent on a re-run (the `WHERE` filters miss after the first pass).
+Idempotent on a re-run (the `WHERE` filters miss after the first pass). No table rebuild.
 
-Pre-2026-05-15 dev DBs follow the same path — devs do not need to wipe.
+**`0009_drop_tags`** — drop the `tags` table and rebuild the `sources_fts` triggers to stop referencing it:
+
+```sql
+-- Drop the triggers first; sources_fts_ai / _au reference the tags table
+-- via a subquery and would error if we dropped the table first.
+DROP TRIGGER IF EXISTS sources_fts_ai;
+DROP TRIGGER IF EXISTS sources_fts_au;
+DROP TRIGGER IF EXISTS sources_fts_ad;
+
+DROP TABLE IF EXISTS tags;
+
+-- Re-create the triggers without the tags subquery. sources_fts content
+-- becomes: ocr_text + parent trip name. (Tag values previously concatenated
+-- in here are gone; there were never any rows.)
+CREATE TRIGGER sources_fts_ai
+AFTER INSERT ON sources
+BEGIN
+  INSERT INTO sources_fts (source_id, content)
+    SELECT NEW.id,
+           coalesce(NEW.ocr_text, '') ||
+           coalesce(' ' || (SELECT name FROM trips WHERE id = NEW.trip_id), '');
+END;
+
+CREATE TRIGGER sources_fts_au
+AFTER UPDATE OF ocr_text, trip_id ON sources
+BEGIN
+  DELETE FROM sources_fts WHERE source_id = OLD.id;
+  INSERT INTO sources_fts (source_id, content)
+    SELECT NEW.id,
+           coalesce(NEW.ocr_text, '') ||
+           coalesce(' ' || (SELECT name FROM trips WHERE id = NEW.trip_id), '');
+END;
+
+CREATE TRIGGER sources_fts_ad
+AFTER DELETE ON sources
+BEGIN
+  DELETE FROM sources_fts WHERE source_id = OLD.id;
+END;
+```
+
+`sources_fts_ad` doesn't reference `tags`, but it's dropped and recreated for symmetry — the three triggers are a coherent set and reading them later is easier when they all live in the same migration.
+
+Existing `sources_fts` rows are not rebuilt. The tags subquery in the old triggers always returned empty (no rows in `tags`), so the FTS content is bit-for-bit identical to what the new triggers will produce. A future re-index isn't necessary.
+
+**TypeScript cascade-delete cleanup** (lands in the same change-set as `0009_drop_tags`):
+
+- `modules/storage/trips.ts:150-153` — drop the `DELETE FROM tags WHERE source_id IN …` line (and the leading "tags first" mention in the surrounding comment).
+- `modules/storage/sources.ts:308` — drop `await db.runAsync(\`DELETE FROM tags WHERE source_id = ?\`, id);`.
+- `modules/storage/places.ts:256` — drop `await db.runAsync(\`DELETE FROM tags WHERE source_id = ?\`, sourceId);`.
+
+These are safe to remove only after `0009_drop_tags` runs. The migration runs at app boot before any storage call, so a single release shipping both the migration and the TS removal is atomic from the user's perspective.
+
+Pre-2026-05-15 dev DBs follow the same migration path — devs do not need to wipe.
 
 ## UI changes
 
-**`components/PlaceTile.tsx`** — replace `CATEGORY_ICON` map (currently 3 entries) with the 6-entry map above. Type `category: 'food' | 'drinks' | 'stays' | 'sights' | 'activities' | 'shops' | null`. Same icon-only treatment — no label on tiles (the name + city overlay is the label).
+**`components/PlaceTile.tsx`** — replace `CATEGORY_ICON` map (currently 3 entries) with the 6-entry map above. Type `category: 'food' | 'drinks' | 'stays' | 'sights' | 'activities' | 'shops' | null`.
+
+**New behaviour: the icon also shows on the bottom overlay** whenever `category !== null`, prefixing the secondary line:
+
+```
+┌──────────────────┐
+│  [photo]         │
+│                  │
+│                  │
+│  Maru Tonkatsu   │   ← name (13pt, bold, white)
+│  🍴 Tokyo · ★4.5 │   ← icon + city/rating (11pt, white-85%)
+└──────────────────┘
+```
+
+Rendering rules:
+
+- Render the secondary line whenever `category != null` OR `city` OR `rating` is set (today's condition is `city || rating`).
+- Icon sits inline at the start of the line, 11pt, `tintColor = 'rgba(255,255,255,0.85)'` (matches the text colour), wrapped in the same text-shadow values as the name to stay readable on bright photos.
+- Spacing: 4pt gap between the icon and whatever follows. If the rest of the line is empty (no city, no rating), the icon stands alone on the bottom-left.
+- For legacy rows with `category = null` (post-migration `'place'` rows), no icon is shown — the line falls back to its old `city ?? '' + rating` content, exactly as today.
+
+Layout switches from a single `<Text>` to a flex-row container holding `<Icon>` + `<Text>`. The text-shadow that today is set on the secondary `<Text>` directly migrates to the Icon (`shadowColor` on the wrapping View) and stays on the text.
+
+`accessibilityHint` on the tile is extended to include the category: `"<Food | Drinks | Stays | …> in <city>. Opens place detail."` when both are present, gracefully degrading when one is missing. The icon itself is `accessibilityElementsHidden` since the hint already conveys the same information in words.
+
+Visual rationale for inline-prefix over a top-right floating chip:
+
+- Top-right would compete with the TripChip at top-left when both render on the global feed — two floating chips on a small square tile is busy.
+- Inline-prefix piggybacks on the existing overlay; no new positioned element, no new gradient mask to tune.
+- The icon at 11pt next to 11pt text reads cleanly and stays out of the photo's focal area.
 
 **`components/PlaceRow.tsx`** — same map and type update. Row already shows the icon at 20pt next to the place name; no layout change.
 
@@ -149,8 +238,10 @@ Gemini's structured-output guarantee means a payload that fails the Zod parse is
 
 - Worker: unit tests for the new enum on `placeSchema`; an end-to-end test that the Gemini schema includes the six values; a snapshot of `SYSTEM_PROMPT` so future edits are intentional.
 - Client extraction: existing tests update to use new category values; new test that an unknown category from the proxy is rejected by Zod and surfaced as an extraction failure.
-- Migration: tests in `modules/storage/migrations/__tests__/` covering `'activity' → 'activities'`, `'place' → NULL`, `'food'` left alone, idempotent re-run.
-- UI: snapshot or render test on each of `PlaceTile`, `PlaceRow`, triage card for each of the six categories rendering the correct icon. Not exhaustive — one render per category is enough.
+- Migration `0008_category_rename`: tests in `modules/storage/migrations/__tests__/` covering `'activity' → 'activities'`, `'place' → NULL`, `'food'` left alone, idempotent re-run.
+- Migration `0009_drop_tags`: test that the `tags` table no longer exists after migration; test that `sources_fts` content for a source with `ocr_text` + a trip is correct after the trigger rebuild (one INSERT, one UPDATE OF ocr_text, one UPDATE OF trip_id); test that source DELETE still cleans the FTS row.
+- Storage cascade: existing delete tests in `trips.ts`/`sources.ts`/`places.ts` updated to no longer expect a `DELETE FROM tags` call.
+- UI: snapshot or render test on each of `PlaceTile`, `PlaceRow`, triage card for each of the six categories rendering the correct icon. Not exhaustive — one render per category is enough. For `PlaceTile`, also cover the new overlay-icon cases: `(category, city, rating)`, `(category, city)`, `(category, rating)`, `(category alone)`, `(no category, city only)` — five permutations confirming the line renders / hides correctly and the icon appears when expected.
 - No new test suite needed for filter pills (out of scope).
 
 ## Risks / open questions
