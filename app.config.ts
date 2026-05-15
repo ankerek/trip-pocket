@@ -30,7 +30,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: BUNDLE_ID,
-    buildNumber: '6',
+    buildNumber: '7',
     icon: './assets/AppIcon.icon',
     supportsTablet: false,
     entitlements: {
