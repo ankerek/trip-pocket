@@ -162,11 +162,19 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       if (Date.now() < nextAllowed) return;
       blurbRetryAt.set(id, Date.now() + BLURB_RETRY_THROTTLE_MS);
     }
-    if (!place.ocr_caption || place.ocr_caption.trim().length === 0) {
-      // Without an OCR caption the worker can't run the blurb step. Mark
-      // 'not-found' rather than 'failed' so it doesn't retry on every open.
-      // Don't downgrade an already-enriched row though (blurb-retry path):
-      // a missing caption shouldn't destroy real lat/lng/photo data.
+    // Caption resolution:
+    //   1. Most recent non-empty `sources.ocr_text` (the OCR/text strategy path).
+    //   2. Most recent non-empty `sources.caption` (URL fetch / captionPlusVision).
+    //   3. Synthesized fallback from the place's own data so vision-strategy rows
+    //      — which leave both ocr_text and caption empty — still get enriched.
+    //      Without this fallback the worker's `ocr_caption.min(1)` constraint
+    //      would 400 the call and the short-circuit below would mark every
+    //      vision place as 'not-found'.
+    const captionForWorker =
+      place.ocr_caption.trim().length > 0 ? place.ocr_caption : synthesizeCaption(place);
+    if (!captionForWorker || captionForWorker.trim().length === 0) {
+      // Defensive: only fires when name AND city AND address are all empty,
+      // which shouldn't happen for a place row that made it past extraction.
       if (place.enrichment_status !== 'enriched') {
         await enqueueWrite(() => markNotFound(id));
         notifyChange('places');
@@ -194,7 +202,7 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
         name: place.name,
         city: place.city,
         address: place.address,
-        ocr_caption: place.ocr_caption,
+        ocr_caption: captionForWorker,
       });
     } catch (err) {
       outcome =
@@ -269,13 +277,21 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       id,
     );
 
-    // Most-recent non-empty ocr_text from this place's sources.
-    const ocrRow = await opts.db.getFirstAsync<{ ocr_text: string | null }>(
-      `SELECT s.ocr_text
+    // Most-recent non-empty caption from this place's sources. Prefer
+    // `sources.ocr_text` (OCR-strategy path) but fall back to `sources.caption`
+    // (URL-fetched IG/TikTok caption — also captionPlusVision's text input).
+    // Either is acceptable grounding for the worker's blurb step. Vision-only
+    // rows have neither and fall through to the synthesised caption in
+    // processOne.
+    const captionRow = await opts.db.getFirstAsync<{ text: string | null }>(
+      `SELECT COALESCE(NULLIF(TRIM(s.ocr_text), ''), NULLIF(TRIM(s.caption), '')) AS text
          FROM place_sources ps
          JOIN sources s ON s.id = ps.source_id
         WHERE ps.place_id = ?
-          AND s.ocr_text IS NOT NULL AND TRIM(s.ocr_text) != ''
+          AND (
+            (s.ocr_text IS NOT NULL AND TRIM(s.ocr_text) != '')
+            OR (s.caption IS NOT NULL AND TRIM(s.caption) != '')
+          )
      ORDER BY ps.extracted_at DESC
         LIMIT 1`,
       id,
@@ -289,10 +305,23 @@ export function createEnricher(opts: CreateEnricherOptions): Enricher {
       enrichment_status: place.enrichment_status,
       enrichment_paused_reason: place.enrichment_paused_reason,
       address: addrRow?.extracted_address ?? null,
-      ocr_caption: ocrRow?.ocr_text ?? '',
+      ocr_caption: captionRow?.text ?? '',
       description: place.description,
       created_at: place.created_at,
     };
+  }
+
+  // Builds a minimal caption from the place's own data. Used when no source
+  // attached to the place has a usable ocr_text or caption — the common case
+  // for vision-strategy rows. Keeps the worker's `ocr_caption.min(1)`
+  // contract satisfied and gives the blurb step at least name + city + address
+  // to anchor on.
+  function synthesizeCaption(place: PlaceSnapshot): string {
+    const parts: string[] = [];
+    if (place.name) parts.push(place.name);
+    if (place.city && place.city.trim().length > 0) parts.push(`in ${place.city}`);
+    if (place.address && place.address.trim().length > 0) parts.push(`at ${place.address}`);
+    return parts.join(' ');
   }
 
   async function applyOutcome(place: PlaceSnapshot, outcome: EnrichOutcome): Promise<void> {

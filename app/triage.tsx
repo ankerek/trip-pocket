@@ -49,7 +49,8 @@ const EXTRACTED_SQL = `SELECT ps.source_id, p.id AS place_id, p.name, p.city, p.
 // Status for every untriaged source — the FlatList window can mount cards
 // adjacent to the visible one, so we need per-id lookup, not just current.
 const INBOX_STATUS_SQL = `SELECT id, ocr_status, extraction_status,
-                                 extraction_paused_reason, url_fetch_paused_reason
+                                 extraction_paused_reason, url_fetch_paused_reason,
+                                 extraction_strategy
                             FROM sources WHERE trip_id IS NULL`;
 type SourceStatusRow = {
   id: string;
@@ -57,6 +58,7 @@ type SourceStatusRow = {
   extraction_status: ProcessingStatus;
   extraction_paused_reason: string | null;
   url_fetch_paused_reason: string | null;
+  extraction_strategy: 'ocrTextLLM' | 'vision' | 'captionPlusVision' | null;
 };
 // Tri-state. 'loading' (status query unresolved or row not yet in the result
 // set) renders identically to 'processing' so the user never flashes

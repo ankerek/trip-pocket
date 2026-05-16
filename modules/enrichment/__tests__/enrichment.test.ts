@@ -450,10 +450,41 @@ describe('createEnricher', () => {
       });
     });
 
-    it("marks 'not-found' (no /enrich call) when no source has OCR text", async () => {
+    it('synthesises a caption from place data when no source has OCR text or caption', async () => {
+      // Vision-strategy rows leave both `sources.ocr_text` and `sources.caption`
+      // empty by design — OCR is skipped, and image imports never set a caption.
+      // The enricher must still call /enrich so the place gets photo/lat-lng/
+      // description from Google Places. Synthesised caption keeps the worker's
+      // `ocr_caption.min(1)` constraint happy.
       const db = await freshDb();
       await seedSource(db, 's1', '   ');
-      await seedPlace(db, { id: 'p1', name: 'X', city: 'Y' });
+      await seedPlace(db, { id: 'p1', name: 'Kosoan', city: 'Tokyo' });
+      await attachSourceToPlace(db, 'p1', 's1', '1-24-23 Jiyugaoka');
+
+      const enrich = jest.fn(async () => enrichedOutcome);
+      const enricher = makeEnricher(db, enrich);
+      enricher.enqueueEnrichment('p1');
+      await enricher._awaitIdle();
+
+      expect(enrich).toHaveBeenCalledTimes(1);
+      const arg = enrich.mock.calls[0][0];
+      expect(arg.ocr_caption).toContain('Kosoan');
+      expect(arg.ocr_caption).toContain('Tokyo');
+      expect(arg.ocr_caption).toContain('1-24-23 Jiyugaoka');
+      expect((await getPlace(db, 'p1')).enrichment_status).toBe('enriched');
+    });
+
+    it('uses sources.caption when ocr_text is empty (captionPlusVision / URL-fetched rows)', async () => {
+      const db = await freshDb();
+      await seedSource(db, 's1', '');
+      // Simulate the URL-fetch path: applyUrlFetchResult writes caption directly.
+      await db.runAsync(
+        `UPDATE sources SET caption = ?, updated_at = ? WHERE id = ?`,
+        'jiyugaoka tea house thread',
+        NOW,
+        's1',
+      );
+      await seedPlace(db, { id: 'p1', name: 'Kosoan', city: 'Tokyo' });
       await attachSourceToPlace(db, 'p1', 's1', null);
 
       const enrich = jest.fn(async () => enrichedOutcome);
@@ -461,8 +492,8 @@ describe('createEnricher', () => {
       enricher.enqueueEnrichment('p1');
       await enricher._awaitIdle();
 
-      expect(enrich).not.toHaveBeenCalled();
-      expect((await getPlace(db, 'p1')).enrichment_status).toBe('not-found');
+      expect(enrich).toHaveBeenCalledTimes(1);
+      expect(enrich.mock.calls[0][0].ocr_caption).toBe('jiyugaoka tea house thread');
     });
 
     it('coalesces simultaneous enqueues on the same place into one /enrich call', async () => {

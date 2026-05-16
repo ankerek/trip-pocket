@@ -74,4 +74,52 @@ describe('thumbnailBadge', () => {
       }),
     ).toBe('paused');
   });
+
+  describe('extraction_strategy aware', () => {
+    it('vision strategy ignores ocr_status=pending (OCR skipped by design)', () => {
+      expect(
+        thumbnailBadge({
+          ...base,
+          ocr_status: 'pending',
+          extraction_status: 'done',
+          extraction_strategy: 'vision',
+          place_count: 1,
+        }),
+      ).toBe('pin');
+    });
+
+    it('vision strategy shimmers while extraction is pending', () => {
+      expect(
+        thumbnailBadge({
+          ...base,
+          ocr_status: 'pending',
+          extraction_status: 'pending',
+          extraction_strategy: 'vision',
+        }),
+      ).toBe('shimmer');
+    });
+
+    it('captionPlusVision strategy treats extraction_status as the only progress signal', () => {
+      expect(
+        thumbnailBadge({
+          ...base,
+          ocr_status: 'pending',
+          extraction_status: 'done',
+          extraction_strategy: 'captionPlusVision',
+          place_count: 0,
+        }),
+      ).toBe('no-places');
+    });
+
+    it('legacy NULL strategy keeps the OCR-aware rules', () => {
+      expect(
+        thumbnailBadge({
+          ...base,
+          ocr_status: 'pending',
+          extraction_status: 'pending',
+          extraction_strategy: null,
+        }),
+      ).toBe('shimmer');
+    });
+  });
 });

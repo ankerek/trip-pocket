@@ -39,6 +39,7 @@ const ALL_CATEGORY_FILTER = '__all__';
 
 const TRIP_SOURCES_SQL = `SELECT s.id, s.file_path, s.ocr_status, s.extraction_status,
                                  s.extraction_paused_reason, s.url_fetch_paused_reason,
+                                 s.extraction_strategy,
                                  COALESCE(p.place_count, 0) AS place_count
                             FROM sources s
                        LEFT JOIN (

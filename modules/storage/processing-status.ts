@@ -1,14 +1,26 @@
-import type { ProcessingStatus } from './sources';
+import type { ExtractionStrategyName, ProcessingStatus } from './sources';
 import type { EnrichmentStatus } from './places';
+
+// Vision-strategy rows intentionally skip OCR, so `ocr_status` stays 'pending'
+// for them forever. Only `extraction_status` is meaningful as a progress signal.
+// Legacy NULL is treated as 'ocrTextLLM' (matches the orchestrator).
+function ocrStatusIsMeaningful(strategy: ExtractionStrategyName | null | undefined): boolean {
+  return strategy == null || strategy === 'ocrTextLLM';
+}
 
 export function isSourceProcessing(s: {
   ocr_status: ProcessingStatus;
   extraction_status: ProcessingStatus;
   extraction_paused_reason: string | null;
   url_fetch_paused_reason: string | null;
+  extraction_strategy?: ExtractionStrategyName | null;
 }): boolean {
   if (s.extraction_paused_reason || s.url_fetch_paused_reason) return false;
-  return s.ocr_status === 'pending' || s.extraction_status === 'pending';
+  if (s.extraction_status === 'pending') return true;
+  if (ocrStatusIsMeaningful(s.extraction_strategy)) {
+    return s.ocr_status === 'pending';
+  }
+  return false;
 }
 
 export function isPlaceProcessing(p: {
@@ -23,6 +35,17 @@ export function isPlaceProcessing(p: {
 // paused rows keep `*_status = 'pending'` so the pipeline can resume them, but we
 // exclude them from the live-processing count — they belong to the paused-row
 // surfaces instead.
-export const PROCESSING_SOURCES_WHERE = `(ocr_status = 'pending' OR extraction_status = 'pending')
+//
+// Vision/captionPlusVision rows leave `ocr_status` at 'pending' permanently
+// (OCR is skipped by design). Only `ocr_status = 'pending'` for ocrTextLLM
+// (or legacy NULL) rows counts as live work — otherwise the banner would lie
+// forever.
+export const PROCESSING_SOURCES_WHERE = `(
+    extraction_status = 'pending'
+    OR (
+      ocr_status = 'pending'
+      AND (extraction_strategy IS NULL OR extraction_strategy = 'ocrTextLLM')
+    )
+  )
   AND extraction_paused_reason IS NULL
   AND url_fetch_paused_reason IS NULL`;

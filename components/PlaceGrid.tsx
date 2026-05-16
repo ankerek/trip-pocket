@@ -25,6 +25,9 @@ export type GridItem = {
   extraction_status?: 'pending' | 'done' | 'failed';
   extraction_paused_reason?: string | null;
   url_fetch_paused_reason?: string | null;
+  // Needed by thumbnailBadge: vision/captionPlusVision rows leave ocr_status
+  // at 'pending' permanently, so the badge has to know which strategy ran.
+  extraction_strategy?: 'ocrTextLLM' | 'vision' | 'captionPlusVision' | null;
   place_count?: number;
 };
 
@@ -69,6 +72,7 @@ export function PlaceGrid({ data }: { data: readonly GridItem[] }) {
           extraction_status: item.extraction_status ?? 'done',
           extraction_paused_reason: item.extraction_paused_reason ?? null,
           url_fetch_paused_reason: item.url_fetch_paused_reason ?? null,
+          extraction_strategy: item.extraction_strategy ?? null,
           place_count: item.place_count ?? 0,
         });
         // Paused tiles route taps to the lapse paywall instead of source

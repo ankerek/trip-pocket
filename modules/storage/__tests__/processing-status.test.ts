@@ -61,6 +61,68 @@ describe('isSourceProcessing', () => {
       }),
     ).toBe(false);
   });
+
+  describe('extraction_strategy gating of ocr_status', () => {
+    it('ignores pending ocr_status for vision strategy (OCR is intentionally skipped)', () => {
+      expect(
+        isSourceProcessing({
+          ocr_status: 'pending',
+          extraction_status: 'done',
+          extraction_paused_reason: null,
+          url_fetch_paused_reason: null,
+          extraction_strategy: 'vision',
+        }),
+      ).toBe(false);
+    });
+
+    it('ignores pending ocr_status for captionPlusVision strategy', () => {
+      expect(
+        isSourceProcessing({
+          ocr_status: 'pending',
+          extraction_status: 'done',
+          extraction_paused_reason: null,
+          url_fetch_paused_reason: null,
+          extraction_strategy: 'captionPlusVision',
+        }),
+      ).toBe(false);
+    });
+
+    it('still counts pending extraction_status for vision strategy', () => {
+      expect(
+        isSourceProcessing({
+          ocr_status: 'pending',
+          extraction_status: 'pending',
+          extraction_paused_reason: null,
+          url_fetch_paused_reason: null,
+          extraction_strategy: 'vision',
+        }),
+      ).toBe(true);
+    });
+
+    it('legacy NULL strategy keeps the old ocr_status behavior', () => {
+      expect(
+        isSourceProcessing({
+          ocr_status: 'pending',
+          extraction_status: 'done',
+          extraction_paused_reason: null,
+          url_fetch_paused_reason: null,
+          extraction_strategy: null,
+        }),
+      ).toBe(true);
+    });
+
+    it('ocrTextLLM strategy keeps the old ocr_status behavior', () => {
+      expect(
+        isSourceProcessing({
+          ocr_status: 'pending',
+          extraction_status: 'done',
+          extraction_paused_reason: null,
+          url_fetch_paused_reason: null,
+          extraction_strategy: 'ocrTextLLM',
+        }),
+      ).toBe(true);
+    });
+  });
 });
 
 describe('isPlaceProcessing', () => {
@@ -97,5 +159,14 @@ describe('PROCESSING_SOURCES_WHERE', () => {
   it('still counts pending ocr/extraction', () => {
     expect(PROCESSING_SOURCES_WHERE).toContain("ocr_status = 'pending'");
     expect(PROCESSING_SOURCES_WHERE).toContain("extraction_status = 'pending'");
+  });
+
+  it('gates the ocr_status arm on the OCR-using strategies', () => {
+    // ocr_status='pending' is only "live work" when the row's strategy
+    // actually runs OCR (legacy NULL or ocrTextLLM). Vision/captionPlusVision
+    // rows leave ocr_status at 'pending' permanently.
+    expect(PROCESSING_SOURCES_WHERE).toContain(
+      "extraction_strategy IS NULL OR extraction_strategy = 'ocrTextLLM'",
+    );
   });
 });
