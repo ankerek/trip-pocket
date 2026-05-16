@@ -1,6 +1,8 @@
 import type { Database } from '@/modules/storage';
 import { notifyChange } from '@/modules/storage';
-import { applyUrlFetchResult } from '@/modules/storage/sources';
+import { applyUrlFetchResult, setFetchedVia } from '@/modules/storage/sources';
+import { getForceStrategy } from '@/modules/extraction/config';
+import { strategyForUrlAfterFetch } from '@/modules/extraction/strategies/select';
 import { getExtractor } from '@/modules/extraction';
 import { startStage } from '@/modules/pipeline-log';
 import {
@@ -300,8 +302,19 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
           downloadStage.failed(err);
         }
       }
-      await applyUrlFetchResult(opts.db, id, downloadedPath, result.caption);
-      enqueueOcr(id);
+      const strategy = strategyForUrlAfterFetch(
+        getForceStrategy(),
+        downloadedPath !== null,
+        result.caption.length > 0,
+      );
+      await applyUrlFetchResult(opts.db, id, downloadedPath, result.caption, strategy);
+      // OCR runs for ocrTextLLM; vision strategies skip OCR and go straight
+      // to the extractor (the row already has file_path + caption set).
+      if (strategy === 'ocrTextLLM') {
+        enqueueOcr(id);
+      } else {
+        getExtractor()?.enqueueExtraction(id);
+      }
       return { retry: false };
     }
 
@@ -310,7 +323,14 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     // or OCR) are tolerated — we just skip that slide's contribution.
     if (!opts.downloadImage) {
       // No downloader provisioned (test posture). Treat as caption-only.
-      await applyUrlFetchResult(opts.db, id, null, result.caption);
+      const strategy = strategyForUrlAfterFetch(
+        getForceStrategy(),
+        false,
+        result.caption.length > 0,
+      );
+      await applyUrlFetchResult(opts.db, id, null, result.caption, strategy);
+      // No file means vision strategies can't run; strategy collapses to
+      // ocrTextLLM and we go through the normal OCR path (caption-only).
       enqueueOcr(id);
       return { retry: false };
     }
@@ -332,7 +352,12 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
         downloadedCount: 0,
         coverPath: null,
       });
-      await applyUrlFetchResult(opts.db, id, null, result.caption);
+      const strategy = strategyForUrlAfterFetch(
+        getForceStrategy(),
+        false,
+        result.caption.length > 0,
+      );
+      await applyUrlFetchResult(opts.db, id, null, result.caption, strategy);
       enqueueOcr(id);
       return { retry: false };
     }
@@ -387,8 +412,15 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
 
     // Persist atomically: file_path → cover, caption → caption, ocr_text →
     // final concat, ocr_status → done. After this row update, a crash leaves
-    // a complete source (extraction may still re-run, which is fine).
-    await applyUrlFetchResult(opts.db, id, coverPath, result.caption);
+    // a complete source (extraction may still re-run, which is fine). The
+    // strategy stamp is set BEFORE the OCR-status update so a crash mid-flight
+    // still has a consistent row: file present, strategy chosen, ocr pending.
+    const strategy = strategyForUrlAfterFetch(
+      getForceStrategy(),
+      coverPath !== null,
+      result.caption.length > 0,
+    );
+    await applyUrlFetchResult(opts.db, id, coverPath, result.caption, strategy);
     await opts.db.runAsync(
       `UPDATE sources
           SET ocr_text = ?, ocr_status = 'done', updated_at = ?
@@ -419,9 +451,16 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
     // Mid-session sweeps deliberately skip 'failed' rows: a permanently
     // broken file should not burn a Vision call on every foreground. The
     // retry-on-relaunch path is runStartupRecovery (called once per process).
+    //
+    // Strategy gate: only ocrTextLLM (and legacy NULL) rows need on-device
+    // OCR. Vision strategies bypass OCR entirely — the extraction sweep
+    // picks them up directly. This means OCR is a no-op for vision rows;
+    // the on-device OCR module is preserved as a one-flag-flip rollback
+    // path (spec 2026-05-16-…-design.md §Rollback).
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources
         WHERE ocr_status = 'pending'
+          AND (extraction_strategy IS NULL OR extraction_strategy = 'ocrTextLLM')
           AND (kind = 'image' OR file_path IS NOT NULL OR caption IS NOT NULL)
      ORDER BY captured_at ASC`,
     );

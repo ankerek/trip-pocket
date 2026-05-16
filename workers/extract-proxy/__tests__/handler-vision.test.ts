@@ -131,10 +131,7 @@ describe('handleExtract — request shape', () => {
 
   describe('{ mode: "text", text } request shape', () => {
     it('returns 200 and sends a text-only Gemini request', async () => {
-      const res = await handleExtract(
-        postJson({ mode: 'text', text: 'hello tokyo' }),
-        makeEnv(),
-      );
+      const res = await handleExtract(postJson({ mode: 'text', text: 'hello tokyo' }), makeEnv());
       expect(res.status).toBe(200);
       expect(capturedGeminiBody?.contents?.[0]?.parts).toEqual([{ text: 'hello tokyo' }]);
     });
@@ -197,20 +194,14 @@ describe('handleExtract — request shape', () => {
     });
 
     it('returns 400 when imageBase64 is empty', async () => {
-      const res = await handleExtract(
-        postJson({ mode: 'vision', imageBase64: '' }),
-        makeEnv(),
-      );
+      const res = await handleExtract(postJson({ mode: 'vision', imageBase64: '' }), makeEnv());
       expect(res.status).toBe(400);
     });
   });
 
   describe('invalid request bodies', () => {
     it('returns 400 for unknown mode', async () => {
-      const res = await handleExtract(
-        postJson({ mode: 'unknown', text: 'hi' }),
-        makeEnv(),
-      );
+      const res = await handleExtract(postJson({ mode: 'unknown', text: 'hi' }), makeEnv());
       expect(res.status).toBe(400);
     });
 

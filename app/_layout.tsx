@@ -35,6 +35,11 @@ import {
   type Extractor,
 } from '@/modules/extraction';
 import {
+  createVisionLLMDirect,
+  createCaptionPlusVision,
+} from '@/modules/extraction/strategies';
+import { readImageFileAsBase64 } from '@/modules/extraction/readFileBase64';
+import {
   createEnricher,
   enrichFromProxy,
   provideEnricher,
@@ -199,7 +204,21 @@ function RootLayoutInner() {
       // AI extraction pipeline. Same lifecycle as OCR: provision the
       // singleton, run startup recovery, run sweep on every foreground.
       // The OCR success path chains here via getExtractor()?.enqueueExtraction.
+      //
+      // Strategy wiring (spec
+      // docs/superpowers/specs/2026-05-16-extraction-pipeline-composability-design.md):
+      // both text-mode and vision-mode runners are wired. The orchestrator
+      // dispatches per row based on `sources.extraction_strategy` (stamped at
+      // import time). Legacy NULL rows route through the text runner.
       const proxyUrl = Constants.expoConfig?.extra?.extractionProxyUrl as string | undefined;
+      const visionDirect = createVisionLLMDirect({
+        proxyUrl: proxyUrl ?? '',
+        readFileBase64: readImageFileAsBase64,
+      });
+      const captionPlusVision = createCaptionPlusVision({
+        proxyUrl: proxyUrl ?? '',
+        readFileBase64: readImageFileAsBase64,
+      });
       const extractor = createExtractor({
         db,
         extract: (ocrText) =>
@@ -211,6 +230,15 @@ function RootLayoutInner() {
             // loudly, the dev fixes app.config.ts, no silent breakage.
             proxyUrl ?? '',
           ),
+        extractVisual: async (ctx) => {
+          const strategy =
+            ctx.extractionStrategy === 'captionPlusVision' ? captionPlusVision : visionDirect;
+          return strategy.extract({
+            kind: 'image',
+            filePath: ctx.filePath,
+            caption: ctx.caption ?? undefined,
+          });
+        },
         ownerId,
         uuid: Crypto.randomUUID,
       });

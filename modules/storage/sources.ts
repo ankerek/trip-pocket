@@ -6,6 +6,12 @@ export type SourcePlatform = 'instagram' | 'tiktok';
 export type SourceOrigin = 'share' | 'auto' | 'manual';
 export type ProcessingStatus = 'pending' | 'done' | 'failed';
 
+// Mirrors `modules/extraction/strategies/types.ts`. Stored as TEXT in
+// `sources.extraction_strategy`; legacy rows have NULL and the orchestrator
+// treats NULL as 'ocrTextLLM'. No DB CHECK constraint — boundary types here
+// + Zod at the worker boundary are the enforcement.
+export type ExtractionStrategyName = 'ocrTextLLM' | 'vision' | 'captionPlusVision';
+
 export type Source = {
   id: string;
   kind: SourceKind;
@@ -21,6 +27,8 @@ export type Source = {
   extractionStatus: ProcessingStatus;
   extractionPausedReason: string | null;
   urlFetchPausedReason: string | null;
+  extractionStrategy: ExtractionStrategyName | null;
+  fetchedVia: string | null;
   capturedAt: string;
   ownerId: string;
   createdAt: string;
@@ -38,6 +46,7 @@ export type InsertSourceInput = {
   origin: SourceOrigin;
   capturedAt: string;
   ownerId: string;
+  extractionStrategy?: ExtractionStrategyName | null;
 };
 
 export async function insertSource(db: Database, input: InsertSourceInput): Promise<void> {
@@ -45,9 +54,9 @@ export async function insertSource(db: Database, input: InsertSourceInput): Prom
   await db.runAsync(
     `INSERT INTO sources (
       id, kind, platform, trip_id, file_path, url, content_hash, origin,
-      ocr_status, extraction_status, captured_at,
+      ocr_status, extraction_status, extraction_strategy, captured_at,
       owner_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)`,
     input.id,
     input.kind ?? 'image',
     input.platform ?? null,
@@ -56,10 +65,44 @@ export async function insertSource(db: Database, input: InsertSourceInput): Prom
     input.url ?? null,
     input.contentHash,
     input.origin,
+    input.extractionStrategy ?? null,
     input.capturedAt,
     input.ownerId,
     now,
     now,
+  );
+}
+
+/**
+ * Set the strategy for a row after creation — used by URL-fetch completion to
+ * stamp 'vision' or 'captionPlusVision' depending on whether the worker
+ * returned a caption.
+ */
+export async function setExtractionStrategy(
+  db: Database,
+  sourceId: string,
+  strategy: ExtractionStrategyName,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE sources SET extraction_strategy = ?, updated_at = ? WHERE id = ?`,
+    strategy,
+    now,
+    sourceId,
+  );
+}
+
+/**
+ * Set the winning fetcher name on a URL source after `/fetch-post` returns.
+ * Telemetry only — no behavior depends on this field.
+ */
+export async function setFetchedVia(db: Database, sourceId: string, via: string): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE sources SET fetched_via = ?, updated_at = ? WHERE id = ?`,
+    via,
+    now,
+    sourceId,
   );
 }
 
@@ -78,6 +121,8 @@ type Row = {
   extraction_status: ProcessingStatus;
   extraction_paused_reason: string | null;
   url_fetch_paused_reason: string | null;
+  extraction_strategy: ExtractionStrategyName | null;
+  fetched_via: string | null;
   captured_at: string;
   owner_id: string;
   created_at: string;
@@ -85,7 +130,7 @@ type Row = {
 };
 
 const ALL_COLUMNS =
-  'id, kind, platform, trip_id, file_path, url, caption, content_hash, origin, ocr_status, ocr_text, extraction_status, extraction_paused_reason, url_fetch_paused_reason, captured_at, owner_id, created_at, updated_at';
+  'id, kind, platform, trip_id, file_path, url, caption, content_hash, origin, ocr_status, ocr_text, extraction_status, extraction_paused_reason, url_fetch_paused_reason, extraction_strategy, fetched_via, captured_at, owner_id, created_at, updated_at';
 
 function rowToSource(r: Row): Source {
   return {
@@ -103,6 +148,8 @@ function rowToSource(r: Row): Source {
     extractionStatus: r.extraction_status,
     extractionPausedReason: r.extraction_paused_reason,
     urlFetchPausedReason: r.url_fetch_paused_reason,
+    extractionStrategy: r.extraction_strategy,
+    fetchedVia: r.fetched_via,
     capturedAt: r.captured_at,
     ownerId: r.owner_id,
     createdAt: r.created_at,
@@ -252,23 +299,40 @@ export async function assignSourceTrip(
  * `filePath` is the persistent local path of the downloaded cover image (null
  * when download was skipped or failed and we're falling back to caption-only).
  * `caption` is the og:description text, already entity-decoded.
+ * When `extractionStrategy` is provided, it's stamped on the row atomically
+ * (used by the composable-extraction pipeline so vision rows are committed
+ * to a strategy in the same transaction as the fetch result).
  */
 export async function applyUrlFetchResult(
   db: Database,
   sourceId: string,
   filePath: string | null,
   caption: string,
+  extractionStrategy?: ExtractionStrategyName,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE sources
-        SET file_path = ?, caption = ?, updated_at = ?
-      WHERE id = ?`,
-    filePath,
-    caption,
-    now,
-    sourceId,
-  );
+  if (extractionStrategy !== undefined) {
+    await db.runAsync(
+      `UPDATE sources
+          SET file_path = ?, caption = ?, extraction_strategy = ?, updated_at = ?
+        WHERE id = ?`,
+      filePath,
+      caption,
+      extractionStrategy,
+      now,
+      sourceId,
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE sources
+          SET file_path = ?, caption = ?, updated_at = ?
+        WHERE id = ?`,
+      filePath,
+      caption,
+      now,
+      sourceId,
+    );
+  }
   notifyChange('sources');
 }
 

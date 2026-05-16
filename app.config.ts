@@ -97,6 +97,15 @@ const config: ExpoConfig = {
     enrichmentProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/enrich',
     photoProxyUrlBase: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/photo',
     fetchPostProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/fetch-post',
+    // Composable extraction pipeline (spec
+    // docs/superpowers/specs/2026-05-16-extraction-pipeline-composability-design.md).
+    //   'ocrTextLLM'        — legacy OCR-then-text path (single-flip rollback target)
+    //   'vision'            — direct image → Gemini Vision (force-mode, ignores caption)
+    //   'captionPlusVision' — NOT a valid forceStrategy; picked only by auto
+    //   'auto'              — image sources use vision; URL sources use
+    //                         captionPlusVision when a caption is present, else vision
+    // Default is 'ocrTextLLM' for PR 3; PR 4 flips this to 'auto'.
+    forceStrategy: 'ocrTextLLM' as const,
     rcIosApiKey: RC_IOS_API_KEY,
     appVariant: IS_DEV ? 'development' : 'production',
     eas: {

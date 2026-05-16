@@ -63,7 +63,7 @@ Legacy rows (pre-migration) have `extraction_strategy IS NULL`; the orchestrator
 SELECT id FROM sources
  WHERE ocr_status = 'pending'
    AND (extraction_strategy IS NULL OR extraction_strategy = 'ocrTextLLM')
-   AND (kind = 'screenshot' OR file_path IS NOT NULL OR caption IS NOT NULL);
+   AND (kind = 'image' OR file_path IS NOT NULL OR caption IS NOT NULL);
 
 -- Extraction sweep (modules/extraction/extraction.ts:313)
 SELECT id FROM sources
@@ -97,7 +97,7 @@ Vision rows skip the `ocr_status='done'` gate. OCR rows behave exactly as today.
 
 ```
 config.forceStrategy === 'auto' (default):
-  kind === 'screenshot'                       → 'vision'        (set at import)
+  kind === 'image'                       → 'vision'        (set at import)
   kind === 'url', after fetch, caption empty  → 'vision'        (set after fetch)
   kind === 'url', after fetch, caption set    → 'captionPlusVision' (set after fetch)
   kind === 'pasted'                           → 'ocrTextLLM'    (text-only path)
@@ -106,7 +106,7 @@ config.forceStrategy === 'ocrTextLLM':
   any new row                                 → 'ocrTextLLM'
 
 config.forceStrategy === 'vision':
-  kind === 'screenshot' or 'url' with file    → 'vision'
+  kind === 'image' or 'url' with file    → 'vision'
   kind === 'pasted'                           → error at import (no image)
 ```
 

@@ -36,10 +36,38 @@ const DEFAULT_RETRY_AFTER_MS = 60000;
 // — defends against a misbehaving upstream wedging a row in `pending`.
 const RETRY_AFTER_CEILING_MS = 5 * 60 * 1000;
 
+// Vision mode needs more time than text mode — image upload + multi-modal
+// inference. Bump default for the visual path.
+const VISION_DEFAULT_TIMEOUT_MS = 20000;
+
+type ExtractRequestBody =
+  | { mode: 'text'; text: string }
+  | { mode: 'vision'; imageBase64: string; caption?: string };
+
 export async function extractFromProxy(
   ocrText: string,
   proxyUrl: string,
   opts: ExtractFromProxyOptions = {},
+): Promise<ExtractionResult> {
+  return postExtract({ mode: 'text', text: ocrText }, proxyUrl, opts);
+}
+
+export async function extractFromProxyVision(
+  imageBase64: string,
+  caption: string | undefined,
+  proxyUrl: string,
+  opts: ExtractFromProxyOptions = {},
+): Promise<ExtractionResult> {
+  return postExtract({ mode: 'vision', imageBase64, caption }, proxyUrl, {
+    timeoutMs: opts.timeoutMs ?? VISION_DEFAULT_TIMEOUT_MS,
+    ...opts,
+  });
+}
+
+async function postExtract(
+  body: ExtractRequestBody,
+  proxyUrl: string,
+  opts: ExtractFromProxyOptions,
 ): Promise<ExtractionResult> {
   // Fail fast if RC hasn't initialised — route through the paused-state
   // machinery the same way a 401 from the worker would.
@@ -61,7 +89,7 @@ export async function extractFromProxy(
         'content-type': 'application/json',
         'X-RC-User-Id': userId,
       },
-      body: JSON.stringify({ ocr_text: ocrText }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (err) {
@@ -89,14 +117,14 @@ export async function extractFromProxy(
     throw new ExtractionError(`extract-client-${response.status}`, { kind: 'permanent' });
   }
 
-  let body: unknown;
+  let parsedBody: unknown;
   try {
-    body = await response.json();
+    parsedBody = await response.json();
   } catch {
     throw new ExtractionError('extract-non-json', { kind: 'retryable' });
   }
 
-  const parsed = responseSchema.safeParse(body);
+  const parsed = responseSchema.safeParse(parsedBody);
   if (!parsed.success) {
     throw new ExtractionError('extract-schema-violation', { kind: 'retryable' });
   }

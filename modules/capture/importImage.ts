@@ -3,7 +3,10 @@ import type { Database } from '@/modules/storage/db';
 import { insertSource } from '@/modules/storage/sources';
 import { notifyChange } from '@/modules/storage/live-query';
 import { getProcessor } from '@/modules/processing';
+import { getExtractor } from '@/modules/extraction';
 import { startStage } from '@/modules/pipeline-log';
+import { getForceStrategy } from '@/modules/extraction/config';
+import { strategyForImageImport } from '@/modules/extraction/strategies/select';
 
 export type ImportFs = {
   sha256: (uri: string) => Promise<string>;
@@ -62,6 +65,8 @@ export async function importImage(
   }
   console.log('[importImage]', input.transfer, input.sourceUri, '->', targetUri);
 
+  const extractionStrategy = strategyForImageImport(getForceStrategy());
+
   const storageStage = startStage('storage', sourceId);
   try {
     await insertSource(db, {
@@ -73,6 +78,7 @@ export async function importImage(
       origin: input.origin,
       capturedAt: input.capturedAt,
       ownerId: input.ownerId,
+      extractionStrategy,
     });
     storageStage.done({ tripId: input.suggestedTripId ?? null });
   } catch (err) {
@@ -91,10 +97,18 @@ export async function importImage(
   notifyChange('sources');
   if (input.suggestedTripId) notifyChange('trips');
 
-  // Kick off OCR for the freshly inserted row. Non-blocking; the import call
-  // resolves immediately and the OCR worker picks it up in the background.
-  // No-op when no processor has been provisioned (Jest, etc.).
-  getProcessor()?.enqueueOcr(sourceId);
+  // Kick off the appropriate stage. ocrTextLLM strategy enqueues OCR (which
+  // then chains into extraction via processing.ts). Vision strategies skip
+  // OCR and go straight to the extractor — the row already has file_path
+  // set, so the extraction sweep will pick it up too; this immediate enqueue
+  // just avoids the latency of waiting for the next sweep. No-op when no
+  // processor / extractor has been provisioned (Jest, share extension cold
+  // start, etc.) — the relevant sweep at app boot handles those rows.
+  if (extractionStrategy === 'ocrTextLLM') {
+    getProcessor()?.enqueueOcr(sourceId);
+  } else {
+    getExtractor()?.enqueueExtraction(sourceId);
+  }
 
   return { status: 'imported', sourceId };
 }

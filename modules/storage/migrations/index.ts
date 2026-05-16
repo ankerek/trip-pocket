@@ -8,6 +8,7 @@ import { countrySearch } from './0006_country_search';
 import { entitlementPausedReason } from './0007_entitlement_paused_reason';
 import { categoryRename } from './0008_category_rename';
 import { dropTags } from './0009_drop_tags';
+import { extractionStrategyColumns } from './0010_extraction_strategy_columns';
 
 export const migrations: Migration[] = [
   init,
@@ -19,4 +20,5 @@ export const migrations: Migration[] = [
   entitlementPausedReason,
   categoryRename,
   dropTags,
+  extractionStrategyColumns,
 ];

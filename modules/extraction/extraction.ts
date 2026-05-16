@@ -42,6 +42,21 @@ export class ExtractionError extends Error {
 
 export type ExtractionRunner = (ocrText: string) => Promise<ExtractionResult>;
 
+/**
+ * Source-row context passed to the visual extraction runner. Strategies that
+ * operate on images (vision, captionPlusVision) need the file path and any
+ * caption attached to the row; the orchestrator hands these over rather than
+ * re-querying the DB inside the runner.
+ */
+export type VisualExtractionContext = {
+  sourceId: string;
+  extractionStrategy: 'vision' | 'captionPlusVision';
+  filePath: string;
+  caption: string | null;
+};
+
+export type VisualExtractionRunner = (ctx: VisualExtractionContext) => Promise<ExtractionResult>;
+
 export type Extractor = {
   enqueueExtraction(sourceId: string): void;
   runExtractionSweep(): Promise<void>;
@@ -58,7 +73,13 @@ export type Extractor = {
 
 export type CreateExtractorOptions = {
   db: Database;
+  /** Text-mode runner. Required. Used for OCR/text strategy and for legacy
+   *  NULL-strategy rows. */
   extract: ExtractionRunner;
+  /** Vision-mode runner. Required only when any source rows have
+   *  extraction_strategy='vision' or 'captionPlusVision'. Throws if a vision
+   *  row is processed and this isn't wired. */
+  extractVisual?: VisualExtractionRunner;
   ownerId: string;
   maxRetries?: number;
   setTimer?: (cb: () => void, ms: number) => unknown;
@@ -106,15 +127,30 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
   }
 
   async function processOne(id: string): Promise<ProcessOutcome> {
-    const row = await opts.db.getFirstAsync<{ ocr_text: string | null; trip_id: string | null }>(
-      `SELECT ocr_text, trip_id FROM sources WHERE id = ?`,
+    const row = await opts.db.getFirstAsync<{
+      ocr_text: string | null;
+      trip_id: string | null;
+      extraction_strategy: 'ocrTextLLM' | 'vision' | 'captionPlusVision' | null;
+      file_path: string | null;
+      caption: string | null;
+    }>(
+      `SELECT ocr_text, trip_id, extraction_strategy, file_path, caption
+         FROM sources WHERE id = ?`,
       id,
     );
     if (!row) return { kind: 'done' };
 
+    // Legacy NULL strategy is treated as ocrTextLLM (matches pre-migration
+    // behavior). The orchestrator dispatches based on the resolved strategy.
+    const strategy = row.extraction_strategy ?? 'ocrTextLLM';
+    const isVisualStrategy = strategy === 'vision' || strategy === 'captionPlusVision';
+
     const ocrText = (row.ocr_text ?? '').trim();
-    if (!ocrText) {
+    if (!isVisualStrategy && !ocrText) {
       // Empty-OCR short-circuit: classifier signal of "noise". No proxy call.
+      // Vision strategies bypass this: empty ocr_text is the normal state for
+      // them (OCR never ran), and the LLM call may still find places in the
+      // image itself.
       const ts = getNow();
       await opts.db.runAsync(
         `UPDATE sources
@@ -130,7 +166,22 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     const stage = startStage('extraction', id);
     let result: ExtractionResult;
     try {
-      result = await opts.extract(ocrText);
+      if (isVisualStrategy) {
+        if (!opts.extractVisual) {
+          throw new ExtractionError('extract-visual-runner-not-wired', { kind: 'permanent' });
+        }
+        if (!row.file_path) {
+          throw new ExtractionError('extract-visual-no-file-path', { kind: 'permanent' });
+        }
+        result = await opts.extractVisual({
+          sourceId: id,
+          extractionStrategy: strategy,
+          filePath: row.file_path,
+          caption: row.caption,
+        });
+      } else {
+        result = await opts.extract(ocrText);
+      }
     } catch (err) {
       const classification =
         err instanceof ExtractionError ? err.classification : ({ kind: 'retryable' } as const);
@@ -309,11 +360,22 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     // Mid-session sweeps deliberately skip 'failed' rows; the retry-on-relaunch
     // path is runStartupRecovery (called once per process). Paused rows are
     // skipped here and only re-entered via resumeEntitlementPaused.
+    //
+    // OCR/text strategy rows (extraction_strategy NULL or 'ocrTextLLM') wait
+    // for ocr_status='done'. Vision strategies bypass OCR and are ready as
+    // soon as the row is created (and, for URL sources, the worker fetch has
+    // populated file_path).
     const rows = await opts.db.getAllAsync<{ id: string }>(
       `SELECT id FROM sources
         WHERE extraction_status = 'pending'
-          AND ocr_status = 'done'
           AND extraction_paused_reason IS NULL
+          AND (
+            ( (extraction_strategy IS NULL OR extraction_strategy = 'ocrTextLLM')
+              AND ocr_status = 'done' )
+            OR
+            ( extraction_strategy IN ('vision', 'captionPlusVision')
+              AND file_path IS NOT NULL )
+          )
      ORDER BY captured_at ASC`,
     );
     for (const r of rows) enqueueExtraction(r.id);
