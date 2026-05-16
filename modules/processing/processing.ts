@@ -3,6 +3,7 @@ import { notifyChange } from '@/modules/storage';
 import { applyUrlFetchResult, setFetchedVia } from '@/modules/storage/sources';
 import { getForceStrategy } from '@/modules/extraction/config';
 import { strategyForUrlAfterFetch } from '@/modules/extraction/strategies/select';
+import { rememberVideoMetadata } from '@/modules/extraction/videoMetadata';
 import { getExtractor } from '@/modules/extraction';
 import { startStage } from '@/modules/pipeline-log';
 import {
@@ -302,11 +303,19 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
           downloadStage.failed(err);
         }
       }
+      const hasVideo = !!result.videoUrl;
       const strategy = strategyForUrlAfterFetch(
         getForceStrategy(),
         downloadedPath !== null,
         result.caption.length > 0,
+        hasVideo,
       );
+      if (strategy === 'videoPlusCaption' && result.videoUrl) {
+        // Hand the (signed, expiring) video URL to the extractor via the
+        // in-memory cache. The DB row never gets it — see the video
+        // extraction spec §Decisions.
+        rememberVideoMetadata(id, result.videoUrl, result.videoDuration ?? null);
+      }
       await applyUrlFetchResult(opts.db, id, downloadedPath, result.caption, strategy);
       // OCR runs for ocrTextLLM; vision strategies skip OCR and go straight
       // to the extractor (the row already has file_path + caption set).

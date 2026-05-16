@@ -22,6 +22,11 @@ export type ApifyInstagramPost = {
   imageUrls: string[]; // [displayUrl, ...childPosts[].displayUrl]
   author: string | null;
   permalink: string;
+  // Populated only when the top-level post is a single Video (Reel). Carousel
+  // videos (Sidecar with video children) are out of scope for the first cut —
+  // the orchestrator treats those as image carousels.
+  videoUrl: string | null;
+  videoDuration: number | null; // seconds; null when unknown
 };
 
 type ApifyRawItem = {
@@ -35,6 +40,8 @@ type ApifyRawItem = {
   ownerUsername?: string | null;
   childPosts?: Array<{ displayUrl?: string }>;
   type?: string; // 'Image' | 'Video' | 'Sidecar' — informational
+  videoUrl?: string;
+  videoDuration?: number;
 };
 
 // Worker subrequests have a hard ceiling well under Apify's 5-minute default.
@@ -164,6 +171,15 @@ export function mapApifyItem(raw: ApifyRawItem, fallbackPermalink: string): Apif
       }
     }
   }
+  const isTopLevelVideo = raw.type === 'Video';
+  const videoUrl =
+    isTopLevelVideo && typeof raw.videoUrl === 'string' && raw.videoUrl.length > 0
+      ? raw.videoUrl
+      : null;
+  const videoDuration =
+    isTopLevelVideo && typeof raw.videoDuration === 'number' && Number.isFinite(raw.videoDuration)
+      ? raw.videoDuration
+      : null;
   return {
     caption: typeof raw.caption === 'string' ? raw.caption : '',
     imageUrls,
@@ -172,5 +188,7 @@ export function mapApifyItem(raw: ApifyRawItem, fallbackPermalink: string): Apif
         ? `@${raw.ownerUsername}`
         : null,
     permalink: typeof raw.url === 'string' && raw.url.length > 0 ? raw.url : fallbackPermalink,
+    videoUrl,
+    videoDuration,
   };
 }

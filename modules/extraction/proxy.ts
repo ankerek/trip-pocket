@@ -40,9 +40,57 @@ const RETRY_AFTER_CEILING_MS = 5 * 60 * 1000;
 // inference. Bump default for the visual path.
 const VISION_DEFAULT_TIMEOUT_MS = 20000;
 
+// Video mode needs the most: worker fetches the CDN video (≤20 s timeout),
+// optionally round-trips through the Files API (≤8 s poll), then Gemini
+// generates (5–15 s).
+const VIDEO_DEFAULT_TIMEOUT_MS = 45000;
+
+// Closed-vocab video error codes the worker may emit in the response body's
+// `error` field. Mirrors workers/extract-proxy/src/video.ts. Used by the
+// videoPlusCaption strategy to decide whether a failure justifies falling
+// back to captionPlusVision.
+export type VideoErrorCode =
+  | 'video-too-long'
+  | 'video-too-large'
+  | 'video-fetch-timeout'
+  | 'video-fetch-network'
+  | 'video-fetch-4xx'
+  | 'video-fetch-5xx'
+  | 'upload-start-failed'
+  | 'upload-finalize-failed'
+  | 'files-api-failed'
+  | 'files-api-processing-timeout'
+  | 'video-misconfigured';
+
+const VIDEO_ERROR_CODES: ReadonlySet<string> = new Set<VideoErrorCode>([
+  'video-too-long',
+  'video-too-large',
+  'video-fetch-timeout',
+  'video-fetch-network',
+  'video-fetch-4xx',
+  'video-fetch-5xx',
+  'upload-start-failed',
+  'upload-finalize-failed',
+  'files-api-failed',
+  'files-api-processing-timeout',
+  'video-misconfigured',
+]);
+
+export class VideoExtractionError extends Error {
+  constructor(public readonly code: VideoErrorCode) {
+    super(`video-extraction-failed: ${code}`);
+    this.name = 'VideoExtractionError';
+  }
+}
+
 type ExtractRequestBody =
   | { mode: 'text'; text: string }
-  | { mode: 'vision'; imageBase64: string; caption?: string };
+  | { mode: 'vision'; imageBase64: string; caption?: string }
+  | {
+      mode: 'video';
+      video: { url: string; durationSec?: number };
+      caption?: string;
+    };
 
 export async function extractFromProxy(
   ocrText: string,
@@ -62,6 +110,22 @@ export async function extractFromProxyVision(
     timeoutMs: opts.timeoutMs ?? VISION_DEFAULT_TIMEOUT_MS,
     ...opts,
   });
+}
+
+export async function extractFromProxyVideo(
+  videoUrl: string,
+  caption: string | undefined,
+  proxyUrl: string,
+  opts: ExtractFromProxyOptions & { durationSec?: number } = {},
+): Promise<ExtractionResult> {
+  return postExtract(
+    { mode: 'video', video: { url: videoUrl, durationSec: opts.durationSec }, caption },
+    proxyUrl,
+    {
+      timeoutMs: opts.timeoutMs ?? VIDEO_DEFAULT_TIMEOUT_MS,
+      ...opts,
+    },
+  );
 }
 
 async function postExtract(
@@ -109,11 +173,19 @@ async function postExtract(
     throw new ExtractionError('extract-rate-limited', classifyRateLimit(response));
   }
 
-  if (response.status >= 500) {
-    throw new ExtractionError(`extract-upstream-${response.status}`, { kind: 'retryable' });
-  }
-
   if (response.status >= 400) {
+    // Video mode: the worker tags video-specific failures via the response
+    // body's `error` field. Surface them as VideoExtractionError so the
+    // strategy can decide whether to fall back. Non-video errors fall
+    // through to the generic ExtractionError classification below.
+    if (body.mode === 'video') {
+      const code = await readVideoErrorCode(response);
+      if (code) throw new VideoExtractionError(code);
+    }
+
+    if (response.status >= 500) {
+      throw new ExtractionError(`extract-upstream-${response.status}`, { kind: 'retryable' });
+    }
     throw new ExtractionError(`extract-client-${response.status}`, { kind: 'permanent' });
   }
 
@@ -130,6 +202,16 @@ async function postExtract(
   }
 
   return { places: parsed.data.places, model: parsed.data.model };
+}
+
+async function readVideoErrorCode(response: Response): Promise<VideoErrorCode | null> {
+  try {
+    const body = (await response.clone().json()) as { error?: unknown };
+    if (typeof body?.error !== 'string') return null;
+    return VIDEO_ERROR_CODES.has(body.error) ? (body.error as VideoErrorCode) : null;
+  } catch {
+    return null;
+  }
 }
 
 function classifyRateLimit(response: Response): ExtractionErrorKind {

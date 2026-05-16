@@ -10,7 +10,11 @@ export type ProcessingStatus = 'pending' | 'done' | 'failed';
 // `sources.extraction_strategy`; legacy rows have NULL and the orchestrator
 // treats NULL as 'ocrTextLLM'. No DB CHECK constraint — boundary types here
 // + Zod at the worker boundary are the enforcement.
-export type ExtractionStrategyName = 'ocrTextLLM' | 'vision' | 'captionPlusVision';
+export type ExtractionStrategyName =
+  | 'ocrTextLLM'
+  | 'vision'
+  | 'captionPlusVision'
+  | 'videoPlusCaption';
 
 export type Source = {
   id: string;

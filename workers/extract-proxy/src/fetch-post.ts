@@ -77,6 +77,11 @@ export const fetchPostResponseSchema = z.object({
   caption: z.string(), // may be empty when the post had no caption
   imageUrls: z.array(z.string().url()), // may be empty when no cover is recoverable
   author: z.string().nullable(),
+  // Populated only for video posts (IG Reels / top-level TikTok videos). Phone
+  // consumes the URL in-memory and forwards it to /extract mode='video' —
+  // the URL is signed and expires within hours, so we never store it.
+  videoUrl: z.string().url().nullable().optional(),
+  videoDuration: z.number().nonnegative().nullable().optional(), // seconds
   _debug: fetchPostDebugSchema.optional(),
 });
 
@@ -417,6 +422,8 @@ async function fetchInstagram(
         caption: apify.caption,
         imageUrls: apify.imageUrls,
         author: apify.author,
+        videoUrl: apify.videoUrl,
+        videoDuration: apify.videoDuration,
       },
       cacheKind: 'apify',
       dispatch: { route, ogOutcome, apifyOutcome: 'ok' },
@@ -773,14 +780,28 @@ export function mapTikTokRehydrationItem(raw: unknown, canonical: string): Mappe
     };
   }
 
-  const cover = asString(getProp(getProp(item, 'video'), 'cover'));
+  const video = getProp(item, 'video');
+  const cover = asString(getProp(video, 'cover'));
   const imageUrls = cover && cover.length > 0 ? [cover] : [];
+  // `playAddr` is the primary watermark-free URL; `downloadAddr` is the
+  // fallback (some videos only expose one). Both are signed and expire.
+  const playAddr = asString(getProp(video, 'playAddr'));
+  const downloadAddr = asString(getProp(video, 'downloadAddr'));
+  const videoUrl =
+    (playAddr && playAddr.length > 0 && playAddr) ||
+    (downloadAddr && downloadAddr.length > 0 && downloadAddr) ||
+    null;
+  const rawDuration = getProp(video, 'duration');
+  const videoDuration =
+    typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : null;
   return {
     platform: 'tiktok',
     permalink: canonical,
     caption,
     imageUrls,
     author,
+    videoUrl,
+    videoDuration,
     _route: 'video',
   };
 }

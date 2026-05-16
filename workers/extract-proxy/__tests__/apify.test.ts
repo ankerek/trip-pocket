@@ -76,6 +76,59 @@ describe('mapApifyItem', () => {
     expect(mapApifyItem({ displayUrl: 'x' }, 'p').caption).toBe('');
     expect(mapApifyItem({ displayUrl: 'x', caption: null }, 'p').caption).toBe('');
   });
+
+  it('exposes videoUrl + videoDuration for top-level Video posts', () => {
+    const out = mapApifyItem(
+      {
+        url: 'https://www.instagram.com/reel/REEL/',
+        caption: 'food spot',
+        displayUrl: 'https://cdn/cover.jpg',
+        ownerUsername: 'foodie',
+        type: 'Video',
+        videoUrl: 'https://cdn/reel.mp4',
+        videoDuration: 42,
+      },
+      'https://www.instagram.com/reel/REEL/',
+    );
+    expect(out.videoUrl).toBe('https://cdn/reel.mp4');
+    expect(out.videoDuration).toBe(42);
+    expect(out.imageUrls).toEqual(['https://cdn/cover.jpg']);
+  });
+
+  it('returns null videoUrl/videoDuration for image posts', () => {
+    const out = mapApifyItem({ displayUrl: 'x', type: 'Image' }, 'p');
+    expect(out.videoUrl).toBeNull();
+    expect(out.videoDuration).toBeNull();
+  });
+
+  it('returns null videoUrl/videoDuration for Sidecar (carousel) — even when a child video is present', () => {
+    // Carousel videos are out of scope for the first cut; we only populate
+    // video fields for top-level Video posts.
+    const out = mapApifyItem(
+      {
+        displayUrl: 'cover',
+        type: 'Sidecar',
+        videoUrl: 'https://cdn/should-be-ignored.mp4',
+        videoDuration: 10,
+      },
+      'p',
+    );
+    expect(out.videoUrl).toBeNull();
+    expect(out.videoDuration).toBeNull();
+  });
+
+  it('returns null videoUrl when raw.videoUrl is empty', () => {
+    const out = mapApifyItem({ displayUrl: 'x', type: 'Video', videoUrl: '' }, 'p');
+    expect(out.videoUrl).toBeNull();
+  });
+
+  it('returns null videoDuration when raw.videoDuration is not a finite number', () => {
+    const out = mapApifyItem(
+      { displayUrl: 'x', type: 'Video', videoUrl: 'https://cdn/r.mp4', videoDuration: NaN },
+      'p',
+    );
+    expect(out.videoDuration).toBeNull();
+  });
 });
 
 describe('fetchInstagramViaApify', () => {

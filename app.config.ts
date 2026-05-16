@@ -98,11 +98,18 @@ const config: ExpoConfig = {
     photoProxyUrlBase: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/photo',
     fetchPostProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/fetch-post',
     // Composable extraction pipeline (spec
-    // docs/superpowers/specs/2026-05-16-extraction-pipeline-composability-design.md).
+    // docs/superpowers/specs/2026-05-16-extraction-pipeline-composability-design.md
+    // + the video follow-up spec 2026-05-16-video-place-extraction-design.md).
     //   'ocrTextLLM'        — legacy OCR-then-text path (single-flip rollback target)
     //   'vision'            — direct image → Gemini Vision (force-mode, ignores caption)
+    //   'video'             — prefer videoPlusCaption on rows that have a videoUrl
+    //                         (Reels / TikTok videos); other rows soft-degrade to
+    //                         ocrTextLLM. Developer-only A/B testing knob.
     //   'captionPlusVision' — NOT a valid forceStrategy; picked only by auto
+    //   'videoPlusCaption'  — NOT a valid forceStrategy; picked only by auto when
+    //                         videoUrl is present
     //   'auto'              — image sources use vision; URL sources use
+    //                         videoPlusCaption when videoUrl is present, else
     //                         captionPlusVision when a caption is present, else vision
     // Auto is the production default. To roll back (e.g. if vision quality
     // disappoints on real users): change this to 'ocrTextLLM' and ship a

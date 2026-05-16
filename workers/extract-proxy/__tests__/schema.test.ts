@@ -26,6 +26,44 @@ describe('extract-proxy schema', () => {
       const result = requestBodySchema.safeParse({ ocr_text: '   \n\t  ' });
       expect(result.success).toBe(false);
     });
+
+    it('accepts mode=video with a URL', () => {
+      const result = requestBodySchema.safeParse({
+        mode: 'video',
+        video: { url: 'https://cdn/r.mp4' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts mode=video with caption and durationSec', () => {
+      const result = requestBodySchema.safeParse({
+        mode: 'video',
+        video: { url: 'https://cdn/r.mp4', durationSec: 42 },
+        caption: 'check this spot',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects mode=video when video.url is missing', () => {
+      const result = requestBodySchema.safeParse({ mode: 'video' });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects mode=video with a non-URL video.url', () => {
+      const result = requestBodySchema.safeParse({
+        mode: 'video',
+        video: { url: 'not a url' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects mode=video with a negative durationSec', () => {
+      const result = requestBodySchema.safeParse({
+        mode: 'video',
+        video: { url: 'https://cdn/r.mp4', durationSec: -1 },
+      });
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('extractionResponseSchema', () => {

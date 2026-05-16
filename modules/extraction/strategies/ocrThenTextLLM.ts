@@ -24,7 +24,7 @@ export function createOcrThenTextLLM(opts: OcrThenTextLLMOptions): ExtractionStr
       let text: string;
       if (input.kind === 'text') {
         text = input.text;
-      } else {
+      } else if (input.kind === 'image') {
         if (input.ocrText && input.ocrText.length > 0) {
           text = input.ocrText;
         } else if (opts.ocr) {
@@ -34,6 +34,13 @@ export function createOcrThenTextLLM(opts: OcrThenTextLLMOptions): ExtractionStr
             'ocrThenTextLLM: image input has no cached ocrText and no inline OCR was wired',
           );
         }
+      } else {
+        // 'video' input. The orchestrator soft-degrades video rows without a
+        // cover to 'ocrTextLLM' (see strategyForUrlAfterFetch), but a video
+        // *with* a cover normally routes to videoPlusCaption. This branch is
+        // unreachable in production; defensive throw makes the contract
+        // explicit at the type system level.
+        throw new Error(`ocrThenTextLLM: unsupported input kind ${input.kind}`);
       }
       return extractFromProxy(text, opts.proxyUrl);
     },

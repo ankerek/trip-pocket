@@ -4,11 +4,12 @@ import {
   type ExtractionResponse,
   type RequestBody,
 } from './schema';
-import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
+import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT, VIDEO_PROMPT_SUFFIX } from './prompt';
 import { handleEnrich } from './enrich';
 import { handleFetchPost } from './fetch-post';
 import { handlePhoto } from './photo';
 import { requireEntitlement } from './entitlement';
+import { buildVideoPart, VideoError, type WaitUntilCtx } from './video';
 
 export interface RateLimitBinding {
   limit(args: { key: string }): Promise<{ success: boolean }>;
@@ -48,7 +49,15 @@ function errorResponse(
   });
 }
 
-export async function handleExtract(request: Request, env: Env): Promise<Response> {
+// Default ctx for unit tests that don't care about Files API cleanup
+// (text/vision modes never schedule waitUntil work).
+const NOOP_CTX: WaitUntilCtx = { waitUntil: () => {} };
+
+export async function handleExtract(
+  request: Request,
+  env: Env,
+  ctx: WaitUntilCtx = NOOP_CTX,
+): Promise<Response> {
   if (request.method !== 'POST') {
     return errorResponse('method-not-allowed', 405);
   }
@@ -101,9 +110,37 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
 
   // Build the Gemini `parts` array based on the request mode. Text mode
   // sends a single text part. Vision mode sends an inline_data image part,
-  // optionally followed by a caption text part. Truncation defense applies
-  // to text inputs only — a pathological caption shouldn't blow the budget.
-  const parts = buildGeminiParts(parsed.data);
+  // optionally followed by a caption text part. Video mode fetches the URL
+  // from the worker (closer to IG/TikTok CDN than the phone) and either
+  // inlines the bytes or uploads via Gemini's Files API. Truncation
+  // defense applies to text inputs only — a pathological caption shouldn't
+  // blow the budget.
+  let parts: Array<Record<string, unknown>>;
+  let systemPrompt = SYSTEM_PROMPT;
+  if (parsed.data.mode === 'video') {
+    try {
+      const { part } = await buildVideoPart(
+        { url: parsed.data.video.url, durationSec: parsed.data.video.durationSec },
+        env,
+        ctx,
+      );
+      parts = [part];
+      if (parsed.data.caption && parsed.data.caption.trim().length > 0) {
+        parts.push({
+          text: `User-supplied caption:\n${parsed.data.caption.slice(0, TEXT_INPUT_CAP)}`,
+        });
+      }
+      systemPrompt = SYSTEM_PROMPT + VIDEO_PROMPT_SUFFIX;
+    } catch (err) {
+      if (err instanceof VideoError) {
+        console.error('extract-proxy/video: ' + err.code);
+        return errorResponse(err.code, err.status);
+      }
+      throw err;
+    }
+  } else {
+    parts = buildGeminiParts(parsed.data);
+  }
 
   // Route through Cloudflare AI Gateway so we get caching, analytics, and
   // a single chokepoint for upstream provider swaps. The `?key=` is forwarded
@@ -123,7 +160,7 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
       },
       body: JSON.stringify({
         contents: [{ role: 'user', parts }],
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: GEMINI_RESPONSE_SCHEMA,
@@ -193,15 +230,19 @@ function buildGeminiParts(body: RequestBody): Array<Record<string, unknown>> {
   if (body.mode === 'text') {
     return [{ text: body.text.slice(0, TEXT_INPUT_CAP) }];
   }
-  // mode === 'vision'
-  const mimeType = sniffImageMime(body.imageBase64) ?? DEFAULT_IMAGE_MIME;
-  const parts: Array<Record<string, unknown>> = [
-    { inline_data: { mime_type: mimeType, data: body.imageBase64 } },
-  ];
-  if (body.caption && body.caption.trim().length > 0) {
-    parts.push({ text: `User-supplied caption:\n${body.caption.slice(0, TEXT_INPUT_CAP)}` });
+  if (body.mode === 'vision') {
+    const mimeType = sniffImageMime(body.imageBase64) ?? DEFAULT_IMAGE_MIME;
+    const parts: Array<Record<string, unknown>> = [
+      { inline_data: { mime_type: mimeType, data: body.imageBase64 } },
+    ];
+    if (body.caption && body.caption.trim().length > 0) {
+      parts.push({ text: `User-supplied caption:\n${body.caption.slice(0, TEXT_INPUT_CAP)}` });
+    }
+    return parts;
   }
-  return parts;
+  // 'video' is handled separately in handleExtract — buildVideoPart needs
+  // async fetch + ctx.waitUntil, which doesn't fit a sync helper.
+  throw new Error('buildGeminiParts: video mode must be handled in handleExtract');
 }
 
 // Sniff the first base64-decoded bytes to detect the image format. Cheap
@@ -241,15 +282,15 @@ function extractCandidateText(geminiBody: unknown): string | null {
 }
 
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
-    return route(request, env);
+  fetch(request: Request, env: Env, ctx: WaitUntilCtx): Promise<Response> {
+    return route(request, env, ctx);
   },
 };
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(request: Request, env: Env, ctx: WaitUntilCtx): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
-  if (path === '/extract') return handleExtract(request, env);
+  if (path === '/extract') return handleExtract(request, env, ctx);
   if (path === '/enrich') return handleEnrich(request, env);
   if (path === '/fetch-post') return handleFetchPost(request, env);
   if (path.startsWith('/photo/')) return handlePhoto(request, env);

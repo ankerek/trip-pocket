@@ -15,6 +15,6 @@ const DEFAULT_FORCE: ForceStrategy = 'ocrTextLLM';
  */
 export function getForceStrategy(): ForceStrategy {
   const raw = Constants.expoConfig?.extra?.forceStrategy;
-  if (raw === 'auto' || raw === 'ocrTextLLM' || raw === 'vision') return raw;
+  if (raw === 'auto' || raw === 'ocrTextLLM' || raw === 'vision' || raw === 'video') return raw;
   return DEFAULT_FORCE;
 }

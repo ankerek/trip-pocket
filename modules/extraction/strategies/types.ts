@@ -1,17 +1,23 @@
 import type { ExtractionResult } from '../extraction';
 
-// NOTE for future maintainers: video extraction (Instagram Reels, TikTok
-// videos) is a separate spec. When it lands, extend this union with a
-// `video` variant and add a new strategy module. Do not pre-bake the
-// `video` type — see
-// `docs/superpowers/specs/2026-05-16-extraction-pipeline-composability-design.md`
-// §Scope (and the rev-2 YAGNI decision following Codex review).
-
+// The `video` variant is the follow-up explicitly forecast in the rev-2
+// composability spec — see `docs/superpowers/specs/
+// 2026-05-16-video-place-extraction-design.md`. `coverFilePath` is required
+// so the strategy's fallback to captionPlusVision is always well-typed; if
+// a row has no downloadable cover, `strategyForUrlAfterFetch` refuses
+// `videoPlusCaption` and soft-degrades to `ocrTextLLM` instead.
 export type StrategyInput =
   | { kind: 'image'; filePath: string; ocrText?: string; caption?: string }
-  | { kind: 'text'; text: string };
+  | { kind: 'text'; text: string }
+  | {
+      kind: 'video';
+      videoUrl: string;
+      coverFilePath: string;
+      caption?: string;
+      durationSec?: number;
+    };
 
-export type StrategyName = 'ocrTextLLM' | 'vision' | 'captionPlusVision';
+export type StrategyName = 'ocrTextLLM' | 'vision' | 'captionPlusVision' | 'videoPlusCaption';
 
 export interface ExtractionStrategy {
   name: StrategyName;

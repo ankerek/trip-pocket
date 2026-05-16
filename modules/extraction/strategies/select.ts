@@ -1,11 +1,13 @@
 import type { ExtractionStrategyName } from '@/modules/storage/sources';
 
 /**
- * Three valid forceStrategy values, mirroring app.config.ts.extra.forceStrategy.
- * `captionPlusVision` is intentionally NOT forceable — it's an `auto` choice
- * triggered by a caption being present.
+ * Four valid forceStrategy values, mirroring app.config.ts.extra.forceStrategy.
+ * `captionPlusVision` and `videoPlusCaption` are intentionally NOT forceable —
+ * they're `auto`-only choices triggered by the presence of a caption / video
+ * URL. The forceable values name *preferences*; absent prerequisites send a
+ * row down the safe path (see soft-degrade table below).
  */
-export type ForceStrategy = 'auto' | 'ocrTextLLM' | 'vision';
+export type ForceStrategy = 'auto' | 'ocrTextLLM' | 'vision' | 'video';
 
 /**
  * Strategy stamped on an image source at the moment of import.
@@ -19,6 +21,8 @@ export type ForceStrategy = 'auto' | 'ocrTextLLM' | 'vision';
  *   force=auto + !hasCaption       → vision
  *   force=vision                   → vision (ignores caption — force flag
  *                                    is the developer override)
+ *   force=video                    → vision (no video bytes on an image
+ *                                    import; soft-degrade)
  *   force=ocrTextLLM               → ocrTextLLM
  */
 export function strategyForImageImport(
@@ -27,6 +31,7 @@ export function strategyForImageImport(
 ): ExtractionStrategyName {
   if (force === 'ocrTextLLM') return 'ocrTextLLM';
   if (force === 'vision') return 'vision';
+  if (force === 'video') return 'vision';
   return hasCaption ? 'captionPlusVision' : 'vision';
 }
 
@@ -35,24 +40,42 @@ export function strategyForImageImport(
  * At import time the strategy stays NULL — the extraction sweep gates on
  * file_path so a NULL-strategy URL row sits idle until fetch completes anyway.
  *
- *   hasFile  hasCaption  force=auto         force=vision  force=ocrTextLLM
- *   -------  ----------  -----------------  ------------  ----------------
- *   true     true        captionPlusVision  vision        ocrTextLLM
- *   true     false       vision             vision        ocrTextLLM
- *   false    *           ocrTextLLM         ocrTextLLM    ocrTextLLM
+ *   hasVideo  hasFile  hasCap  force=auto         force=video        force=vision  force=ocrTextLLM
+ *   true      true     *       videoPlusCaption   videoPlusCaption   vision        ocrTextLLM
+ *   true      false    *       ocrTextLLM         ocrTextLLM         ocrTextLLM    ocrTextLLM
+ *   false     true     true    captionPlusVision  ocrTextLLM         vision        ocrTextLLM
+ *   false     true     false   vision             ocrTextLLM         vision        ocrTextLLM
+ *   false     false    *       ocrTextLLM         ocrTextLLM         ocrTextLLM    ocrTextLLM
  *
- * The `!hasFile` row covers the soft-degrade path where the worker returned a
- * caption-only result (Apify disabled / IG carousel cover missing): falling
- * back to ocrTextLLM means the caption text still feeds the LLM via the
- * text-mode runner. Vision can't help when there's no image.
+ * Soft-degrade rules:
+ * - `videoPlusCaption` requires a cover file (the strategy's internal fallback
+ *   to `captionPlusVision` needs it). A video without a downloadable cover
+ *   falls all the way back to `ocrTextLLM` on the caption text.
+ * - `force=video` on a row without a video, and `force=vision` on a row
+ *   without a file, both follow the same convention: forced value names the
+ *   *preferred* strategy; missing prerequisites send the row down the safe
+ *   path.
+ *
+ * The `hasVideo=true, hasFile=false` row is rare in practice — IG/TikTok
+ * always include a cover frame today — but the soft-degrade keeps the type
+ * system honest: `videoPlusCaption` requires `coverFilePath`, so the picker
+ * cannot pick it without a file.
  */
 export function strategyForUrlAfterFetch(
   force: ForceStrategy,
   hasFile: boolean,
   hasCaption: boolean,
+  hasVideo = false,
 ): ExtractionStrategyName {
   if (force === 'ocrTextLLM') return 'ocrTextLLM';
   if (!hasFile) return 'ocrTextLLM';
+  if (hasVideo) {
+    if (force === 'auto' || force === 'video') return 'videoPlusCaption';
+    // force=vision wins over hasVideo: developer override.
+    return 'vision';
+  }
+  // hasFile === true && hasVideo === false
+  if (force === 'video') return 'ocrTextLLM';
   if (force === 'vision') return 'vision';
   return hasCaption ? 'captionPlusVision' : 'vision';
 }

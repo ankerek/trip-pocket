@@ -1,14 +1,25 @@
 // Mock the proxy module since strategies are thin wrappers over it; the goal
 // is to verify each strategy translates its input to the right proxy call.
-jest.mock('../../proxy', () => ({
-  extractFromProxy: jest.fn(),
-  extractFromProxyVision: jest.fn(),
-}));
+jest.mock('../../proxy', () => {
+  const actual = jest.requireActual('../../proxy');
+  return {
+    ...actual,
+    extractFromProxy: jest.fn(),
+    extractFromProxyVision: jest.fn(),
+    extractFromProxyVideo: jest.fn(),
+  };
+});
 
 import { createOcrThenTextLLM } from '../ocrThenTextLLM';
 import { createVisionLLMDirect } from '../visionDirect';
 import { createCaptionPlusVision } from '../captionPlusVision';
-import { extractFromProxy, extractFromProxyVision } from '../../proxy';
+import { createVideoPlusCaption } from '../videoPlusCaption';
+import {
+  extractFromProxy,
+  extractFromProxyVision,
+  extractFromProxyVideo,
+  VideoExtractionError,
+} from '../../proxy';
 
 const PROXY = 'https://proxy.example/extract';
 const OK: any = { places: [{ name: 'X' }], model: 'gemini' };
@@ -16,6 +27,7 @@ const OK: any = { places: [{ name: 'X' }], model: 'gemini' };
 beforeEach(() => {
   (extractFromProxy as jest.Mock).mockReset().mockResolvedValue(OK);
   (extractFromProxyVision as jest.Mock).mockReset().mockResolvedValue(OK);
+  (extractFromProxyVideo as jest.Mock).mockReset().mockResolvedValue(OK);
 });
 
 describe('OcrThenTextLLM strategy', () => {
@@ -91,5 +103,73 @@ describe('CaptionPlusVision strategy', () => {
     const s = createCaptionPlusVision({ proxyUrl: PROXY, readFileBase64 });
     await s.extract({ kind: 'image', filePath: '/img.jpg' });
     expect(extractFromProxyVision).toHaveBeenCalledWith('B64', undefined, PROXY);
+  });
+});
+
+describe('VideoPlusCaption strategy', () => {
+  function makeFallback(): { strategy: any; fn: jest.Mock } {
+    const fn = jest.fn().mockResolvedValue({ ...OK });
+    return { strategy: { name: 'captionPlusVision', extract: fn }, fn };
+  }
+
+  it('sends videoUrl + caption + durationSec to the proxy and returns the result', async () => {
+    const { strategy: fallback, fn: fallbackFn } = makeFallback();
+    const s = createVideoPlusCaption({ proxyUrl: PROXY, fallback });
+    const result = await s.extract({
+      kind: 'video',
+      videoUrl: 'https://cdn/r.mp4',
+      coverFilePath: '/cover.jpg',
+      caption: 'best ramen in tokyo',
+      durationSec: 28,
+    });
+    expect(extractFromProxyVideo).toHaveBeenCalledWith(
+      'https://cdn/r.mp4',
+      'best ramen in tokyo',
+      PROXY,
+      { durationSec: 28 },
+    );
+    expect(fallbackFn).not.toHaveBeenCalled();
+    expect(result.telemetry?.fallbackUsed).toBeUndefined();
+  });
+
+  it('falls back to captionPlusVision on VideoExtractionError and marks telemetry.fallbackUsed', async () => {
+    (extractFromProxyVideo as jest.Mock).mockRejectedValueOnce(
+      new VideoExtractionError('video-fetch-4xx'),
+    );
+    const { strategy: fallback, fn: fallbackFn } = makeFallback();
+    const s = createVideoPlusCaption({ proxyUrl: PROXY, fallback });
+    const result = await s.extract({
+      kind: 'video',
+      videoUrl: 'https://cdn/r.mp4',
+      coverFilePath: '/cover.jpg',
+      caption: 'cap',
+    });
+    expect(fallbackFn).toHaveBeenCalledWith({
+      kind: 'image',
+      filePath: '/cover.jpg',
+      caption: 'cap',
+    });
+    expect(result.telemetry?.fallbackUsed).toBe(true);
+  });
+
+  it('propagates non-video errors without falling back', async () => {
+    const otherError = new Error('boom');
+    (extractFromProxyVideo as jest.Mock).mockRejectedValueOnce(otherError);
+    const { strategy: fallback, fn: fallbackFn } = makeFallback();
+    const s = createVideoPlusCaption({ proxyUrl: PROXY, fallback });
+    await expect(
+      s.extract({
+        kind: 'video',
+        videoUrl: 'https://cdn/r.mp4',
+        coverFilePath: '/cover.jpg',
+      }),
+    ).rejects.toBe(otherError);
+    expect(fallbackFn).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-video inputs', async () => {
+    const { strategy: fallback } = makeFallback();
+    const s = createVideoPlusCaption({ proxyUrl: PROXY, fallback });
+    await expect(s.extract({ kind: 'text', text: 'no' })).rejects.toThrow(/unsupported input/);
   });
 });

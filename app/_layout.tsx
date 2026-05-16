@@ -34,7 +34,12 @@ import {
   provideExtractor,
   type Extractor,
 } from '@/modules/extraction';
-import { createVisionLLMDirect, createCaptionPlusVision } from '@/modules/extraction/strategies';
+import {
+  createVisionLLMDirect,
+  createCaptionPlusVision,
+  createVideoPlusCaption,
+} from '@/modules/extraction/strategies';
+import { takeVideoMetadata } from '@/modules/extraction/videoMetadata';
 import { readImageFileAsBase64 } from '@/modules/extraction/readFileBase64';
 import {
   createEnricher,
@@ -216,6 +221,10 @@ function RootLayoutInner() {
         proxyUrl: proxyUrl ?? '',
         readFileBase64: readImageFileAsBase64,
       });
+      const videoPlusCaption = createVideoPlusCaption({
+        proxyUrl: proxyUrl ?? '',
+        fallback: captionPlusVision,
+      });
       const extractor = createExtractor({
         db,
         extract: (ocrText) =>
@@ -228,6 +237,28 @@ function RootLayoutInner() {
             proxyUrl ?? '',
           ),
         extractVisual: async (ctx) => {
+          if (ctx.extractionStrategy === 'videoPlusCaption') {
+            // Read the videoUrl from the process-local cache populated by
+            // the URL-fetch step (modules/extraction/videoMetadata.ts). On
+            // a cache miss (cold start between fetch and extract sweep, or
+            // TTL expired), soft-degrade to captionPlusVision on the cover.
+            const meta = takeVideoMetadata(ctx.sourceId);
+            if (meta) {
+              return videoPlusCaption.extract({
+                kind: 'video',
+                videoUrl: meta.videoUrl,
+                coverFilePath: ctx.filePath,
+                caption: ctx.caption ?? undefined,
+                durationSec: meta.videoDuration ?? undefined,
+              });
+            }
+            const result = await captionPlusVision.extract({
+              kind: 'image',
+              filePath: ctx.filePath,
+              caption: ctx.caption ?? undefined,
+            });
+            return { ...result, telemetry: { ...result.telemetry, fallbackUsed: true } };
+          }
           const strategy =
             ctx.extractionStrategy === 'captionPlusVision' ? captionPlusVision : visionDirect;
           return strategy.extract({

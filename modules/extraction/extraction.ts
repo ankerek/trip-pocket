@@ -22,6 +22,17 @@ export type ExtractedPlaceInput = {
 export type ExtractionResult = {
   places: ExtractedPlaceInput[];
   model: string;
+  /**
+   * Per-call telemetry surfaced by some strategies. The proxy / pipeline-log
+   * writer copies these keys into the firehose extras column so dashboards
+   * can distinguish "videoPlusCaption succeeded" from "videoPlusCaption
+   * succeeded via fallback to captionPlusVision" without inventing a second
+   * `extraction_strategy` value. Always optional — most strategies don't
+   * populate it.
+   */
+  telemetry?: {
+    fallbackUsed?: boolean;
+  };
 };
 
 export type ExtractionErrorKind =
@@ -50,7 +61,7 @@ export type ExtractionRunner = (ocrText: string) => Promise<ExtractionResult>;
  */
 export type VisualExtractionContext = {
   sourceId: string;
-  extractionStrategy: 'vision' | 'captionPlusVision';
+  extractionStrategy: 'vision' | 'captionPlusVision' | 'videoPlusCaption';
   filePath: string;
   caption: string | null;
 };
@@ -130,7 +141,12 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     const row = await opts.db.getFirstAsync<{
       ocr_text: string | null;
       trip_id: string | null;
-      extraction_strategy: 'ocrTextLLM' | 'vision' | 'captionPlusVision' | null;
+      extraction_strategy:
+        | 'ocrTextLLM'
+        | 'vision'
+        | 'captionPlusVision'
+        | 'videoPlusCaption'
+        | null;
       file_path: string | null;
       caption: string | null;
     }>(
@@ -143,7 +159,8 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
     // Legacy NULL strategy is treated as ocrTextLLM (matches pre-migration
     // behavior). The orchestrator dispatches based on the resolved strategy.
     const strategy = row.extraction_strategy ?? 'ocrTextLLM';
-    const isVisualStrategy = strategy === 'vision' || strategy === 'captionPlusVision';
+    const isVisualStrategy =
+      strategy === 'vision' || strategy === 'captionPlusVision' || strategy === 'videoPlusCaption';
 
     const ocrText = (row.ocr_text ?? '').trim();
     if (!isVisualStrategy && !ocrText) {
@@ -240,6 +257,14 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
       placesCount: distinct.length,
       placesJson: JSON.stringify(distinct),
       model: result.model,
+      // videoPlusCaption surfaces whether its internal fallback to
+      // captionPlusVision fired. Always optional; absent for non-video
+      // strategies. The pipeline-log firehose copies extras keys verbatim,
+      // so dashboards can distinguish "video succeeded" from "video
+      // succeeded via fallback" without inventing a second strategy value.
+      ...(result.telemetry?.fallbackUsed != null
+        ? { fallbackUsed: result.telemetry.fallbackUsed }
+        : {}),
     });
     return { kind: 'done' };
   }
@@ -373,7 +398,7 @@ export function createExtractor(opts: CreateExtractorOptions): Extractor {
             ( (extraction_strategy IS NULL OR extraction_strategy = 'ocrTextLLM')
               AND ocr_status = 'done' )
             OR
-            ( extraction_strategy IN ('vision', 'captionPlusVision')
+            ( extraction_strategy IN ('vision', 'captionPlusVision', 'videoPlusCaption')
               AND file_path IS NOT NULL )
           )
      ORDER BY captured_at ASC`,

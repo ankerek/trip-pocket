@@ -66,6 +66,52 @@ describe('mapTikTokRehydrationItem', () => {
     expect(out.author).toBe('@creator');
   });
 
+  it('exposes playAddr and duration on a video post', () => {
+    const raw = buildRehyd({
+      desc: 'caption',
+      author: { uniqueId: 'u' },
+      video: {
+        cover: 'https://cdn/cover.jpg',
+        playAddr: 'https://cdn/play.mp4',
+        downloadAddr: 'https://cdn/dl.mp4',
+        duration: 23,
+      },
+    });
+    const out = mapTikTokRehydrationItem(raw, canonical);
+    expect(out._route).toBe('video');
+    expect(out.videoUrl).toBe('https://cdn/play.mp4');
+    expect(out.videoDuration).toBe(23);
+  });
+
+  it('falls back to downloadAddr when playAddr is missing', () => {
+    const raw = buildRehyd({
+      desc: 'x',
+      author: { uniqueId: 'u' },
+      video: { downloadAddr: 'https://cdn/dl.mp4', duration: 10 },
+    });
+    const out = mapTikTokRehydrationItem(raw, canonical);
+    expect(out.videoUrl).toBe('https://cdn/dl.mp4');
+  });
+
+  it('returns null videoUrl/videoDuration when both addrs are missing', () => {
+    const raw = buildRehyd({
+      desc: 'x',
+      author: { uniqueId: 'u' },
+      video: { cover: 'https://cdn/c.jpg' },
+    });
+    const out = mapTikTokRehydrationItem(raw, canonical);
+    expect(out.videoUrl).toBeNull();
+    expect(out.videoDuration).toBeNull();
+  });
+
+  it('does not expose video fields for photo posts', () => {
+    const data = extractTikTokRehydrationJson(photoHtml);
+    const out = mapTikTokRehydrationItem(data, canonical);
+    expect(out._route).toBe('photo');
+    expect(out.videoUrl).toBeUndefined();
+    expect(out.videoDuration).toBeUndefined();
+  });
+
   it('returns empty imageUrls when imagePost is present but every urlList[0] is empty', () => {
     const raw = buildRehyd({
       desc: 'x',

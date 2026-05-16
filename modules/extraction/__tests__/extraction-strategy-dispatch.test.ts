@@ -231,4 +231,63 @@ describe('extractor — strategy dispatch', () => {
 
     expect(visual).not.toHaveBeenCalled();
   });
+
+  it('routes videoPlusCaption rows through the visual runner', async () => {
+    const db = await freshDb();
+    const text = jest.fn(async () => OK_RESULT);
+    const visual = jest.fn(async () => OK_RESULT);
+
+    await insertSource(db, {
+      id: 'vid',
+      kind: 'url',
+      platform: 'instagram',
+      tripId: null,
+      filePath: '/tmp/cover.jpg',
+      url: 'https://instagram.com/reel/X',
+      caption: 'great spot',
+      contentHash: 'h-vid',
+      origin: 'share',
+      capturedAt: NOW,
+      ownerId: 'owner-1',
+      extractionStrategy: 'videoPlusCaption',
+    });
+
+    const e = createExtractor({ db, extract: text, extractVisual: visual, ownerId: 'owner-1' });
+    e.enqueueExtraction('vid');
+    await e._awaitIdle();
+
+    expect(text).not.toHaveBeenCalled();
+    expect(visual).toHaveBeenCalledWith({
+      sourceId: 'vid',
+      extractionStrategy: 'videoPlusCaption',
+      filePath: '/tmp/cover.jpg',
+      caption: 'great spot',
+    });
+  });
+
+  it('sweep picks up videoPlusCaption rows once the cover is present (no OCR wait)', async () => {
+    const db = await freshDb();
+    const text = jest.fn(async () => OK_RESULT);
+    const visual = jest.fn(async () => OK_RESULT);
+
+    await insertSource(db, {
+      id: 'vid-sweep',
+      kind: 'url',
+      platform: 'tiktok',
+      tripId: null,
+      filePath: '/tmp/c.jpg',
+      url: 'https://tiktok.com/@x/video/1',
+      contentHash: 'h-vs',
+      origin: 'share',
+      capturedAt: NOW,
+      ownerId: 'owner-1',
+      extractionStrategy: 'videoPlusCaption',
+    });
+
+    const e = createExtractor({ db, extract: text, extractVisual: visual, ownerId: 'owner-1' });
+    await e.runExtractionSweep();
+    await e._awaitIdle();
+
+    expect(visual).toHaveBeenCalledTimes(1);
+  });
 });

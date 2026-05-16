@@ -21,6 +21,13 @@ If the input has no travel places, return {"places": []}. This includes memes, s
 
 Do not return places that are not clearly named or visibly identified in the input.`;
 
+// Appended to SYSTEM_PROMPT for video-mode requests. Most place mentions in
+// saved Reels / TikToks appear as on-screen text overlays (title cards,
+// captions burned into frames) rather than in the upstream caption.
+export const VIDEO_PROMPT_SUFFIX = `
+
+The media for this request is a short video. Read on-screen text overlays carefully — title cards, captions, and stickers throughout the video are often the only source for a place name. Spoken audio is also available as a secondary signal.`;
+
 export const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 // Mirrors src/schema.ts. Gemini wants snake_case-ish capitalized type

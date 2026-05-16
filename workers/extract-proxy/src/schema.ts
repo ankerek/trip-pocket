@@ -53,6 +53,19 @@ const visionModeSchema = z.object({
   caption: z.string().optional(),
 });
 
+// Video mode. Worker fetches the URL itself (closer to IG/TikTok CDN than
+// the phone, no cellular cost), then forwards the bytes to Gemini either
+// inline (<20 MB) or via the Files API (>=20 MB). videoDuration is the
+// strategy's guardrail input — worker rejects > 90s before downloading.
+const videoModeSchema = z.object({
+  mode: z.literal('video'),
+  video: z.object({
+    url: z.string().url(),
+    durationSec: z.number().nonnegative().optional(),
+  }),
+  caption: z.string().optional(),
+});
+
 const legacyAliasSchema = z
   .object({
     ocr_text: z.string().refine((s) => s.trim().length > 0, {
@@ -61,7 +74,12 @@ const legacyAliasSchema = z
   })
   .transform((r) => ({ mode: 'text' as const, text: r.ocr_text }));
 
-export const requestBodySchema = z.union([textModeSchema, visionModeSchema, legacyAliasSchema]);
+export const requestBodySchema = z.union([
+  textModeSchema,
+  visionModeSchema,
+  videoModeSchema,
+  legacyAliasSchema,
+]);
 
 export type ExtractionResponse = z.infer<typeof extractionResponseSchema>;
 export type ExtractedPlace = z.infer<typeof placeSchema>;

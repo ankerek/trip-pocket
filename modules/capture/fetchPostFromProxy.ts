@@ -60,6 +60,11 @@ export type FetchPostResult = {
   caption: string;
   imageUrls: string[];
   author: string | null;
+  // Populated for video posts (IG Reels / top-level TikTok videos). The URL
+  // is signed and expires within hours; the processor consumes it
+  // synchronously during the URL-share flow and never stores it.
+  videoUrl?: string | null;
+  videoDuration?: number | null;
   _debug?: FetchPostDebug;
 };
 
@@ -128,6 +133,8 @@ const responseSchema = z.object({
   caption: z.string(),
   imageUrls: z.array(z.string().url()),
   author: z.string().nullable(),
+  videoUrl: z.string().url().nullable().optional(),
+  videoDuration: z.number().nonnegative().nullable().optional(),
   _debug: debugSchema.optional(),
 });
 

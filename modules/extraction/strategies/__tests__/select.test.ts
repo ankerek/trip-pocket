@@ -44,4 +44,41 @@ describe('strategyForUrlAfterFetch', () => {
     expect(strategyForUrlAfterFetch('vision', true, true)).toBe('vision');
     expect(strategyForUrlAfterFetch('vision', true, false)).toBe('vision');
   });
+
+  describe('with hasVideo', () => {
+    it('auto: video + file → videoPlusCaption (caption optional)', () => {
+      expect(strategyForUrlAfterFetch('auto', true, true, true)).toBe('videoPlusCaption');
+      expect(strategyForUrlAfterFetch('auto', true, false, true)).toBe('videoPlusCaption');
+    });
+
+    it('force=video on a real video → videoPlusCaption', () => {
+      expect(strategyForUrlAfterFetch('video', true, true, true)).toBe('videoPlusCaption');
+      expect(strategyForUrlAfterFetch('video', true, false, true)).toBe('videoPlusCaption');
+    });
+
+    it('force=video on a row without video soft-degrades to ocrTextLLM', () => {
+      expect(strategyForUrlAfterFetch('video', true, true, false)).toBe('ocrTextLLM');
+      expect(strategyForUrlAfterFetch('video', true, false, false)).toBe('ocrTextLLM');
+    });
+
+    it('force=vision on a video row wins: developer override stays vision', () => {
+      expect(strategyForUrlAfterFetch('vision', true, true, true)).toBe('vision');
+    });
+
+    it('force=ocrTextLLM still wins over video', () => {
+      expect(strategyForUrlAfterFetch('ocrTextLLM', true, true, true)).toBe('ocrTextLLM');
+    });
+
+    it('video without cover file → ocrTextLLM (soft-degrade; videoPlusCaption requires coverFilePath)', () => {
+      expect(strategyForUrlAfterFetch('auto', false, true, true)).toBe('ocrTextLLM');
+      expect(strategyForUrlAfterFetch('video', false, true, true)).toBe('ocrTextLLM');
+    });
+  });
+});
+
+describe('strategyForImageImport — force=video', () => {
+  it('soft-degrades to vision (no video bytes on an image import)', () => {
+    expect(strategyForImageImport('video')).toBe('vision');
+    expect(strategyForImageImport('video', true)).toBe('vision');
+  });
 });
