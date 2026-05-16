@@ -34,10 +34,7 @@ import {
   provideExtractor,
   type Extractor,
 } from '@/modules/extraction';
-import {
-  createVisionLLMDirect,
-  createCaptionPlusVision,
-} from '@/modules/extraction/strategies';
+import { createVisionLLMDirect, createCaptionPlusVision } from '@/modules/extraction/strategies';
 import { readImageFileAsBase64 } from '@/modules/extraction/readFileBase64';
 import {
   createEnricher,

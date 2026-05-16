@@ -104,8 +104,11 @@ const config: ExpoConfig = {
     //   'captionPlusVision' — NOT a valid forceStrategy; picked only by auto
     //   'auto'              — image sources use vision; URL sources use
     //                         captionPlusVision when a caption is present, else vision
-    // Default is 'ocrTextLLM' for PR 3; PR 4 flips this to 'auto'.
-    forceStrategy: 'ocrTextLLM' as const,
+    // Auto is the production default. To roll back (e.g. if vision quality
+    // disappoints on real users): change this to 'ocrTextLLM' and ship a
+    // new build. Existing in-flight vision rows finish on vision; new rows
+    // route through the OCR path immediately.
+    forceStrategy: 'auto' as const,
     rcIosApiKey: RC_IOS_API_KEY,
     appVariant: IS_DEV ? 'development' : 'production',
     eas: {
