@@ -24,6 +24,12 @@ export type ImportImageInput = {
   transfer: 'move' | 'copy';
   storageDir: string;
   fs: ImportFs;
+  // Optional caption derived from EXIF GPS by the picker
+  // (`deriveLocationCaption`). When present, the strategy upgrades to
+  // `captionPlusVision` and Gemini gets the geographic hint alongside the
+  // image. Share-extension path leaves this null — iOS often strips EXIF
+  // on the share sheet.
+  caption?: string | null;
 };
 
 export type ImportImageResult =
@@ -65,7 +71,9 @@ export async function importImage(
   }
   console.log('[importImage]', input.transfer, input.sourceUri, '->', targetUri);
 
-  const extractionStrategy = strategyForImageImport(getForceStrategy());
+  const trimmedCaption =
+    typeof input.caption === 'string' && input.caption.trim().length > 0 ? input.caption : null;
+  const extractionStrategy = strategyForImageImport(getForceStrategy(), trimmedCaption !== null);
 
   const storageStage = startStage('storage', sourceId);
   try {
@@ -79,8 +87,12 @@ export async function importImage(
       capturedAt: input.capturedAt,
       ownerId: input.ownerId,
       extractionStrategy,
+      caption: trimmedCaption,
     });
-    storageStage.done({ tripId: input.suggestedTripId ?? null });
+    storageStage.done({
+      tripId: input.suggestedTripId ?? null,
+      hasCaption: trimmedCaption !== null,
+    });
   } catch (err) {
     // Insert failed (e.g. unique-index race with a concurrent writer that landed
     // a row with the same hash between our pre-check and our insert). Unlink the
@@ -97,13 +109,14 @@ export async function importImage(
   notifyChange('sources');
   if (input.suggestedTripId) notifyChange('trips');
 
-  // Kick off the appropriate stage. ocrTextLLM strategy enqueues OCR (which
-  // then chains into extraction via processing.ts). Vision strategies skip
-  // OCR and go straight to the extractor — the row already has file_path
-  // set, so the extraction sweep will pick it up too; this immediate enqueue
-  // just avoids the latency of waiting for the next sweep. No-op when no
-  // processor / extractor has been provisioned (Jest, share extension cold
-  // start, etc.) — the relevant sweep at app boot handles those rows.
+  // Kick off the appropriate stage. ocrTextLLM enqueues OCR (which chains
+  // into extraction via processing.ts). Vision + captionPlusVision skip OCR
+  // and go straight to the extractor — file_path is already set, so the
+  // sweep would pick it up too; this immediate enqueue just avoids the
+  // sweep-tick latency. The extractor reads `sources.caption` from the row
+  // and passes it to the visual runner alongside the image. No-op when no
+  // processor/extractor has been provisioned (Jest, share-extension cold
+  // start) — the relevant sweep at app boot handles those rows.
   if (extractionStrategy === 'ocrTextLLM') {
     getProcessor()?.enqueueOcr(sourceId);
   } else {

@@ -1,11 +1,13 @@
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
+import * as Location from 'expo-location';
 import {
   createImportFs,
   getOrCreateOwnerId,
   getStorageDirectory,
   importImage,
 } from '@/modules/capture';
+import { deriveLocationCaption, type ReverseGeocoder } from '@/modules/capture/photoLocation';
 import type { Database } from '@/modules/storage';
 import { ensurePhotosAccess } from '@/lib/permissions/photos';
 import { classifyImportError } from '@/lib/errors/captureErrors';
@@ -70,6 +72,9 @@ export async function pickPhotosForImport(
     mediaTypes: ['images'],
     allowsMultipleSelection: true,
     selectionLimit: 20,
+    // EXIF is required by deriveLocationCaption — Make/Model decide whether
+    // it's a screenshot, GPSLatitude/Longitude feed the reverse geocoder.
+    exif: true,
   });
   if (result.canceled) {
     return emptyOutcome();
@@ -83,6 +88,11 @@ export async function pickPhotosForImport(
   reportOutcome(outcome, result.assets.length);
   return outcome;
 }
+
+// Adapter: expo-location's reverseGeocodeAsync returns objects with the same
+// field shape we declare in `GeocodeResult`. Wrapping it here keeps
+// deriveLocationCaption free of the native dependency for unit tests.
+const runtimeGeocoder: ReverseGeocoder = async (coords) => Location.reverseGeocodeAsync(coords);
 
 async function runImports(
   db: Database,
@@ -109,6 +119,10 @@ async function runImports(
         continue;
       }
       try {
+        const caption = await deriveLocationCaption(
+          asset.exif as Record<string, unknown> | null | undefined,
+          runtimeGeocoder,
+        );
         const r = await importImage(db, {
           sourceUri: asset.uri,
           origin: 'manual',
@@ -118,6 +132,7 @@ async function runImports(
           transfer: 'copy',
           storageDir: storage,
           fs,
+          caption,
         });
         if (r.status === 'imported' || r.status === 'duplicate') {
           outcome.imported += 1;

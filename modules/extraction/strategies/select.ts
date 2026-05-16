@@ -8,13 +8,26 @@ import type { ExtractionStrategyName } from '@/modules/storage/sources';
 export type ForceStrategy = 'auto' | 'ocrTextLLM' | 'vision';
 
 /**
- * Strategy stamped on an image source at the moment of import (file present,
- * caption never relevant for raw screenshots).
+ * Strategy stamped on an image source at the moment of import.
+ *
+ * `hasCaption` is true when the picker derived a "Photo taken in X" hint
+ * from EXIF GPS — present only for camera photos, never for screenshots.
+ * When set, the strategy upgrades to `captionPlusVision` so Gemini gets the
+ * location hint alongside the image.
+ *
+ *   force=auto + hasCaption        → captionPlusVision
+ *   force=auto + !hasCaption       → vision
+ *   force=vision                   → vision (ignores caption — force flag
+ *                                    is the developer override)
+ *   force=ocrTextLLM               → ocrTextLLM
  */
-export function strategyForImageImport(force: ForceStrategy): ExtractionStrategyName {
+export function strategyForImageImport(
+  force: ForceStrategy,
+  hasCaption = false,
+): ExtractionStrategyName {
   if (force === 'ocrTextLLM') return 'ocrTextLLM';
-  // auto and vision both → vision for image-at-import.
-  return 'vision';
+  if (force === 'vision') return 'vision';
+  return hasCaption ? 'captionPlusVision' : 'vision';
 }
 
 /**

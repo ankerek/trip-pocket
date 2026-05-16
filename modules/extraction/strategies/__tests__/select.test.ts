@@ -3,12 +3,18 @@ import { strategyForImageImport, strategyForUrlAfterFetch } from '../select';
 describe('strategyForImageImport', () => {
   it('returns ocrTextLLM when force=ocrTextLLM', () => {
     expect(strategyForImageImport('ocrTextLLM')).toBe('ocrTextLLM');
+    expect(strategyForImageImport('ocrTextLLM', true)).toBe('ocrTextLLM');
   });
-  it('returns vision under auto', () => {
+  it('returns vision under auto with no caption', () => {
     expect(strategyForImageImport('auto')).toBe('vision');
+    expect(strategyForImageImport('auto', false)).toBe('vision');
   });
-  it('returns vision under force=vision', () => {
+  it('upgrades to captionPlusVision under auto when caption is present', () => {
+    expect(strategyForImageImport('auto', true)).toBe('captionPlusVision');
+  });
+  it('force=vision ignores caption (developer override)', () => {
     expect(strategyForImageImport('vision')).toBe('vision');
+    expect(strategyForImageImport('vision', true)).toBe('vision');
   });
 });
 

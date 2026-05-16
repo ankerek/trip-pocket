@@ -47,22 +47,30 @@ export type InsertSourceInput = {
   capturedAt: string;
   ownerId: string;
   extractionStrategy?: ExtractionStrategyName | null;
+  // For image imports: a synthesized "Photo taken in X" hint derived from
+  // EXIF GPS. For URL imports it stays null until applyUrlFetchResult writes
+  // the IG/TikTok caption. Empty / whitespace-only strings are normalised
+  // to NULL at insert time.
+  caption?: string | null;
 };
 
 export async function insertSource(db: Database, input: InsertSourceInput): Promise<void> {
   const now = new Date().toISOString();
+  const caption =
+    typeof input.caption === 'string' && input.caption.trim().length > 0 ? input.caption : null;
   await db.runAsync(
     `INSERT INTO sources (
-      id, kind, platform, trip_id, file_path, url, content_hash, origin,
+      id, kind, platform, trip_id, file_path, url, caption, content_hash, origin,
       ocr_status, extraction_status, extraction_strategy, captured_at,
       owner_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)`,
     input.id,
     input.kind ?? 'image',
     input.platform ?? null,
     input.tripId,
     input.filePath ?? null,
     input.url ?? null,
+    caption,
     input.contentHash,
     input.origin,
     input.extractionStrategy ?? null,

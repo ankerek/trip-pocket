@@ -54,22 +54,22 @@ class ShareViewController: UIViewController {
 
     private func presentEntitlementBlocked(verdict: EntitlementReader.Verdict) {
         let title: String
-        let body: String
+        let message: String
         switch verdict {
         case .stale:
             title = "Open Trip Pocket"
-            body = "Open Trip Pocket to sync your subscription."
+            message = "Open Trip Pocket to sync your subscription."
         case .inactive:
             title = "Subscription inactive"
-            body = "Open Trip Pocket to resume."
+            message = "Open Trip Pocket to resume."
         case .active:
             // Unreachable — viewDidLoad only calls this when verdict != .active.
             title = ""
-            body = ""
+            message = ""
         }
         let host = UIHostingController(rootView: EntitlementBlockedView(
             title: title,
-            body: body,
+            message: message,
             onDone: { [weak self] in self?.cancel() }
         ))
         addChild(host)

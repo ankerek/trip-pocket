@@ -36,10 +36,13 @@ final class SaveSuccessState: ObservableObject {
 // app's pipeline never sees a row it would just have to pause.
 struct EntitlementBlockedView: View {
     let title: String
-    let body: String
+    // Renamed from `body` to avoid colliding with SwiftUI's View protocol
+    // requirement (`var body: some View`). The two members both named `body`
+    // produced "invalid redeclaration of 'body'" at compile time.
+    let message: String
     let onDone: () -> Void
 
-    var bodyView: some View {
+    var body: some View {
         NavigationView {
             VStack(spacing: 16) {
                 Spacer()
@@ -50,7 +53,7 @@ struct EntitlementBlockedView: View {
                 Text(title)
                     .font(.headline)
                     .multilineTextAlignment(.center)
-                Text(body)
+                Text(message)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -67,8 +70,6 @@ struct EntitlementBlockedView: View {
         }
         .navigationViewStyle(.stack)
     }
-
-    var body: some View { bodyView }
 }
 
 struct TripPickerView: View {
