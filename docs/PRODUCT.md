@@ -90,7 +90,7 @@ Paid subscription with a free trial on every plan. No free tier.
 The app is behind a paywall from day one. Two plans, both with an introductory free trial:
 
 - **Yearly · $39.99/yr · 7-day free trial.** The lead offer — a week is enough to see whether the screenshots-to-places loop saves you the time it costs.
-- **Weekly · $4.49/wk · 3-day free trial.** The low-commitment way in for people planning a single upcoming trip.
+- **Weekly · $3.99/wk · 3-day free trial.** The low-commitment way in for people planning a single upcoming trip.
 
 Monthly was dropped from the original plan: the yearly is the value plan, the weekly is the low-commit plan, and a middle tier would just split conversion. After the trial the subscription auto-renews unless cancelled through the App Store.
 

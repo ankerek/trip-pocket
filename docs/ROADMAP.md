@@ -134,7 +134,7 @@ Public. Paid from day one.
 
 **Shipped:**
 
-- [x] Pricing decided — Yearly $39.99 (7-day free trial) + Weekly $4.49 (3-day free trial). Monthly dropped.
+- [x] Pricing decided — Yearly $39.99 (7-day free trial) + Weekly $3.99 (3-day free trial). Monthly dropped. (Weekly lowered from $4.49 → $3.99 in ASC on 2026-05-16.)
 - [x] StoreKit + RevenueCat integration via `react-native-purchases` SDK. Anonymous-only RC identity (`$RCAnonymousID:<uuid>`).
 - [x] Paywall renders RC offerings (tiles + trial copy); purchase + restore wired; dev-only dismiss `x`.
 - [x] Paywall-after-onboarding gate at first launch; splash holds until entitlement status resolves.
@@ -173,7 +173,7 @@ Flagged so they don't get forgotten, but no need to resolve yet:
 
 - ~~LLM provider for the extraction proxy~~ — resolved: Gemini 2.5 Flash Lite via Cloudflare AI Gateway.
 - ~~Where the proxy runs~~ — resolved: Cloudflare Workers.
-- ~~Pricing tiers~~ — resolved 2026-05-14: Yearly $39.99 (7-day trial) + Weekly $4.49 (3-day trial); monthly dropped.
+- ~~Pricing tiers~~ — resolved 2026-05-14: Yearly $39.99 (7-day trial) + Weekly $3.99 (3-day trial); monthly dropped. (Weekly lowered from $4.49 → $3.99 on 2026-05-16.)
 - ~~Paywall placement (before vs. after onboarding)~~ — resolved: after onboarding. Lapse paywall is a separate root modal at `/paywall-lapse`, not nested under `/onboarding/`.
 - Sync direction (CloudKit vs. own backend). Deferred to v1.x.
 - API key separation for v1.x place enrichment — single `GOOGLE_API_KEY` shared with Gemini, or dedicated `GOOGLE_PLACES_API_KEY`. Decide at implementation time.

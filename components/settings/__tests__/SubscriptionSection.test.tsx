@@ -40,7 +40,7 @@ function mockBuildOfferings() {
           product: { identifier: 'trip_pocket_pro_yearly', priceString: '$39.99' },
         },
         {
-          product: { identifier: 'trip_pocket_pro_weekly', priceString: '$4.49' },
+          product: { identifier: 'trip_pocket_pro_weekly', priceString: '$3.99' },
         },
       ],
     },

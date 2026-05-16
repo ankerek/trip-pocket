@@ -15,7 +15,7 @@ import { SettingsRow } from './SettingsRow';
 // numbers on the rare frame before `offerings` resolves.
 const FALLBACK_PRICE: Record<PlanId, string> = {
   yearly: '$39.99',
-  weekly: '$4.49',
+  weekly: '$3.99',
 };
 
 const PER_SUFFIX: Record<PlanId, string> = {

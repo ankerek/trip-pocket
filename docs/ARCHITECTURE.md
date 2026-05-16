@@ -233,7 +233,7 @@ A handful of small Swift modules, each ~100–300 lines. We own them — communi
 The app is paid from day one. There is no free tier.
 
 - **RevenueCat** (`react-native-purchases`) wraps StoreKit. Receipt validation server-side (RevenueCat's), entitlements + dashboard, no babysitting StoreKit edge cases (refunds, family sharing, sub-state changes, intro-offer eligibility).
-- Products: **`pocket_yearly`** ($39.99/yr, 7-day trial) and **`pocket_weekly`** ($4.49/wk, 3-day trial). Plans configured as an array in `lib/entitlement/plans.ts`; the paywall renders tiles + trial copy from the RC offering.
+- Products: **`pocket_yearly`** ($39.99/yr, 7-day trial) and **`pocket_weekly`** ($3.99/wk, 3-day trial). Plans configured as an array in `lib/entitlement/plans.ts`; the paywall renders tiles + trial copy from the RC offering.
 - Anonymous-only RC identity (`$RCAnonymousID:<uuid>`), cached to a file at first launch so it survives RC SDK init failures and is available before the SDK is up.
 - Single entitlement: `pro`. Granted while in trial _or_ on an active paid subscription. RC treats both states identically.
 - `lib/entitlement` is the only place RevenueCat is imported. `EntitlementProvider` (mounted above the ready-guard in `app/_layout.tsx`) exposes `{ status, refresh }`. Status is synchronous from cached state, refreshed on foreground, on SDK customer-info events, and via the manual `refresh()` after the paywall flow returns.
@@ -324,7 +324,7 @@ All of these reuse the existing proxy and the existing `extracted_places` table,
 
 Resolved (kept for the record):
 
-- ~~Subscription pricing~~ — Yearly $39.99 (7-day trial) + Weekly $4.49 (3-day trial); monthly dropped (2026-05-14).
+- ~~Subscription pricing~~ — Yearly $39.99 (7-day trial) + Weekly $3.99 (3-day trial); monthly dropped (2026-05-14, weekly lowered to $3.99 on 2026-05-16).
 - ~~Paywall placement~~ — after onboarding for first-launch; separate `/paywall-lapse` root modal for lapse.
 - ~~LLM provider~~ — Gemini 2.5 Flash-Lite via Cloudflare AI Gateway.
 - ~~Proxy runtime~~ — Cloudflare Workers.

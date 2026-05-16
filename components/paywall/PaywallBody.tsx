@@ -18,6 +18,9 @@ import { useEntitlement } from '@/lib/entitlement/provider';
 import { PRIVACY_URL, TERMS_URL } from '@/lib/links';
 import { showToast } from '@/lib/toast/toast';
 
+// Fallback display, shown only for the frame before RC offerings resolve.
+// Intentionally omits any "Save X%" copy — the real % is computed live from
+// the loaded packages so it stays correct across currencies and price tiers.
 const FALLBACK_PRICES: Record<
   PlanId,
   { price: string; per: string; trialNote: string; subNote: string }
@@ -25,24 +28,35 @@ const FALLBACK_PRICES: Record<
   yearly: {
     price: '$39.99',
     per: '/yr',
-    trialNote: 'Save 83%. Billed yearly after the trial.',
-    subNote: 'Save 83%. Billed yearly, auto-renews.',
+    trialNote: 'Billed yearly after the trial.',
+    subNote: 'Billed yearly, auto-renews.',
   },
   weekly: {
-    price: '$4.49',
+    price: '$3.99',
     per: '/wk',
     trialNote: 'Billed weekly after the trial.',
     subNote: 'Billed weekly, auto-renews.',
   },
 };
 
-function deriveNoteFromPackage(
-  _pkg: PurchasesPackage,
+function buildPlanNote(
   plan: PlanConfig,
   trialEligible: boolean,
+  yearlyPerWeekString: string | null,
+  discountPct: number | null,
 ): string {
-  if (trialEligible) return `Billed ${plan.label.toLowerCase()} after the trial.`;
-  return `Billed ${plan.label.toLowerCase()}, auto-renews.`;
+  const tail = trialEligible
+    ? `Billed ${plan.label.toLowerCase()} after the trial.`
+    : `Billed ${plan.label.toLowerCase()}, auto-renews.`;
+  if (
+    plan.id === 'yearly' &&
+    yearlyPerWeekString != null &&
+    discountPct != null &&
+    discountPct > 0
+  ) {
+    return `Save ${discountPct}% · just ${yearlyPerWeekString}/wk. ${tail}`;
+  }
+  return tail;
 }
 
 function trialDaysFromPackage(pkg: PurchasesPackage | undefined): number | null {
@@ -109,9 +123,23 @@ export function PaywallBody({
   }, [status]);
 
   const selectedPlanCfg = PLANS.find((pl) => pl.id === plan);
-  const selectedPkg = offerings?.current?.availablePackages.find(
-    (p) => p.product.identifier === selectedPlanCfg?.productId,
-  );
+  const pkgFor = (planId: PlanId): PurchasesPackage | undefined => {
+    const productId = PLANS.find((pl) => pl.id === planId)?.productId;
+    return offerings?.current?.availablePackages.find((p) => p.product.identifier === productId);
+  };
+  const selectedPkg = pkgFor(plan);
+
+  // Yearly's weekly-equivalent + discount %, computed live from RC packages so
+  // both stay correct in every storefront/currency (Apple's price tiers aren't
+  // perfectly proportional, so the % differs by region). Both `pricePerWeek`
+  // and `priceString` come back already formatted in the device locale.
+  const yearlyPkg = pkgFor('yearly');
+  const weeklyPkg = pkgFor('weekly');
+  const yearlyPerWeekString = yearlyPkg?.product.pricePerWeekString ?? null;
+  const discountPct =
+    yearlyPkg?.product.pricePerWeek != null && weeklyPkg?.product.price != null
+      ? Math.round((1 - yearlyPkg.product.pricePerWeek / weeklyPkg.product.price) * 100)
+      : null;
 
   // Eligibility per plan from RC. We only promise the trial when RC
   // explicitly returns ELIGIBLE — UNKNOWN (RC couldn't determine, usually
@@ -253,15 +281,13 @@ export function PaywallBody({
             {PLANS.map((planCfg) => {
               const p = planCfg.id;
               const isPicked = plan === p;
-              const pkg = offerings?.current?.availablePackages.find(
-                (pkg) => pkg.product.identifier === planCfg.productId,
-              );
+              const pkg = pkgFor(p);
               const price = pkg?.product.priceString ?? FALLBACK_PRICES[p].price;
               const per = FALLBACK_PRICES[p].per;
               const planHasTrial =
                 eligibility[p] === true && pkg != null && (trialDaysFromPackage(pkg) ?? 0) > 0;
               const note = pkg
-                ? deriveNoteFromPackage(pkg, planCfg, planHasTrial)
+                ? buildPlanNote(planCfg, planHasTrial, yearlyPerWeekString, discountPct)
                 : planHasTrial
                   ? FALLBACK_PRICES[p].trialNote
                   : FALLBACK_PRICES[p].subNote;
