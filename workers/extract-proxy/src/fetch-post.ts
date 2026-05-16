@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { Env } from './index';
 import { ApifyError, fetchInstagramViaApify } from './apify';
 import { requireEntitlement } from './entitlement';
+import { runFetcherChain, AllFetchersFailedError } from './fetchers/chain';
+import type { LinkFetcher } from './fetchers/types';
 
 // Designed around the Phase 0 spike findings (docs/superpowers/specs/
 // 2026-05-12-url-share-spike-results.md): IG's /embed/ surface moved to
@@ -142,34 +144,85 @@ export async function handleFetchPost(request: Request, env: Env): Promise<Respo
   if (!platform) return errorResponse('unsupported-url', 400);
 
   try {
-    let result: FetchPostResponse;
-    let cacheKind: 'og' | 'apify' = 'og';
-    let dispatch: Omit<FetchPostDebug, 'cacheHit'>;
-    if (platform === 'instagram') {
-      const out = await fetchInstagram(target, env);
-      result = out.result;
-      cacheKind = out.cacheKind;
-      dispatch = out.dispatch;
-    } else {
-      const out = await fetchTikTok(target);
-      result = out.result;
-      dispatch = out.dispatch;
-    }
+    const chain = await runFetcherChain(FETCHERS, target, platform, { env });
+    const result = chain.result as FetchPostResponse;
     // cacheHit stays `false` while the worker uses Cache-Control headers only
     // (CF edge caches the response but the worker doesn't re-run on hits, so
     // there is no per-request signal here). Promoting cacheHit to `true` would
     // require an explicit `caches.default.match()` integration — out of scope
     // for v1 of the debug echo.
-    result._debug = { ...dispatch, cacheHit: false };
+    result._debug = {
+      ...(chain.dispatch as Omit<FetchPostDebug, 'cacheHit'>),
+      cacheHit: false,
+    };
     // Spec: 7d cache when Apify fired, 1d for og-only. Both only on success;
     // errors get Cache-Control: no-store (handled in fetchErrorToResponse).
-    const sMaxAge = cacheKind === 'apify' ? 604800 : 86400;
+    const sMaxAge = chain.cacheKind === 'apify' ? 604800 : 86400;
     return jsonResponse(result, {
       headers: { 'cache-control': `public, s-maxage=${sMaxAge}` },
     });
   } catch (err) {
     return fetchErrorToResponse(err);
   }
+}
+
+// --- Fetcher chain wiring ------------------------------------------------
+//
+// Each platform fetcher wraps the existing per-platform handler in the
+// LinkFetcher interface. The handler returns the original `{result, cacheKind,
+// dispatch}` shape, which we translate into `FetcherOutcome`.
+//
+// To add a backup (e.g. a second TikTok scraper for when the primary breaks):
+// implement a new module under `src/fetchers/` exporting a LinkFetcher and
+// append it to the FETCHERS array below.
+
+const instagramFetcher: LinkFetcher = {
+  name: 'instagram',
+  async fetch(url, platform, ctx) {
+    if (platform !== 'instagram') return { kind: 'not-applicable' };
+    try {
+      const out = await fetchInstagram(url, ctx.env);
+      return {
+        kind: 'ok',
+        result: out.result,
+        cacheKind: out.cacheKind,
+        dispatch: out.dispatch,
+      };
+    } catch (err) {
+      if (err instanceof UpstreamError) {
+        return { kind: 'failed', error: err, retryable: isUpstreamErrorRetryable(err) };
+      }
+      throw err;
+    }
+  },
+};
+
+const tiktokFetcher: LinkFetcher = {
+  name: 'tiktok',
+  async fetch(url, platform) {
+    if (platform !== 'tiktok') return { kind: 'not-applicable' };
+    try {
+      const out = await fetchTikTok(url);
+      return {
+        kind: 'ok',
+        result: out.result,
+        dispatch: out.dispatch,
+      };
+    } catch (err) {
+      if (err instanceof UpstreamError) {
+        return { kind: 'failed', error: err, retryable: isUpstreamErrorRetryable(err) };
+      }
+      throw err;
+    }
+  },
+};
+
+const FETCHERS: LinkFetcher[] = [instagramFetcher, tiktokFetcher];
+
+function isUpstreamErrorRetryable(err: UpstreamError): boolean {
+  // 5xx and 429 (stored as upstream-status, surfaced as 502 to clients) are
+  // transient; 4xx (404 not-found, 403 private, 400 unsupported-url) are not.
+  return err.status >= 500 || err.status === 429;
 }
 
 function ogOutcomeFromError(err: UpstreamError): FetchPostDebug['ogOutcome'] {
@@ -785,6 +838,18 @@ async function fetchHtml(url: string, userAgent: string): Promise<string> {
 function fetchErrorToResponse(err: unknown): Response {
   if (err instanceof UpstreamError) {
     return errorResponse(err.code, err.status === 429 ? 502 : err.status);
+  }
+  if (err instanceof AllFetchersFailedError) {
+    // Find the most recent applicable-but-failed attempt to derive a
+    // representative HTTP code. Today the chain has one fetcher per platform,
+    // so this is always the matching platform's failure.
+    for (let i = err.attempts.length - 1; i >= 0; i--) {
+      const a = err.attempts[i];
+      if (a.outcome.kind === 'failed' && a.outcome.error instanceof UpstreamError) {
+        return fetchErrorToResponse(a.outcome.error);
+      }
+    }
+    return errorResponse('fetch-failed', 502);
   }
   console.error('extract-proxy/fetch-post: unexpected', String(err));
   return errorResponse('fetch-failed', 502);
