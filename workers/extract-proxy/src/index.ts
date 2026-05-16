@@ -1,4 +1,9 @@
-import { extractionResponseSchema, requestBodySchema, type ExtractionResponse } from './schema';
+import {
+  extractionResponseSchema,
+  requestBodySchema,
+  type ExtractionResponse,
+  type RequestBody,
+} from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from './prompt';
 import { handleEnrich } from './enrich';
 import { handleFetchPost } from './fetch-post';
@@ -94,10 +99,11 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
     return errorResponse('rate-limited', 429, { 'retry-after': '60' });
   }
 
-  // Truncation defense: a pathological screenshot shouldn't blow the input
-  // budget. Realistic OCR is well below this; the cap exists so anything
-  // past it gets clipped, not rejected.
-  const ocrText = parsed.data.ocr_text.slice(0, 10000);
+  // Build the Gemini `parts` array based on the request mode. Text mode
+  // sends a single text part. Vision mode sends an inline_data image part,
+  // optionally followed by a caption text part. Truncation defense applies
+  // to text inputs only — a pathological caption shouldn't blow the budget.
+  const parts = buildGeminiParts(parsed.data);
 
   // Route through Cloudflare AI Gateway so we get caching, analytics, and
   // a single chokepoint for upstream provider swaps. The `?key=` is forwarded
@@ -116,7 +122,7 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
         'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
       },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: ocrText }] }],
+        contents: [{ role: 'user', parts }],
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         generationConfig: {
           responseMimeType: 'application/json',
@@ -172,6 +178,52 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
     model: GEMINI_MODEL,
   };
   return jsonResponse(response, { status: 200 });
+}
+
+// Maximum text-input length (chars). Realistic OCR / captions are well below
+// this; the cap exists so a pathological input gets clipped, not rejected.
+const TEXT_INPUT_CAP = 10000;
+
+// Default mime type when sniffing fails. PNG-with-alpha would also be valid
+// — Gemini accepts both; the app's downscale step emits JPEG so this is the
+// expected common case.
+const DEFAULT_IMAGE_MIME = 'image/jpeg';
+
+function buildGeminiParts(body: RequestBody): Array<Record<string, unknown>> {
+  if (body.mode === 'text') {
+    return [{ text: body.text.slice(0, TEXT_INPUT_CAP) }];
+  }
+  // mode === 'vision'
+  const mimeType = sniffImageMime(body.imageBase64) ?? DEFAULT_IMAGE_MIME;
+  const parts: Array<Record<string, unknown>> = [
+    { inline_data: { mime_type: mimeType, data: body.imageBase64 } },
+  ];
+  if (body.caption && body.caption.trim().length > 0) {
+    parts.push({ text: `User-supplied caption:\n${body.caption.slice(0, TEXT_INPUT_CAP)}` });
+  }
+  return parts;
+}
+
+// Sniff the first base64-decoded bytes to detect the image format. Cheap
+// — only decodes the first ~12 bytes. Returns null when unrecognised, in
+// which case the caller falls back to the default mime.
+function sniffImageMime(b64: string): string | null {
+  // Decode just enough leading bytes for the magic-number check.
+  const head = b64.slice(0, 16);
+  let bytes: string;
+  try {
+    bytes = atob(head);
+  } catch {
+    return null;
+  }
+  if (bytes.startsWith('\xff\xd8\xff')) return 'image/jpeg';
+  if (bytes.startsWith('\x89PNG\r\n\x1a\n')) return 'image/png';
+  if (bytes.startsWith('GIF87a') || bytes.startsWith('GIF89a')) return 'image/gif';
+  // WebP: "RIFF????WEBP" — first 4 bytes RIFF, then 4 size bytes we skip,
+  // then "WEBP". The 16-char b64 prefix only decodes to ~12 bytes, so we
+  // can check the RIFF prefix and trust it for now.
+  if (bytes.startsWith('RIFF')) return 'image/webp';
+  return null;
 }
 
 function extractCandidateText(geminiBody: unknown): string | null {

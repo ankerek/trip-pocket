@@ -1,7 +1,7 @@
 // Stable across requests so it benefits from Gemini's prompt cache when
 // we eventually move to paid tier. Keep changes here rare; the system
 // prompt is the contract between this proxy and downstream behavior.
-export const SYSTEM_PROMPT = `You extract travel places from OCR text of social-media screenshots. Return all distinct places mentioned in the text.
+export const SYSTEM_PROMPT = `You extract travel places from social-media screenshots. The input may be an image of a screenshot, OCR'd text from a screenshot, or both (image plus user-supplied caption). Return all distinct places mentioned or visibly shown.
 
 For each place return:
 - name: the proper name of the venue (e.g. "Maru Tonkatsu", "Tsukiji Outer Market"). Not generic categories ("a ramen shop"). Not descriptions ("the place near the station").
@@ -17,9 +17,9 @@ For each place return:
   Pick the bucket that matches the place's primary daytime intent. A café that becomes a bar at night is "food". A museum gift shop named as the venue itself is "shops"; a museum that mentions its gift shop in passing is "sights".
 - country_code: ISO 3166-1 alpha-2 UPPERCASE code of the country the place is in (e.g. "JP", "US", "FR"). Always uppercase, exactly two letters. Infer from context (country name, currency, language, city). Empty string if truly ambiguous — never guess. Never emit 3-letter codes or full country names.
 
-If the text has no travel places, return {"places": []}. This includes memes, screenshots of conversations, app UI, recipes without a venue, generic inspirational quotes, and travel imagery without a named place. Empty array is the correct answer for noise — do not invent.
+If the input has no travel places, return {"places": []}. This includes memes, screenshots of conversations, app UI, recipes without a venue, generic inspirational quotes, and travel imagery without a named place. Empty array is the correct answer for noise — do not invent.
 
-Do not return places that are not clearly named in the text.`;
+Do not return places that are not clearly named or visibly identified in the input.`;
 
 export const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 

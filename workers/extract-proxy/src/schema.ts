@@ -27,15 +27,41 @@ export const extractionResponseSchema = z.object({
   places: z.array(placeSchema),
 });
 
-// Client-side request shape. Empty / whitespace-only ocr_text never reaches
-// the proxy in normal operation — the client short-circuits to
-// extraction_status='done' without a network call. The check here is a
-// defensive 400 in case anyone calls the proxy directly.
-export const requestBodySchema = z.object({
-  ocr_text: z.string().refine((s) => s.trim().length > 0, {
-    message: 'ocr_text must be a non-empty, non-whitespace string',
+// Request payload — three shapes accepted at the wire.
+//
+// 1. `{ mode: 'text', text }`             — canonical text-mode (PR 2+)
+// 2. `{ mode: 'vision', imageBase64, caption? }` — canonical vision-mode (PR 2+)
+// 3. `{ ocr_text }`                       — legacy alias, kept for one release
+//                                            so worker and app can be deployed
+//                                            independently. Transforms into
+//                                            text-mode internally.
+//
+// Empty / whitespace-only text never reaches the proxy in normal operation —
+// the client short-circuits to extraction_status='done' without a network call.
+// The checks here are defensive 400s in case anyone calls the proxy directly.
+
+const textModeSchema = z.object({
+  mode: z.literal('text'),
+  text: z.string().refine((s) => s.trim().length > 0, {
+    message: 'text must be a non-empty, non-whitespace string',
   }),
 });
+
+const visionModeSchema = z.object({
+  mode: z.literal('vision'),
+  imageBase64: z.string().min(1, 'imageBase64 must be non-empty'),
+  caption: z.string().optional(),
+});
+
+const legacyAliasSchema = z
+  .object({
+    ocr_text: z.string().refine((s) => s.trim().length > 0, {
+      message: 'ocr_text must be a non-empty, non-whitespace string',
+    }),
+  })
+  .transform((r) => ({ mode: 'text' as const, text: r.ocr_text }));
+
+export const requestBodySchema = z.union([textModeSchema, visionModeSchema, legacyAliasSchema]);
 
 export type ExtractionResponse = z.infer<typeof extractionResponseSchema>;
 export type ExtractedPlace = z.infer<typeof placeSchema>;
