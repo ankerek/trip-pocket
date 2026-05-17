@@ -476,6 +476,17 @@ async function fetchInstagramOg(canonical: string): Promise<FetchPostResponse> {
   const videoDuration =
     Number.isFinite(videoDurationParsed) && videoDurationParsed >= 0 ? videoDurationParsed : null;
 
+  // Diagnostic so we can tell "the worker code is too old" from "this Reel
+  // has no og:video tag in its HTML". Only one line; visible via `wrangler
+  // tail` on a redeployed worker.
+  console.log(
+    'extract-proxy/ig-og:',
+    'hasImage=' + (imageRaw ? 'yes' : 'no'),
+    'hasVideoSecure=' + (videoSecureRaw ? 'yes' : 'no'),
+    'hasVideo=' + (videoRaw ? 'yes' : 'no'),
+    'hasVideoDuration=' + (videoDurationRaw ? 'yes' : 'no'),
+  );
+
   return {
     platform: 'instagram',
     permalink: canonical,
