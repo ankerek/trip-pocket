@@ -35,6 +35,14 @@ APIFY_ACTOR_ID = "apify~instagram-post-scraper"
 #                            subscriber's pro entitlement. See docs/superpowers/
 #                            specs/2026-05-14-paywall-and-entitlement-gate-design.md.
 
+# Per-content_hash extraction state for the share-time pre-warm orchestrator.
+# Writes: pending → partial → done (or error). TTL via expirationTtl on each
+# put; see EXTRACT_STATE_TTL_SECONDS in src/orchestrator.ts.
+[[kv_namespaces]]
+binding = "EXTRACT_STATE"
+id = "5353ac64da7649469ac6472675dbfabd"
+preview_id = "ac2ec4b46c41485c83bd70122384e01e"
+
 # Logs include status, latency, and error class only — never OCR text.
 [observability]
 enabled = true

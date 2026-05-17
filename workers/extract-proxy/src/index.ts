@@ -27,6 +27,7 @@ export interface Env {
   APIFY_TOKEN?: string;
   APIFY_ACTOR_ID?: string;
   RC_REST_API_KEY: string;
+  EXTRACT_STATE: KVNamespace;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' } as const;

@@ -172,6 +172,7 @@ export async function runFetchPost(
     if (err instanceof AllFetchersFailedError) {
       for (let i = err.attempts.length - 1; i >= 0; i--) {
         const a = err.attempts[i];
+        if (!a) continue;
         if (a.outcome.kind === 'failed' && a.outcome.error instanceof UpstreamError) {
           const u = a.outcome.error;
           throw new RunFetchPostError(u.code, u.status === 429 ? 502 : u.status);
