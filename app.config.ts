@@ -23,14 +23,14 @@ const SCHEME = IS_DEV ? 'trippocket-dev' : 'trippocket';
 const config: ExpoConfig = {
   name: APP_NAME,
   slug: 'trip-pocket',
-  version: '0.3.1',
+  version: '0.3.2',
   orientation: 'portrait',
   icon: './assets/images/icon.png',
   scheme: SCHEME,
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: BUNDLE_ID,
-    buildNumber: '2026051501',
+    buildNumber: '2026051701',
     icon: './assets/AppIcon.icon',
     supportsTablet: false,
     entitlements: {

@@ -215,8 +215,17 @@ class PlacesError extends Error {
 }
 
 async function searchText(req: EnrichRequest, env: Env): Promise<string | null> {
-  const locationHint = req.address?.trim() || req.city || '';
-  const textQuery = [req.name, locationHint].filter(Boolean).join(', ');
+  // Include BOTH address and city. Vision LLMs sometimes drop neighbourhood
+  // text into `address` (e.g. "Śródmieście" — Polish for city centre, found
+  // in every Polish city). If we let address shadow city, the resulting
+  // query has no city anchor and Google's textSearch ranks the most-popular
+  // brand match globally — which is how a Kraków-tagged "Vegab" was being
+  // enriched with Warsaw's Vegab.
+  const trimmedAddress = req.address?.trim();
+  const parts = [req.name];
+  if (trimmedAddress) parts.push(trimmedAddress);
+  if (req.city) parts.push(req.city);
+  const textQuery = parts.join(', ');
 
   const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',

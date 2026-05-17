@@ -329,7 +329,7 @@ describe('handleEnrich', () => {
     expect(headers.get('X-Goog-FieldMask')).toContain('addressComponents');
   });
 
-  it('passes textQuery as "name, address" to Places searchText', async () => {
+  it('passes textQuery as "name, address, city" to Places searchText', async () => {
     const fetchSpy = scriptedFetch([
       { match: isSearchText, response: () => placesSearchOk() },
       { match: isPlaceDetails, response: () => placesDetailsOk() },
@@ -343,7 +343,30 @@ describe('handleEnrich', () => {
     );
     const init = searchCall![1] as RequestInit;
     const reqBody = JSON.parse(init.body as string);
-    expect(reqBody.textQuery).toBe('Kosoan, 1 Chome-24-23 Jiyugaoka');
+    expect(reqBody.textQuery).toBe('Kosoan, 1 Chome-24-23 Jiyugaoka, Tokyo');
+  });
+
+  it('keeps city in textQuery when address is a bare neighbourhood (Kraków/Śródmieście regression)', async () => {
+    // Vision LLMs sometimes put a district name into `address` instead of
+    // a street ("Śródmieście" — Polish for city centre, present in every
+    // Polish city). The query must still include the city or Google's
+    // text search picks the most-popular brand match globally.
+    const fetchSpy = scriptedFetch([
+      { match: isSearchText, response: () => placesSearchOk() },
+      { match: isPlaceDetails, response: () => placesDetailsOk() },
+      { match: isGemini, response: () => geminiOk() },
+    ]);
+    globalThis.fetch = fetchSpy;
+
+    await handleEnrich(
+      postJson({ ...validBody, name: 'Vegab', city: 'Kraków', address: 'Śródmieście' }),
+      makeEnv(),
+    );
+    const searchCall = (fetchSpy as unknown as jest.Mock).mock.calls.find((c) =>
+      isSearchText(String(c[0])),
+    );
+    const reqBody = JSON.parse((searchCall![1] as RequestInit).body as string);
+    expect(reqBody.textQuery).toBe('Vegab, Śródmieście, Kraków');
   });
 
   it('falls back to city when no address', async () => {

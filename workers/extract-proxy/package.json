@@ -11,7 +11,10 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "expo": "~55.0.23",
+    "react": "19.2.0",
+    "react-native": "0.83.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250115.0",
