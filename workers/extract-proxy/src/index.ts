@@ -53,59 +53,45 @@ function errorResponse(
 // (text/vision modes never schedule waitUntil work).
 const NOOP_CTX: WaitUntilCtx = { waitUntil: () => {} };
 
-export async function handleExtract(
-  request: Request,
+export class RunExtractError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly status: number,
+    public readonly retryAfter?: string,
+  ) {
+    super(code);
+    this.name = 'RunExtractError';
+  }
+}
+
+// Pure (no Request, no Response) wrapper around the Gemini call. Same env
+// requirements as handleExtract. Throws RunExtractError on misconfig or
+// upstream failure; otherwise returns the parsed places + model. The
+// orchestrator (src/orchestrator.ts) calls this directly without going
+// through HTTP.
+export async function runExtract(
+  body: RequestBody,
   env: Env,
   ctx: WaitUntilCtx = NOOP_CTX,
-): Promise<Response> {
-  if (request.method !== 'POST') {
-    return errorResponse('method-not-allowed', 405);
-  }
-
-  const gate = await requireEntitlement(request, env);
-  if (!gate.ok) return gate.response;
-
+): Promise<ExtractionResponse & { model: string }> {
   // Misconfiguration is the operator's problem, not the client's. 500 so
   // the client treats it as retryable; the operator sees the error class
   // in Workers Logs.
   if (!env.GEMINI_API_KEY) {
     console.error('extract-proxy: GEMINI_API_KEY missing');
-    return errorResponse('server-misconfigured', 500);
+    throw new RunExtractError('server-misconfigured', 500);
   }
   if (!env.CF_ACCOUNT_ID) {
     console.error('extract-proxy: CF_ACCOUNT_ID missing');
-    return errorResponse('server-misconfigured', 500);
+    throw new RunExtractError('server-misconfigured', 500);
   }
   if (!env.AI_GATEWAY_NAME) {
     console.error('extract-proxy: AI_GATEWAY_NAME missing');
-    return errorResponse('server-misconfigured', 500);
+    throw new RunExtractError('server-misconfigured', 500);
   }
   if (!env.CF_AIG_TOKEN) {
     console.error('extract-proxy: CF_AIG_TOKEN missing');
-    return errorResponse('server-misconfigured', 500);
-  }
-
-  const contentType = request.headers.get('content-type') ?? '';
-  if (!contentType.toLowerCase().includes('application/json')) {
-    return errorResponse('content-type-must-be-json', 400);
-  }
-
-  let raw: unknown;
-  try {
-    raw = await request.json();
-  } catch {
-    return errorResponse('invalid-json', 400);
-  }
-
-  const parsed = requestBodySchema.safeParse(raw);
-  if (!parsed.success) {
-    return errorResponse('invalid-request-body', 400);
-  }
-
-  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-  const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
-  if (!rateOk) {
-    return errorResponse('rate-limited', 429, { 'retry-after': '60' });
+    throw new RunExtractError('server-misconfigured', 500);
   }
 
   // Build the Gemini `parts` array based on the request mode. Text mode
@@ -117,29 +103,29 @@ export async function handleExtract(
   // blow the budget.
   let parts: Array<Record<string, unknown>>;
   let systemPrompt = SYSTEM_PROMPT;
-  if (parsed.data.mode === 'video') {
+  if (body.mode === 'video') {
     try {
       const { part } = await buildVideoPart(
-        { url: parsed.data.video.url, durationSec: parsed.data.video.durationSec },
+        { url: body.video.url, durationSec: body.video.durationSec },
         env,
         ctx,
       );
       parts = [part];
-      if (parsed.data.caption && parsed.data.caption.trim().length > 0) {
+      if (body.caption && body.caption.trim().length > 0) {
         parts.push({
-          text: `User-supplied caption:\n${parsed.data.caption.slice(0, TEXT_INPUT_CAP)}`,
+          text: `User-supplied caption:\n${body.caption.slice(0, TEXT_INPUT_CAP)}`,
         });
       }
       systemPrompt = SYSTEM_PROMPT + VIDEO_PROMPT_SUFFIX;
     } catch (err) {
       if (err instanceof VideoError) {
         console.error('extract-proxy/video: ' + err.code);
-        return errorResponse(err.code, err.status);
+        throw new RunExtractError(err.code, err.status);
       }
       throw err;
     }
   } else {
-    parts = buildGeminiParts(parsed.data);
+    parts = buildGeminiParts(body);
   }
 
   // Route through Cloudflare AI Gateway so we get caching, analytics, and
@@ -169,17 +155,16 @@ export async function handleExtract(
     });
   } catch (err) {
     console.error('extract-proxy: gemini-network-error', String(err));
-    return errorResponse('upstream-network-error', 502);
+    throw new RunExtractError('upstream-network-error', 502);
   }
 
   if (geminiResp.status === 429) {
     const retryAfter = geminiResp.headers.get('retry-after') ?? '60';
-    return errorResponse('upstream-rate-limited', 429, { 'retry-after': retryAfter });
+    throw new RunExtractError('upstream-rate-limited', 429, retryAfter);
   }
-
   if (!geminiResp.ok) {
     console.error('extract-proxy: gemini-upstream-error', geminiResp.status);
-    return errorResponse('upstream-error', 502);
+    throw new RunExtractError('upstream-error', 502);
   }
 
   let geminiBody: unknown;
@@ -187,13 +172,13 @@ export async function handleExtract(
     geminiBody = await geminiResp.json();
   } catch {
     console.error('extract-proxy: gemini-non-json-body');
-    return errorResponse('upstream-non-json', 502);
+    throw new RunExtractError('upstream-non-json', 502);
   }
 
   const candidateText = extractCandidateText(geminiBody);
   if (candidateText === null) {
     console.error('extract-proxy: gemini-shape-unexpected');
-    return errorResponse('upstream-bad-shape', 502);
+    throw new RunExtractError('upstream-bad-shape', 502);
   }
 
   let inner: unknown;
@@ -201,20 +186,64 @@ export async function handleExtract(
     inner = JSON.parse(candidateText);
   } catch {
     console.error('extract-proxy: gemini-inner-parse-failed');
-    return errorResponse('upstream-malformed-inner-json', 502);
+    throw new RunExtractError('upstream-malformed-inner-json', 502);
   }
 
   const validated = extractionResponseSchema.safeParse(inner);
   if (!validated.success) {
     console.error('extract-proxy: gemini-schema-violation');
-    return errorResponse('upstream-schema-violation', 502);
+    throw new RunExtractError('upstream-schema-violation', 502);
   }
 
-  const response: ExtractionResponse & { model: string } = {
-    places: validated.data.places,
-    model: GEMINI_MODEL,
-  };
-  return jsonResponse(response, { status: 200 });
+  return { places: validated.data.places, model: GEMINI_MODEL };
+}
+
+export async function handleExtract(
+  request: Request,
+  env: Env,
+  ctx: WaitUntilCtx = NOOP_CTX,
+): Promise<Response> {
+  if (request.method !== 'POST') {
+    return errorResponse('method-not-allowed', 405);
+  }
+
+  const gate = await requireEntitlement(request, env);
+  if (!gate.ok) return gate.response;
+
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    return errorResponse('content-type-must-be-json', 400);
+  }
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return errorResponse('invalid-json', 400);
+  }
+
+  const parsed = requestBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return errorResponse('invalid-request-body', 400);
+  }
+
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
+  if (!rateOk) {
+    return errorResponse('rate-limited', 429, { 'retry-after': '60' });
+  }
+
+  try {
+    const result = await runExtract(parsed.data, env, ctx);
+    return jsonResponse(result, { status: 200 });
+  } catch (err) {
+    if (err instanceof RunExtractError) {
+      const extra: Record<string, string> =
+        err.retryAfter != null ? { 'retry-after': err.retryAfter } : {};
+      return errorResponse(err.code, err.status, extra);
+    }
+    throw err;
+  }
 }
 
 // Maximum text-input length (chars). Realistic OCR / captions are well below
