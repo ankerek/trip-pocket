@@ -1,15 +1,15 @@
 import {
   extractionResponseSchema,
-  requestBodySchema,
   type ExtractionResponse,
   type RequestBody,
 } from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT, VIDEO_PROMPT_SUFFIX } from './prompt';
 import { handleEnrich } from './enrich';
-import { handleFetchPost } from './fetch-post';
 import { handlePhoto } from './photo';
 import { requireEntitlement } from './entitlement';
 import { buildVideoPart, VideoError, type WaitUntilCtx } from './video';
+import { orchestratorRequestSchema } from './orchestrator-schema';
+import { orchestrate, readState } from './orchestrator';
 
 export interface RateLimitBinding {
   limit(args: { key: string }): Promise<{ success: boolean }>;
@@ -199,14 +199,22 @@ export async function runExtract(
   return { places: validated.data.places, model: GEMINI_MODEL };
 }
 
-export async function handleExtract(
+/**
+ * POST /extract — share-time pre-warm. Idempotent, async.
+ *
+ *   { contentHash, kind: 'url', url, suggestedTripId? } →
+ *     200 with cached state on hit; 202 {status:'pending'} on miss
+ *
+ * Cache miss schedules orchestrate() via ctx.waitUntil so the pipeline
+ * runs after the response. Workers Paid plan affords ~5 min wall-clock —
+ * enough for Apify + Gemini video extraction.
+ */
+export async function handleExtractPost(
   request: Request,
   env: Env,
-  ctx: WaitUntilCtx = NOOP_CTX,
+  ctx: WaitUntilCtx,
 ): Promise<Response> {
-  if (request.method !== 'POST') {
-    return errorResponse('method-not-allowed', 405);
-  }
+  if (request.method !== 'POST') return errorResponse('method-not-allowed', 405);
 
   const gate = await requireEntitlement(request, env);
   if (!gate.ok) return gate.response;
@@ -222,29 +230,53 @@ export async function handleExtract(
   } catch {
     return errorResponse('invalid-json', 400);
   }
-
-  const parsed = requestBodySchema.safeParse(raw);
-  if (!parsed.success) {
-    return errorResponse('invalid-request-body', 400);
-  }
+  const parsed = orchestratorRequestSchema.safeParse(raw);
+  if (!parsed.success) return errorResponse('invalid-request-body', 400);
 
   const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
   const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
-  if (!rateOk) {
-    return errorResponse('rate-limited', 429, { 'retry-after': '60' });
+  if (!rateOk) return errorResponse('rate-limited', 429, { 'retry-after': '60' });
+
+  const cached = await readState(parsed.data.contentHash, env);
+  if (cached) {
+    return jsonResponse(cached, { status: 200 });
   }
 
-  try {
-    const result = await runExtract(parsed.data, env, ctx);
-    return jsonResponse(result, { status: 200 });
-  } catch (err) {
-    if (err instanceof RunExtractError) {
-      const extra: Record<string, string> =
-        err.retryAfter != null ? { 'retry-after': err.retryAfter } : {};
-      return errorResponse(err.code, err.status, extra);
-    }
-    throw err;
+  // Schedule the pipeline after the response. The async work survives
+  // until ctx.waitUntil's budget runs out.
+  ctx.waitUntil(orchestrate(parsed.data, env, ctx));
+
+  return jsonResponse(
+    {
+      contentHash: parsed.data.contentHash,
+      status: 'pending',
+      startedAt: new Date().toISOString(),
+    },
+    { status: 202 },
+  );
+}
+
+/**
+ * GET /extract/:contentHash — poll the cached state. Returns 404 with
+ * status='missing' when the orchestrator hasn't been triggered for this
+ * hash (or the TTL expired).
+ */
+export async function handleExtractGet(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') return errorResponse('method-not-allowed', 405);
+
+  const gate = await requireEntitlement(request, env);
+  if (!gate.ok) return gate.response;
+
+  const url = new URL(request.url);
+  const m = url.pathname.match(/^\/extract\/([0-9a-f]{64})$/);
+  if (!m) return errorResponse('invalid-content-hash', 400);
+  const hash = m[1]!;
+
+  const state = await readState(hash, env);
+  if (!state) {
+    return jsonResponse({ contentHash: hash, status: 'missing' }, { status: 404 });
   }
+  return jsonResponse(state, { status: 200 });
 }
 
 // Maximum text-input length (chars). Realistic OCR / captions are well below
@@ -320,9 +352,13 @@ export default {
 async function route(request: Request, env: Env, ctx: WaitUntilCtx): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
-  if (path === '/extract') return handleExtract(request, env, ctx);
+  // Share-time pre-warm orchestrator. Replaces the legacy POST /extract
+  // (text/vision/video body shape) and the standalone POST /fetch-post —
+  // both are now internal helpers (runExtract, runFetchPost) the
+  // orchestrator drives directly.
+  if (path === '/extract' && request.method === 'POST') return handleExtractPost(request, env, ctx);
+  if (path.startsWith('/extract/') && request.method === 'GET') return handleExtractGet(request, env);
   if (path === '/enrich') return handleEnrich(request, env);
-  if (path === '/fetch-post') return handleFetchPost(request, env);
   if (path.startsWith('/photo/')) return handlePhoto(request, env);
   return errorResponse('not-found', 404);
 }
