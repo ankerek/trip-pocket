@@ -715,6 +715,62 @@ describe('handleFetchPost — Instagram', () => {
       expect(resp.status).toBe(200);
       expect(apifyCalled).toBe(false);
     });
+
+    it('exposes og:video and og:video:duration on /reel/ responses (so video extraction can fire without Apify)', async () => {
+      // /reel/ URLs short-circuit the chain before Apify, so the og parse is
+      // the only place to surface videoUrl. The IG HTML for a Reel always
+      // includes og:video* meta tags pointing at the MP4 CDN URL.
+      const html = `<html><head>
+          <meta property="og:title" content="Foodie on Instagram" />
+          <meta property="og:description" content="Best ramen in Shibuya" />
+          <meta property="og:image" content="${IG_COVER_CAROUSEL}" />
+          <meta property="og:video:secure_url" content="https://cdn/reel.mp4" />
+          <meta property="og:video" content="https://cdn/reel-legacy.mp4" />
+          <meta property="og:video:duration" content="28" />
+        </head></html>`;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/REEL2/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+      ]);
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/reel/REEL2/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as {
+        videoUrl?: string;
+        videoDuration?: number;
+      };
+      expect(body.videoUrl).toBe('https://cdn/reel.mp4');
+      expect(body.videoDuration).toBe(28);
+    });
+
+    it('og:video duration is null when missing or malformed', async () => {
+      const html = `<html><head>
+          <meta property="og:title" content="X" />
+          <meta property="og:description" content="caption" />
+          <meta property="og:image" content="${IG_COVER_CAROUSEL}" />
+          <meta property="og:video" content="https://cdn/reel.mp4" />
+        </head></html>`;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/REEL3/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+      ]);
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/reel/REEL3/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as { videoUrl?: string; videoDuration?: number | null };
+      expect(body.videoUrl).toBe('https://cdn/reel.mp4');
+      expect(body.videoDuration ?? null).toBeNull();
+    });
   });
 });
 

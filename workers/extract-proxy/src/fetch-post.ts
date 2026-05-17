@@ -450,6 +450,14 @@ async function fetchInstagramOg(canonical: string): Promise<FetchPostResponse> {
   const captionRaw = findOgMeta(html, 'og:description');
   const imageRaw = findOgMeta(html, 'og:image');
   const titleRaw = findOgMeta(html, 'og:title');
+  // og:video* tags are present on Reels (and on /tv/) — single Reels never
+  // go to Apify after a successful og parse (see handleFetchPost), so this
+  // is the only place to surface videoUrl for them. og:video:secure_url is
+  // preferred when both are present; falling back to og:video covers older
+  // HTML shapes.
+  const videoSecureRaw = findOgMeta(html, 'og:video:secure_url');
+  const videoRaw = findOgMeta(html, 'og:video');
+  const videoDurationRaw = findOgMeta(html, 'og:video:duration');
 
   if (!captionRaw && !imageRaw) {
     // Nothing useful came back — likely a soft block or a deleted post.
@@ -459,6 +467,14 @@ async function fetchInstagramOg(canonical: string): Promise<FetchPostResponse> {
   const caption = captionRaw ? decodeHtmlEntities(captionRaw) : '';
   const cover = imageRaw ? decodeHtmlEntities(imageRaw) : null;
   const author = extractAuthorFromIgTitle(titleRaw);
+  const videoRawDecoded =
+    (videoSecureRaw && decodeHtmlEntities(videoSecureRaw)) ||
+    (videoRaw && decodeHtmlEntities(videoRaw)) ||
+    null;
+  const videoUrl = videoRawDecoded && videoRawDecoded.length > 0 ? videoRawDecoded : null;
+  const videoDurationParsed = videoDurationRaw ? Number.parseFloat(videoDurationRaw) : NaN;
+  const videoDuration =
+    Number.isFinite(videoDurationParsed) && videoDurationParsed >= 0 ? videoDurationParsed : null;
 
   return {
     platform: 'instagram',
@@ -466,6 +482,8 @@ async function fetchInstagramOg(canonical: string): Promise<FetchPostResponse> {
     caption,
     imageUrls: cover ? [cover] : [],
     author,
+    videoUrl,
+    videoDuration,
   };
 }
 
