@@ -691,49 +691,22 @@ describe('handleFetchPost — Instagram', () => {
       });
     });
 
-    it('/reel/ URLs with og:video short-circuit to og-only and skip Apify', async () => {
-      const html = `<html><head>
-          <meta property="og:title" content="X on Instagram" />
-          <meta property="og:description" content="reel caption" />
-          <meta property="og:image" content="${IG_COVER_CAROUSEL}" />
-          <meta property="og:video:secure_url" content="https://cdn/v.mp4" />
-        </head></html>`;
-      let apifyCalled = false;
-      global.fetch = scriptedFetch([
-        {
-          match: (url) => url === 'https://www.instagram.com/p/REEL/',
-          response: () =>
-            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
-        },
-        {
-          match: (url) => url.includes('api.apify.com'),
-          response: () => {
-            apifyCalled = true;
-            return new Response('[]', { status: 200 });
-          },
-        },
-      ]);
-      const resp = await handleFetchPost(
-        postJson({ url: 'https://www.instagram.com/reel/REEL/' }),
-        envWithApify(),
-      );
-      expect(resp.status).toBe(200);
-      expect(apifyCalled).toBe(false);
-      const body = (await resp.json()) as { videoUrl?: string; _debug?: { route?: string } };
-      expect(body.videoUrl).toBe('https://cdn/v.mp4');
-      expect(body._debug?.route).toBe('og_only');
-    });
-
-    it('/reel/ URLs without og:video fall through to Apify and emit og_no_video_apify_reel', async () => {
-      // Modern IG often omits og:video* on Reel HTML. Apify provides the
-      // authoritative videoUrl in that case.
-      const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
+    it('/reel/ URLs with Apify configured: skip og entirely, fetch via Apify (apify_only_reel)', async () => {
+      // IG no longer reliably ships og:video* on Reel HTML, so the og fetch
+      // would be wasted work. The worker skips it and goes straight to
+      // Apify when configured. The og endpoint must NOT be called at all.
+      let ogCalled = false;
       let apifyCalled = false;
       global.fetch = scriptedFetch([
         {
           match: (url) => url === 'https://www.instagram.com/p/REELX/',
-          response: () =>
-            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+          response: () => {
+            ogCalled = true;
+            return new Response('', {
+              status: 200,
+              headers: { 'content-type': 'text/html' },
+            });
+          },
         },
         {
           match: (url) => url.includes('api.apify.com'),
@@ -762,21 +735,23 @@ describe('handleFetchPost — Instagram', () => {
         envWithApify(),
       );
       expect(resp.status).toBe(200);
+      expect(ogCalled).toBe(false);
       expect(apifyCalled).toBe(true);
       const body = (await resp.json()) as {
         videoUrl?: string;
         videoDuration?: number;
         caption?: string;
-        _debug?: { route?: string; apifyOutcome?: string };
+        _debug?: { route?: string; apifyOutcome?: string; ogOutcome?: string };
       };
       expect(body.videoUrl).toBe('https://cdn/reel-from-apify.mp4');
       expect(body.videoDuration).toBe(31);
       expect(body.caption).toBe('apify caption');
-      expect(body._debug?.route).toBe('og_no_video_apify_reel');
+      expect(body._debug?.route).toBe('apify_only_reel');
       expect(body._debug?.apifyOutcome).toBe('ok');
+      expect(body._debug?.ogOutcome).toBe('not_called');
     });
 
-    it('/reel/ URLs without og:video AND without Apify configured: soft-degrade to og-only', async () => {
+    it('/reel/ URLs without Apify configured: soft-degrade to og-only (cover+caption, no video)', async () => {
       const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
       global.fetch = scriptedFetch([
         {
@@ -795,10 +770,10 @@ describe('handleFetchPost — Instagram', () => {
       expect(body._debug?.route).toBe('og_only_apify_disabled');
     });
 
-    it('exposes og:video and og:video:duration on /reel/ responses (so video extraction can fire without Apify)', async () => {
-      // /reel/ URLs short-circuit the chain before Apify, so the og parse is
-      // the only place to surface videoUrl. The IG HTML for a Reel always
-      // includes og:video* meta tags pointing at the MP4 CDN URL.
+    it('og:video* extraction (Apify-disabled path) — surfaces videoUrl + duration when IG ever ships them again', async () => {
+      // With Apify configured, /reel/ skips og entirely (the common case).
+      // This test exercises the soft-degrade path: Apify off, so og runs,
+      // and if IG ever re-adds og:video* the worker still surfaces videoUrl.
       const html = `<html><head>
           <meta property="og:title" content="Foodie on Instagram" />
           <meta property="og:description" content="Best ramen in Shibuya" />
@@ -816,18 +791,20 @@ describe('handleFetchPost — Instagram', () => {
       ]);
       const resp = await handleFetchPost(
         postJson({ url: 'https://www.instagram.com/reel/REEL2/' }),
-        envWithApify(),
+        makeEnv(),
       );
       expect(resp.status).toBe(200);
       const body = (await resp.json()) as {
         videoUrl?: string;
         videoDuration?: number;
+        _debug?: { route?: string };
       };
       expect(body.videoUrl).toBe('https://cdn/reel.mp4');
       expect(body.videoDuration).toBe(28);
+      expect(body._debug?.route).toBe('og_only_apify_disabled');
     });
 
-    it('og:video duration is null when missing or malformed', async () => {
+    it('og:video duration coerces to null when missing or malformed (Apify-disabled path)', async () => {
       const html = `<html><head>
           <meta property="og:title" content="X" />
           <meta property="og:description" content="caption" />
@@ -843,7 +820,7 @@ describe('handleFetchPost — Instagram', () => {
       ]);
       const resp = await handleFetchPost(
         postJson({ url: 'https://www.instagram.com/reel/REEL3/' }),
-        envWithApify(),
+        makeEnv(),
       );
       expect(resp.status).toBe(200);
       const body = (await resp.json()) as { videoUrl?: string; videoDuration?: number | null };
@@ -1018,36 +995,8 @@ describe('handleFetchPost — _debug echo', () => {
     expect(dbg.cacheHit).toBe(false);
   });
 
-  it('og_only — /reel/ with og:video short-circuits before Apify', async () => {
-    const html = `<html><head>
-        <meta property="og:title" content="X on Instagram" />
-        <meta property="og:description" content="cap" />
-        <meta property="og:image" content="${IG_COVER_CAROUSEL}" />
-        <meta property="og:video:secure_url" content="https://cdn/v.mp4" />
-      </head></html>`;
+  it('apify_only_reel — /reel/ with Apify configured skips og entirely', async () => {
     global.fetch = scriptedFetch([
-      {
-        match: (url) => url === 'https://www.instagram.com/p/R/',
-        response: () =>
-          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
-      },
-    ]);
-    const dbg = await debugOf(
-      postJson({ url: 'https://www.instagram.com/reel/R/' }),
-      envWithApify(),
-    );
-    expect(dbg.route).toBe('og_only');
-    expect(dbg.apifyOutcome).toBe('not_called');
-  });
-
-  it('og_no_video_apify_reel — /reel/ without og:video falls through to Apify', async () => {
-    const html = IG_OG_HTML('cap', IG_COVER_CAROUSEL, 'X on Instagram');
-    global.fetch = scriptedFetch([
-      {
-        match: (url) => url === 'https://www.instagram.com/p/RNV/',
-        response: () =>
-          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
-      },
       {
         match: (url) => url.includes('api.apify.com'),
         response: () =>
@@ -1069,7 +1018,8 @@ describe('handleFetchPost — _debug echo', () => {
       postJson({ url: 'https://www.instagram.com/reel/RNV/' }),
       envWithApify(),
     );
-    expect(dbg.route).toBe('og_no_video_apify_reel');
+    expect(dbg.route).toBe('apify_only_reel');
+    expect(dbg.ogOutcome).toBe('not_called');
     expect(dbg.apifyOutcome).toBe('ok');
   });
 

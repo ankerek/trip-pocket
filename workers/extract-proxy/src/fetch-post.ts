@@ -35,7 +35,7 @@ export const fetchPostDebugSchema = z.object({
     'og_only_apify_disabled',
     'og_then_apify_carousel',
     'og_then_apify_unknown_efg',
-    'og_no_video_apify_reel',
+    'apify_only_reel',
     'og_failed_apify_fallback',
     'tiktok_rehyd_photo',
     'tiktok_rehyd_video',
@@ -341,10 +341,48 @@ async function fetchInstagram(
   if (!shortcode) throw new UpstreamError(400, 'unsupported-url');
   const canonical = `https://www.instagram.com/p/${shortcode}/`;
   const urlShape = parseInstagramUrlShape(target); // 'p' | 'reel' | 'tv'
+  const apifyConfigured = Boolean(env.APIFY_TOKEN && env.APIFY_ACTOR_ID);
 
-  // Stage 1: og: parse on canonical URL. Always runs (free, fast). For /reel/
-  // and /tv/ URLs the og: result is final; for /p/ URLs the efg hint decides
-  // whether Stage 2 fires.
+  // /reel/ and /tv/ with Apify configured: skip the og fetch entirely. IG's
+  // Reel HTML in production no longer exposes og:video* (TestFlight 2026-05),
+  // so an og round-trip is pure latency — it can't produce a useful videoUrl
+  // and we always fall through to Apify anyway. Apify is the authoritative
+  // path; one fetch instead of two.
+  if (urlShape !== 'p' && apifyConfigured) {
+    try {
+      const apify = await fetchInstagramViaApify(canonical, {
+        token: env.APIFY_TOKEN ?? '',
+        actorId: env.APIFY_ACTOR_ID ?? '',
+      });
+      return {
+        result: {
+          platform: 'instagram',
+          permalink: apify.permalink || canonical,
+          caption: apify.caption,
+          imageUrls: apify.imageUrls,
+          author: apify.author,
+          videoUrl: apify.videoUrl,
+          videoDuration: apify.videoDuration,
+        },
+        cacheKind: 'apify',
+        dispatch: {
+          route: 'apify_only_reel',
+          ogOutcome: 'not_called',
+          apifyOutcome: 'ok',
+        },
+      };
+    } catch (err) {
+      if (err instanceof ApifyError) {
+        console.error('extract-proxy/fetch-post: apify-failed (reel)', err.code, err.status);
+        throw new UpstreamError(502, 'fetch-failed');
+      }
+      throw err;
+    }
+  }
+
+  // Stage 1: og: parse on canonical URL. Runs for /p/ posts and for /reel/
+  // /tv/ when Apify isn't configured (soft-degrade so the worker still ships
+  // cover+caption — no video extraction in that mode).
   let ogResult: FetchPostResponse | null = null;
   let ogError: UpstreamError | null = null;
   try {
@@ -359,30 +397,29 @@ async function fetchInstagram(
       ? ogOutcomeFromError(ogError)
       : 'upstream_5xx';
 
-  // /reel/ and /tv/ used to short-circuit to og-only on success. As of
-  // 2026-05 IG no longer reliably exposes og:video* on Reel HTML — only the
-  // cover image — so we fall through to Apify when og succeeded but the
-  // videoUrl wasn't extracted. Apify's IG scraper uses logged-in residential
-  // proxies and authoritatively returns the videoUrl. When og:video IS
-  // present we keep the cheap path. See video-extraction spec §Not in scope
-  // (Apify-as-second-fetcher) — promoted to in-scope when the og fallback
-  // proved unreliable in TestFlight.
-  if (urlShape !== 'p' && ogResult) {
-    if (ogResult.videoUrl) {
+  // /reel/ and /tv/ with Apify NOT configured: ship og (cover+caption only).
+  // No videoUrl available; videoPlusCaption can't fire. This is the soft-
+  // degrade path that lets the worker deploy without APIFY_TOKEN.
+  if (urlShape !== 'p' && !apifyConfigured) {
+    if (ogResult) {
       return {
         result: ogResult,
         cacheKind: 'og',
-        dispatch: { route: 'og_only', ogOutcome, apifyOutcome: 'not_called' },
+        dispatch: {
+          route: 'og_only_apify_disabled',
+          ogOutcome,
+          apifyOutcome: 'not_configured',
+        },
       };
     }
-    // og succeeded but no videoUrl — fall through to Apify (handled below).
+    if (ogError) throw ogError;
+    throw new UpstreamError(502, 'fetch-failed');
   }
 
   // /p/ posts: use the efg hint to decide. Treat unknown/missing as carousel
   // (extraction quality wins over marginal cost — see spec).
-  const efgType =
-    urlShape === 'p' && ogResult ? decodeEfgFromImageUrl(ogResult.imageUrls[0] ?? '') : null;
-  const shouldFireApify = !ogResult || urlShape !== 'p' || efgType !== 'single';
+  const efgType = ogResult ? decodeEfgFromImageUrl(ogResult.imageUrls[0] ?? '') : null;
+  const shouldFireApify = !ogResult || efgType !== 'single';
   if (!shouldFireApify && ogResult) {
     return {
       result: ogResult,
@@ -395,7 +432,6 @@ async function fetchInstagram(
   // one (carousel loses slides 2..N — matches v0.2.1 behavior pre-Apify).
   // This lets us deploy without an APIFY_TOKEN and add it later without a
   // code change. og:-failed + no-Apify surfaces the original og: error.
-  const apifyConfigured = Boolean(env.APIFY_TOKEN && env.APIFY_ACTOR_ID);
   if (!apifyConfigured) {
     if (ogResult) {
       return {
@@ -412,17 +448,15 @@ async function fetchInstagram(
     throw new UpstreamError(502, 'fetch-failed');
   }
 
-  // Decide the route label up front so the failure path can report the same
-  // intent the success path would have. Carousel vs unknown_efg vs fallback
-  // vs reel-without-og:video — not mutually exclusive with og-success/og-
-  // failure, just labels.
+  // /reel/ and /tv/ are handled above; this branch is /p/ only. Decide the
+  // route label up front so the failure path can report the same intent the
+  // success path would have. Carousel vs unknown_efg vs fallback — not
+  // mutually exclusive with og-success/og-failure, just labels.
   const route: FetchPostDebug['route'] = !ogResult
     ? 'og_failed_apify_fallback'
-    : urlShape !== 'p'
-      ? 'og_no_video_apify_reel'
-      : efgType === 'carousel'
-        ? 'og_then_apify_carousel'
-        : 'og_then_apify_unknown_efg';
+    : efgType === 'carousel'
+      ? 'og_then_apify_carousel'
+      : 'og_then_apify_unknown_efg';
 
   // Stage 2: Apify. Authoritative when it fires.
   try {

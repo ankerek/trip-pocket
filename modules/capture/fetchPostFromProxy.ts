@@ -21,7 +21,7 @@ export type FetchPostDebug = {
     | 'og_only_apify_disabled'
     | 'og_then_apify_carousel'
     | 'og_then_apify_unknown_efg'
-    | 'og_no_video_apify_reel'
+    | 'apify_only_reel'
     | 'og_failed_apify_fallback'
     | 'tiktok_og'
     | 'tiktok_oembed'
@@ -92,7 +92,7 @@ const debugSchema = z.object({
     'og_only_apify_disabled',
     'og_then_apify_carousel',
     'og_then_apify_unknown_efg',
-    'og_no_video_apify_reel',
+    'apify_only_reel',
     'og_failed_apify_fallback',
     'tiktok_og',
     'tiktok_oembed',
