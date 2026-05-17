@@ -35,6 +35,7 @@ export const fetchPostDebugSchema = z.object({
     'og_only_apify_disabled',
     'og_then_apify_carousel',
     'og_then_apify_unknown_efg',
+    'og_no_video_apify_reel',
     'og_failed_apify_fallback',
     'tiktok_rehyd_photo',
     'tiktok_rehyd_video',
@@ -358,19 +359,30 @@ async function fetchInstagram(
       ? ogOutcomeFromError(ogError)
       : 'upstream_5xx';
 
-  // /reel/ and /tv/ never go to Apify on success.
+  // /reel/ and /tv/ used to short-circuit to og-only on success. As of
+  // 2026-05 IG no longer reliably exposes og:video* on Reel HTML — only the
+  // cover image — so we fall through to Apify when og succeeded but the
+  // videoUrl wasn't extracted. Apify's IG scraper uses logged-in residential
+  // proxies and authoritatively returns the videoUrl. When og:video IS
+  // present we keep the cheap path. See video-extraction spec §Not in scope
+  // (Apify-as-second-fetcher) — promoted to in-scope when the og fallback
+  // proved unreliable in TestFlight.
   if (urlShape !== 'p' && ogResult) {
-    return {
-      result: ogResult,
-      cacheKind: 'og',
-      dispatch: { route: 'og_only', ogOutcome, apifyOutcome: 'not_called' },
-    };
+    if (ogResult.videoUrl) {
+      return {
+        result: ogResult,
+        cacheKind: 'og',
+        dispatch: { route: 'og_only', ogOutcome, apifyOutcome: 'not_called' },
+      };
+    }
+    // og succeeded but no videoUrl — fall through to Apify (handled below).
   }
 
   // /p/ posts: use the efg hint to decide. Treat unknown/missing as carousel
   // (extraction quality wins over marginal cost — see spec).
-  const efgType = ogResult ? decodeEfgFromImageUrl(ogResult.imageUrls[0] ?? '') : null;
-  const shouldFireApify = !ogResult || efgType !== 'single';
+  const efgType =
+    urlShape === 'p' && ogResult ? decodeEfgFromImageUrl(ogResult.imageUrls[0] ?? '') : null;
+  const shouldFireApify = !ogResult || urlShape !== 'p' || efgType !== 'single';
   if (!shouldFireApify && ogResult) {
     return {
       result: ogResult,
@@ -401,13 +413,16 @@ async function fetchInstagram(
   }
 
   // Decide the route label up front so the failure path can report the same
-  // intent the success path would have. Carousel vs unknown_efg vs fallback —
-  // not mutually exclusive with og-success/og-failure, just labels.
+  // intent the success path would have. Carousel vs unknown_efg vs fallback
+  // vs reel-without-og:video — not mutually exclusive with og-success/og-
+  // failure, just labels.
   const route: FetchPostDebug['route'] = !ogResult
     ? 'og_failed_apify_fallback'
-    : efgType === 'carousel'
-      ? 'og_then_apify_carousel'
-      : 'og_then_apify_unknown_efg';
+    : urlShape !== 'p'
+      ? 'og_no_video_apify_reel'
+      : efgType === 'carousel'
+        ? 'og_then_apify_carousel'
+        : 'og_then_apify_unknown_efg';
 
   // Stage 2: Apify. Authoritative when it fires.
   try {

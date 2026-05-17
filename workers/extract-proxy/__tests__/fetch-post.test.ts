@@ -691,8 +691,13 @@ describe('handleFetchPost — Instagram', () => {
       });
     });
 
-    it('/reel/ URLs never go to Apify, even on success', async () => {
-      const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
+    it('/reel/ URLs with og:video short-circuit to og-only and skip Apify', async () => {
+      const html = `<html><head>
+          <meta property="og:title" content="X on Instagram" />
+          <meta property="og:description" content="reel caption" />
+          <meta property="og:image" content="${IG_COVER_CAROUSEL}" />
+          <meta property="og:video:secure_url" content="https://cdn/v.mp4" />
+        </head></html>`;
       let apifyCalled = false;
       global.fetch = scriptedFetch([
         {
@@ -714,6 +719,80 @@ describe('handleFetchPost — Instagram', () => {
       );
       expect(resp.status).toBe(200);
       expect(apifyCalled).toBe(false);
+      const body = (await resp.json()) as { videoUrl?: string; _debug?: { route?: string } };
+      expect(body.videoUrl).toBe('https://cdn/v.mp4');
+      expect(body._debug?.route).toBe('og_only');
+    });
+
+    it('/reel/ URLs without og:video fall through to Apify and emit og_no_video_apify_reel', async () => {
+      // Modern IG often omits og:video* on Reel HTML. Apify provides the
+      // authoritative videoUrl in that case.
+      const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
+      let apifyCalled = false;
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/REELX/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => {
+            apifyCalled = true;
+            return new Response(
+              JSON.stringify([
+                {
+                  url: 'https://www.instagram.com/p/REELX/',
+                  shortCode: 'REELX',
+                  caption: 'apify caption',
+                  displayUrl: 'https://cdn/cover-from-apify.jpg',
+                  ownerUsername: 'creator',
+                  type: 'Video',
+                  videoUrl: 'https://cdn/reel-from-apify.mp4',
+                  videoDuration: 31,
+                },
+              ]),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            );
+          },
+        },
+      ]);
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/reel/REELX/' }),
+        envWithApify(),
+      );
+      expect(resp.status).toBe(200);
+      expect(apifyCalled).toBe(true);
+      const body = (await resp.json()) as {
+        videoUrl?: string;
+        videoDuration?: number;
+        caption?: string;
+        _debug?: { route?: string; apifyOutcome?: string };
+      };
+      expect(body.videoUrl).toBe('https://cdn/reel-from-apify.mp4');
+      expect(body.videoDuration).toBe(31);
+      expect(body.caption).toBe('apify caption');
+      expect(body._debug?.route).toBe('og_no_video_apify_reel');
+      expect(body._debug?.apifyOutcome).toBe('ok');
+    });
+
+    it('/reel/ URLs without og:video AND without Apify configured: soft-degrade to og-only', async () => {
+      const html = IG_OG_HTML('reel caption', IG_COVER_CAROUSEL, 'X on Instagram');
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url === 'https://www.instagram.com/p/REELY/',
+          response: () =>
+            new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+        },
+      ]);
+      const resp = await handleFetchPost(
+        postJson({ url: 'https://www.instagram.com/reel/REELY/' }),
+        makeEnv(),
+      );
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as { videoUrl?: string | null; _debug?: { route?: string } };
+      expect(body.videoUrl ?? null).toBeNull();
+      expect(body._debug?.route).toBe('og_only_apify_disabled');
     });
 
     it('exposes og:video and og:video:duration on /reel/ responses (so video extraction can fire without Apify)', async () => {
@@ -939,8 +1018,13 @@ describe('handleFetchPost — _debug echo', () => {
     expect(dbg.cacheHit).toBe(false);
   });
 
-  it('og_only — /reel/ short-circuits before Apify', async () => {
-    const html = IG_OG_HTML('cap', IG_COVER_CAROUSEL, 'X on Instagram');
+  it('og_only — /reel/ with og:video short-circuits before Apify', async () => {
+    const html = `<html><head>
+        <meta property="og:title" content="X on Instagram" />
+        <meta property="og:description" content="cap" />
+        <meta property="og:image" content="${IG_COVER_CAROUSEL}" />
+        <meta property="og:video:secure_url" content="https://cdn/v.mp4" />
+      </head></html>`;
     global.fetch = scriptedFetch([
       {
         match: (url) => url === 'https://www.instagram.com/p/R/',
@@ -954,6 +1038,39 @@ describe('handleFetchPost — _debug echo', () => {
     );
     expect(dbg.route).toBe('og_only');
     expect(dbg.apifyOutcome).toBe('not_called');
+  });
+
+  it('og_no_video_apify_reel — /reel/ without og:video falls through to Apify', async () => {
+    const html = IG_OG_HTML('cap', IG_COVER_CAROUSEL, 'X on Instagram');
+    global.fetch = scriptedFetch([
+      {
+        match: (url) => url === 'https://www.instagram.com/p/RNV/',
+        response: () =>
+          new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      },
+      {
+        match: (url) => url.includes('api.apify.com'),
+        response: () =>
+          apifySuccess([
+            {
+              url: 'https://www.instagram.com/p/RNV/',
+              shortCode: 'RNV',
+              caption: 'authoritative',
+              displayUrl: 'https://cdn/c.jpg',
+              ownerUsername: 'a',
+              type: 'Video',
+              videoUrl: 'https://cdn/r.mp4',
+              videoDuration: 21,
+            },
+          ]),
+      },
+    ]);
+    const dbg = await debugOf(
+      postJson({ url: 'https://www.instagram.com/reel/RNV/' }),
+      envWithApify(),
+    );
+    expect(dbg.route).toBe('og_no_video_apify_reel');
+    expect(dbg.apifyOutcome).toBe('ok');
   });
 
   it('og_then_apify_carousel — efg=carousel, Apify success', async () => {
