@@ -243,6 +243,12 @@ function RootLayoutInner() {
             // a cache miss (cold start between fetch and extract sweep, or
             // TTL expired), soft-degrade to captionPlusVision on the cover.
             const meta = takeVideoMetadata(ctx.sourceId);
+            console.log(
+              '[extractor] visual',
+              'id=' + ctx.sourceId,
+              'strategy=videoPlusCaption',
+              meta ? 'cacheHit=yes' : 'cacheHit=no→fallback',
+            );
             if (meta) {
               return videoPlusCaption.extract({
                 kind: 'video',
@@ -259,6 +265,11 @@ function RootLayoutInner() {
             });
             return { ...result, telemetry: { ...result.telemetry, fallbackUsed: true } };
           }
+          console.log(
+            '[extractor] visual',
+            'id=' + ctx.sourceId,
+            'strategy=' + ctx.extractionStrategy,
+          );
           const strategy =
             ctx.extractionStrategy === 'captionPlusVision' ? captionPlusVision : visionDirect;
           return strategy.extract({

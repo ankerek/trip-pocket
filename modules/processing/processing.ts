@@ -212,13 +212,27 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
       // Spread the worker's _debug echo (route, ogOutcome, apifyOutcome,
       // cacheHit) into the firehose line so the dispatch decision is visible
       // alongside the phone-side outcome. See spec §Worker debug echo.
+      // videoUrl/videoDuration also land in the extras so a missing video
+      // path is obvious in the device console (TestFlight debug build).
       urlFetchStage.done({
         imageUrlsCount: result.imageUrls.length,
         captionLength: result.caption.length,
         author: result.author,
         caption: result.caption,
+        videoUrlPresent: !!result.videoUrl,
+        videoDuration: result.videoDuration ?? null,
         ...(result._debug ?? {}),
       });
+      // Direct console line so it's grep-able from `expo start` output even
+      // when the firehose isn't piped to a terminal.
+      console.log(
+        '[processor] /fetch-post',
+        'id=' + id,
+        'platform=' + result.platform,
+        'images=' + result.imageUrls.length,
+        'video=' + (result.videoUrl ? 'yes' : 'no'),
+        result.videoDuration != null ? 'durationSec=' + result.videoDuration : '',
+      );
     } catch (err) {
       const classification =
         err instanceof FetchPostError ? err.classification : { kind: 'retryable' as const };
@@ -309,6 +323,15 @@ export function createProcessor(opts: CreateProcessorOptions): Processor {
         downloadedPath !== null,
         result.caption.length > 0,
         hasVideo,
+      );
+      console.log(
+        '[processor] strategy pick',
+        'id=' + id,
+        'force=' + getForceStrategy(),
+        'hasFile=' + (downloadedPath !== null),
+        'hasCaption=' + (result.caption.length > 0),
+        'hasVideo=' + hasVideo,
+        '→ ' + strategy,
       );
       if (strategy === 'videoPlusCaption' && result.videoUrl) {
         // Hand the (signed, expiring) video URL to the extractor via the
