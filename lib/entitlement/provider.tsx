@@ -20,6 +20,7 @@ import Purchases, {
 import { entitlementStatus, type EntitlementStatus } from './status';
 import { readCachedStatus, writeCachedStatus } from './storage';
 import { writeSharedEntitlementStatus } from './shared-storage';
+import { writeSharedRcUserId } from './shared-user-id';
 import { PLANS, type PlanId } from './plans';
 
 type ResumeHandler = () => void | number | Promise<void | number>;
@@ -166,13 +167,28 @@ export function EntitlementProvider({ children }: { children: ReactNode }) {
           console.debug(prefix);
         else console.log(prefix);
       });
-      if (__DEV__) {
-        // Surface the anon RC user ID so dev can grant entitlements in the
-        // RC dashboard after a reinstall without spelunking the debugger.
-        Purchases.getAppUserID()
-          .then((id) => console.log('[entitlement] app user ID:', id))
-          .catch((err) => console.warn('[entitlement] getAppUserID failed:', err));
-      }
+      // Mirror the RC user id to the App Group so the iOS Share Extension
+      // can send authenticated POST /extract prewarm requests. RC v10's
+      // getAppUserID returns the configured ID (which equals the anon
+      // `$RCAnonymousID:…` until logIn replaces it).
+      Purchases.getAppUserID()
+        .then((id) => {
+          if (__DEV__) console.log('[entitlement] app user ID:', id);
+          try {
+            writeSharedRcUserId(id);
+          } catch (err) {
+            // Share extension falls back to skipping prewarm — no user-
+            // visible damage; the app foreground path still drives
+            // extraction. Surface as a breadcrumb only.
+            Sentry.addBreadcrumb({
+              category: 'entitlement',
+              level: 'warning',
+              message: 'writeSharedRcUserId failed',
+              data: { error: err instanceof Error ? err.message : String(err) },
+            });
+          }
+        })
+        .catch((err) => console.warn('[entitlement] getAppUserID failed:', err));
       try {
         const info = await Purchases.getCustomerInfo();
         if (cancelled) return;
