@@ -98,6 +98,9 @@ const config: ExpoConfig = {
     enrichmentProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/enrich',
     photoProxyUrlBase: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/photo',
     fetchPostProxyUrl: 'https://trip-pocket-extract-proxy.ankerek.workers.dev/fetch-post',
+    // Base URL for the share-time pre-warm POST/GET /extract endpoints.
+    // pollExtract appends /extract or /extract/:contentHash.
+    workerBase: 'https://trip-pocket-extract-proxy.ankerek.workers.dev',
     // Composable extraction pipeline (spec
     // docs/superpowers/specs/2026-05-16-extraction-pipeline-composability-design.md
     // + the video follow-up spec 2026-05-16-video-place-extraction-design.md).

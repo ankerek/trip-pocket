@@ -5,6 +5,7 @@ import { ingestPendingImports } from './ingest';
 import { createImportFs } from './importFsRuntime';
 import { getOrCreateOwnerId } from './owner';
 import { getStorageDirectory } from './paths';
+import { pollExtractForUrlSources } from './pollExtractForUrlSources';
 
 let inFlight: Promise<void> | null = null;
 
@@ -28,12 +29,20 @@ export function runForegroundIngest(db: Database): Promise<void> {
 
   inFlight = (async () => {
     try {
+      const ownerId = getOrCreateOwnerId();
       await ingestPendingImports(db, {
-        ownerId: getOrCreateOwnerId(),
+        ownerId,
         storageDir: getStorageDirectory().uri,
         fs: createImportFs(),
       });
-      await getProcessor()?.runUrlFetchSweep();
+      // New share-time pre-warm path for URL sources: worker owns
+      // fetch-post + OCR + extract. Cache hit returns done immediately;
+      // miss POSTs once and polls. Replaces runUrlFetchSweep for
+      // kind='url' sources (the processor's URL handling will be
+      // removed in a follow-up cleanup).
+      await pollExtractForUrlSources(db, ownerId);
+      // Image sources still flow through the legacy processor + extractor
+      // (v2 scope: lift them onto the worker too).
       await getProcessor()?.runOcrSweep();
       await getExtractor()?.runExtractionSweep();
     } finally {
