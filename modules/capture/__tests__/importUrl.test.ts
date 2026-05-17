@@ -80,8 +80,13 @@ describe('importUrl', () => {
     _resetProcessorForTests();
   });
 
-  it('inserts a kind="url" source row and enqueues URL fetch', async () => {
+  it('inserts a kind="url" source row in pending state', async () => {
     const db = await freshDb();
+    // The legacy processor.enqueueUrlFetch call has been removed —
+    // URL sources are now driven by pollExtractForUrlSources, which
+    // runs in runForegroundIngest after ingestPendingImports. The fake
+    // processor stays wired so a hidden re-introduction of the call
+    // would still be observable.
     const { processor, enqueueUrlFetch } = makeFakeProcessor();
     provideProcessor(processor);
 
@@ -104,7 +109,7 @@ describe('importUrl', () => {
       extractionStatus: 'pending',
       caption: null,
     });
-    expect(enqueueUrlFetch).toHaveBeenCalledTimes(1);
+    expect(enqueueUrlFetch).not.toHaveBeenCalled();
   });
 
   it('treats the same post shared twice (different tracking params) as a duplicate', async () => {

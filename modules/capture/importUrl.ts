@@ -20,7 +20,6 @@ import * as Crypto from 'expo-crypto';
 import type { Database } from '@/modules/storage/db';
 import { insertSource, type SourcePlatform } from '@/modules/storage/sources';
 import { notifyChange } from '@/modules/storage/live-query';
-import { getProcessor } from '@/modules/processing';
 import { startStage } from '@/modules/pipeline-log';
 import { sha256OfBytes } from './importFsRuntime';
 
@@ -91,10 +90,10 @@ export async function importUrl(db: Database, input: ImportUrlInput): Promise<Im
   notifyChange('sources');
   if (input.suggestedTripId) notifyChange('trips');
 
-  // Kick off URL fetch in the background. Non-blocking; the share UI
-  // dismisses immediately. No-op when no processor is provisioned
-  // (Jest, share extension, etc.).
-  getProcessor()?.enqueueUrlFetch(sourceId);
+  // URL sources are now driven by the share-time pre-warm + foreground
+  // poll path (modules/capture/pollExtractForUrlSources). The legacy
+  // processor.enqueueUrlFetch call has been removed to prevent the two
+  // paths from racing on the same source.
 
   return { status: 'imported', sourceId };
 }
