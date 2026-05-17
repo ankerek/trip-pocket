@@ -116,6 +116,74 @@ function errorResponse(
 
 // --- Public handler ------------------------------------------------------
 
+export class RunFetchPostError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly status: number,
+  ) {
+    super(code);
+    this.name = 'RunFetchPostError';
+  }
+}
+
+/**
+ * Pure (no Request, no Response) wrapper around the fetcher chain. Given a
+ * raw URL string, runs the IG/TikTok dispatch and returns the populated
+ * FetchPostResponse alongside the cacheKind. The HTTP wrapper uses cacheKind
+ * to set Cache-Control; the orchestrator (src/orchestrator.ts) ignores it
+ * (it caches in EXTRACT_STATE KV instead). Throws RunFetchPostError on any
+ * upstream failure.
+ */
+export async function runFetchPost(
+  rawUrl: string,
+  env: Env,
+): Promise<{ result: FetchPostResponse; cacheKind: 'og' | 'apify' }> {
+  let target: URL;
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    throw new RunFetchPostError('unsupported-url', 400);
+  }
+  const platform = detectPlatform(target);
+  if (!platform) throw new RunFetchPostError('unsupported-url', 400);
+
+  try {
+    const chain = await runFetcherChain(FETCHERS, target, platform, { env });
+    const result = chain.result as FetchPostResponse;
+    // cacheHit stays `false` while the worker uses Cache-Control headers only
+    // (CF edge caches the response but the worker doesn't re-run on hits, so
+    // there is no per-request signal here). Promoting cacheHit to `true` would
+    // require an explicit `caches.default.match()` integration — out of scope
+    // for v1 of the debug echo.
+    result._debug = {
+      ...(chain.dispatch as Omit<FetchPostDebug, 'cacheHit'>),
+      cacheHit: false,
+    };
+    // TikTok chain doesn't set cacheKind (no Apify path); default to 'og'.
+    const cacheKind: 'og' | 'apify' = chain.cacheKind === 'apify' ? 'apify' : 'og';
+    return { result, cacheKind };
+  } catch (err) {
+    if (err instanceof UpstreamError) {
+      // 429 from upstream IG/TikTok surfaces as a 502 to the client (spec:
+      // upstream rate-limits are transient and shouldn't be treated as the
+      // client's own quota). Other status codes pass through.
+      throw new RunFetchPostError(err.code, err.status === 429 ? 502 : err.status);
+    }
+    if (err instanceof AllFetchersFailedError) {
+      for (let i = err.attempts.length - 1; i >= 0; i--) {
+        const a = err.attempts[i];
+        if (a.outcome.kind === 'failed' && a.outcome.error instanceof UpstreamError) {
+          const u = a.outcome.error;
+          throw new RunFetchPostError(u.code, u.status === 429 ? 502 : u.status);
+        }
+      }
+      throw new RunFetchPostError('fetch-failed', 502);
+    }
+    console.error('extract-proxy/fetch-post: unexpected', String(err));
+    throw new RunFetchPostError('fetch-failed', 502);
+  }
+}
+
 export async function handleFetchPost(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return errorResponse('method-not-allowed', 405);
 
@@ -140,36 +208,21 @@ export async function handleFetchPost(request: Request, env: Env): Promise<Respo
   const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
   if (!rateOk) return errorResponse('rate-limited', 429, { 'retry-after': '60' });
 
-  let target: URL;
+  let out: { result: FetchPostResponse; cacheKind: 'og' | 'apify' };
   try {
-    target = new URL(parsed.data.url);
-  } catch {
-    return errorResponse('unsupported-url', 400);
-  }
-  const platform = detectPlatform(target);
-  if (!platform) return errorResponse('unsupported-url', 400);
-
-  try {
-    const chain = await runFetcherChain(FETCHERS, target, platform, { env });
-    const result = chain.result as FetchPostResponse;
-    // cacheHit stays `false` while the worker uses Cache-Control headers only
-    // (CF edge caches the response but the worker doesn't re-run on hits, so
-    // there is no per-request signal here). Promoting cacheHit to `true` would
-    // require an explicit `caches.default.match()` integration — out of scope
-    // for v1 of the debug echo.
-    result._debug = {
-      ...(chain.dispatch as Omit<FetchPostDebug, 'cacheHit'>),
-      cacheHit: false,
-    };
-    // Spec: 7d cache when Apify fired, 1d for og-only. Both only on success;
-    // errors get Cache-Control: no-store (handled in fetchErrorToResponse).
-    const sMaxAge = chain.cacheKind === 'apify' ? 604800 : 86400;
-    return jsonResponse(result, {
-      headers: { 'cache-control': `public, s-maxage=${sMaxAge}` },
-    });
+    out = await runFetchPost(parsed.data.url, env);
   } catch (err) {
-    return fetchErrorToResponse(err);
+    if (err instanceof RunFetchPostError) {
+      return errorResponse(err.code, err.status);
+    }
+    throw err;
   }
+  // Spec: 7d cache when Apify fired, 1d for og-only. Both only on success;
+  // errors get Cache-Control: no-store (set by errorResponse above).
+  const sMaxAge = out.cacheKind === 'apify' ? 604800 : 86400;
+  return jsonResponse(out.result, {
+    headers: { 'cache-control': `public, s-maxage=${sMaxAge}` },
+  });
 }
 
 // --- Fetcher chain wiring ------------------------------------------------
@@ -934,22 +987,3 @@ async function fetchHtml(url: string, userAgent: string): Promise<string> {
   return resp.text();
 }
 
-function fetchErrorToResponse(err: unknown): Response {
-  if (err instanceof UpstreamError) {
-    return errorResponse(err.code, err.status === 429 ? 502 : err.status);
-  }
-  if (err instanceof AllFetchersFailedError) {
-    // Find the most recent applicable-but-failed attempt to derive a
-    // representative HTTP code. Today the chain has one fetcher per platform,
-    // so this is always the matching platform's failure.
-    for (let i = err.attempts.length - 1; i >= 0; i--) {
-      const a = err.attempts[i];
-      if (a.outcome.kind === 'failed' && a.outcome.error instanceof UpstreamError) {
-        return fetchErrorToResponse(a.outcome.error);
-      }
-    }
-    return errorResponse('fetch-failed', 502);
-  }
-  console.error('extract-proxy/fetch-post: unexpected', String(err));
-  return errorResponse('fetch-failed', 502);
-}
