@@ -66,6 +66,7 @@ const config: ExpoConfig = {
       },
     ],
     './plugins/with-share-extension',
+    './plugins/with-prewarm-session',
     './plugins/with-resource-bundle-signing-fix',
     [
       'expo-image-picker',

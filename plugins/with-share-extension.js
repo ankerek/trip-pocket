@@ -34,6 +34,11 @@ function withExtensionTarget(config) {
         `${TARGET_NAME}/TripReader.swift`,
         `${TARGET_NAME}/PendingImportWriter.swift`,
         `${TARGET_NAME}/EntitlementReader.swift`,
+        // Share-time pre-warm. See docs/superpowers/plans/
+        // 2026-05-17-share-time-prewarm.md.
+        `${TARGET_NAME}/Canonicalize.swift`,
+        `${TARGET_NAME}/ShareRcUserIdReader.swift`,
+        `${TARGET_NAME}/PrewarmRequest.swift`,
       ],
       'PBXSourcesBuildPhase',
       'Sources',

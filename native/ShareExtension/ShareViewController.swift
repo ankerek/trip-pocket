@@ -120,6 +120,14 @@ class ShareViewController: UIViewController {
             }
             do {
                 try PendingImportWriter().write(url: url.absoluteString, suggestedTripId: tripId)
+                // Kick off the share-time pre-warm so the worker pipeline
+                // (Apify + Gemini) runs while the user is still tapping
+                // back from the share sheet. Fire-and-forget; success
+                // signal flows through `acknowledgeAndComplete` regardless.
+                let scheduled = Prewarm.fire(for: url.absoluteString)
+                if !scheduled {
+                    log.info("Prewarm skipped (rc id missing or body write failed) — app foreground sweep will drive extraction")
+                }
                 self.acknowledgeAndComplete(destinationName: destinationName)
             } catch {
                 log.error("handleUrlAttachment: write failed: \(String(describing: error), privacy: .public)")
