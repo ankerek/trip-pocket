@@ -1,0 +1,11 @@
+[
+  ["https://WWW.Instagram.com/p/ABC/?igshid=1#frag", "https://instagram.com/p/ABC"],
+  ["https://www.instagram.com/reel/XYZ/", "https://instagram.com/reel/XYZ"],
+  ["https://m.instagram.com/p/ABC/", "https://instagram.com/p/ABC"],
+  ["https://instagram.com/p/ABC/", "https://instagram.com/p/ABC"],
+  ["https://instagram.com/p/ABC/?utm_source=feed&utm_medium=ig", "https://instagram.com/p/ABC"],
+  ["https://vm.tiktok.com/abc", "https://vm.tiktok.com/abc"],
+  ["https://vt.tiktok.com/xyz", "https://vt.tiktok.com/xyz"],
+  ["https://www.tiktok.com/@user/video/123?si=abc", "https://tiktok.com/@user/video/123"],
+  ["https://instagram.com/", "https://instagram.com/"]
+]
