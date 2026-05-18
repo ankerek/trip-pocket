@@ -149,6 +149,40 @@ describe('orchestrate', () => {
     expect(final.error).toBe('extract-failed');
   });
 
+  it('skips video mode for TikTok even when videoUrl is present', async () => {
+    // TikTok's CDN blocks Cloudflare Workers' egress IPs, so the video
+    // fetch is a guaranteed-fail roundtrip. The orchestrator should jump
+    // straight to vision (cover + caption) and never attempt mode='video'.
+    const env = makeEnv();
+    let observedMode: string | null = null;
+    let videoCalled = false;
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.tiktok.com/@u/video/123' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({
+            platform: 'tiktok',
+            permalink: 'https://www.tiktok.com/@u/video/123',
+            videoUrl: 'https://tiktokcdn/v.mp4',
+            videoDuration: 12,
+            imageUrls: ['https://cdn/cover.jpg'],
+          }),
+          cacheKind: 'og',
+        }),
+        runExtract: async (body) => {
+          if (body.mode === 'video') videoCalled = true;
+          observedMode = body.mode;
+          return { places: [], model: 'm' };
+        },
+        fetchImageBase64: async () => 'b64',
+      },
+    );
+    expect(videoCalled).toBe(false);
+    expect(observedMode).toBe('vision');
+  });
+
   it('chooses video mode when fetch returns videoUrl', async () => {
     const env = makeEnv();
     let observedMode: string | null = null;

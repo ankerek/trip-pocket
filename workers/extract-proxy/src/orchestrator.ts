@@ -201,7 +201,15 @@ async function tryExtractWithFallback(
 ): Promise<{ places: ExtractedPlace[]; model: string }> {
   const errors: string[] = [];
 
-  if (fetched.videoUrl) {
+  // Skip video mode for TikTok: their CDN blocks Cloudflare Workers' egress
+  // IPs (residential-IP enforcement), so every video-bytes fetch 403s. We
+  // still get the caption + cover via rehydration parsing on the page HTML
+  // (which IS reachable), and vision mode extracts places from those just
+  // fine. Skipping saves ~500ms–1s of guaranteed-fail HTTP roundtrip per
+  // TikTok share. Revert this guard if TikTok ever relaxes their CDN
+  // policy (re-shares will start succeeding via the next-best path
+  // regardless, so this isn't urgent to discover).
+  if (fetched.videoUrl && fetched.platform !== 'tiktok') {
     try {
       return await runExtract(
         {
