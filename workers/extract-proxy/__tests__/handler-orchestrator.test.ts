@@ -27,6 +27,22 @@ function makeEnv(kv = makeKv()): Env {
     RATE_LIMIT: { limit: async () => ({ success: true }) } as Env['RATE_LIMIT'],
     RC_REST_API_KEY: 'rc',
     EXTRACT_STATE: kv as unknown as KVNamespace,
+    // No-op queue stub. These tests assert handleExtractPost's HTTP
+    // shape and only care that `ctx.waitUntil` was called once with the
+    // pipeline kickoff promise — they don't drain that promise, so the
+    // queue.send inside kickOffPipeline must not throw or the rejection
+    // tears down the test worker.
+    EXTRACT_QUEUE: {
+      async send() {
+        return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+      },
+      async sendBatch() {
+        return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+      },
+      async metrics() {
+        return { backlogCount: 0, backlogBytes: 0 };
+      },
+    } as Env['EXTRACT_QUEUE'],
   };
 }
 

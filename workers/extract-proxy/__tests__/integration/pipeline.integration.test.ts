@@ -139,8 +139,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env, kv } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env, kv } = makeEnv({ ctx });
 
     const postResp = await handleExtractPost(
       postExtract({ contentHash: HASH, kind: 'url', url }),
@@ -278,8 +278,8 @@ describe('extract-proxy pipeline integration', () => {
       });
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -370,8 +370,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -464,8 +464,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -511,8 +511,8 @@ describe('extract-proxy pipeline integration', () => {
       .on(GEMINI_GATEWAY_PREFIX, () => new Response('upstream busy', { status: 503 }));
     restoreFetch = mock.install();
 
-    const { env, kv } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env, kv } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -596,8 +596,8 @@ describe('extract-proxy pipeline integration', () => {
 
     // apify: false → APIFY_TOKEN unset → fetchInstagram takes the
     // og_only_apify_disabled branch instead of skipping og.
-    const { env } = makeEnv({ apify: false });
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ apify: false, ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -679,8 +679,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -753,8 +753,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -800,8 +800,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env, kv } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env, kv } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -838,8 +838,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -935,8 +935,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 
@@ -1016,8 +1016,8 @@ describe('extract-proxy pipeline integration', () => {
       );
     restoreFetch = mock.install();
 
-    const { env } = makeEnv();
     const ctx = makeAwaitableCtx();
+    const { env } = makeEnv({ ctx });
     await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url', url }), env, ctx);
     await ctx.settle();
 

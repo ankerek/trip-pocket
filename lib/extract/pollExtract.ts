@@ -66,15 +66,26 @@ export type PollExtractOptions = {
   triggerOnMissing?: boolean;
   /** Required when triggerOnMissing is true. */
   url?: string;
+  /**
+   * Fires once, the first time the poll observes `status === 'partial'`.
+   * Lets callers persist the early `coverUrl` + `caption` to the local
+   * source row so the triage card stops showing a blank placeholder while
+   * the extract + enrich stages are still running. Awaited inline — keep
+   * the handler short or fire-and-forget the slow parts yourself; a slow
+   * handler will postpone the next GET by its own duration.
+   */
+  onPartial?: (state: Extract<ExtractState, { status: 'partial' }>) => Promise<void> | void;
 };
 
 /**
- * Mirrors the orchestrator's STALE_PENDING_MS. If a pending/partial state
- * in KV is older than this, the worker isolate that owned the pipeline
- * is presumed dead (Workers Free `ctx.waitUntil` budget exhausted, etc.)
- * and a new POST will trigger the orchestrator's stale-pending re-run.
+ * Mirrors the orchestrator's STALE_PENDING_MS (workers/extract-proxy/src/
+ * orchestrator.ts). If a pending/partial state in KV is older than this,
+ * the worker isolate that owned the pipeline is presumed dead (waitUntil
+ * budget exhausted, or orchestrate returned early after a transient Gemini
+ * failure) and a new POST will trigger the orchestrator's stale-pending
+ * re-run. Keep these two constants in lockstep.
  */
-const STALE_PENDING_MS = 5 * 60_000;
+const STALE_PENDING_MS = 90 * 1000;
 
 async function postExtract(opts: PollExtractOptions): Promise<void> {
   if (!opts.url) return;
@@ -103,6 +114,7 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
   const getUrl = `${opts.workerBase}/extract/${opts.contentHash}`;
   let missingTriggered = false;
   let staleTriggered = false;
+  let partialFired = false;
   const start = Date.now();
 
   // Trace the share→extract lifecycle as Sentry breadcrumbs. When something
@@ -156,6 +168,27 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
     if (body.status === 'done') return finish(opts.contentHash, body, start);
     if (body.status === 'error') return finish(opts.contentHash, body, start);
     if (body.status === 'pending' || body.status === 'partial') {
+      // First partial transition: notify caller so it can persist the
+      // early coverUrl + caption before extract/enrich finish. Once-only
+      // (later partial polls won't re-fire) so the caller can write
+      // without idempotency checks. Caller errors are caught — a failed
+      // cover download must not break the poll loop itself.
+      if (body.status === 'partial' && !partialFired && opts.onPartial) {
+        partialFired = true;
+        try {
+          await opts.onPartial(body);
+        } catch (err) {
+          Sentry.addBreadcrumb({
+            category: 'extract.poll',
+            level: 'warning',
+            message: 'onPartial handler threw',
+            data: {
+              contentHash: opts.contentHash,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
+      }
       // Stale-state recovery: if the worker wrote this state more than
       // STALE_PENDING_MS ago, the pipeline isolate is presumed dead.
       // POST /extract once to wake the orchestrator's stale-pending

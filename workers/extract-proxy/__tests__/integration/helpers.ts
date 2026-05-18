@@ -3,6 +3,9 @@
 // calls (extract vs bulk-blurb) by inspecting the request body.
 
 import type { Env } from '../../src/index';
+import type { ExtractJobMessage } from '../../src/orchestrator-schema';
+import { routeStage, TransientExtractError } from '../../src/orchestrator';
+import type { WaitUntilCtx } from '../../src/video';
 import type { RouteHandler } from './network-mock';
 import { makeKv } from './network-mock';
 
@@ -10,7 +13,22 @@ export const HASH = 'a'.repeat(64);
 export const HASH_TWO = 'b'.repeat(64);
 export const HASH_THREE = 'c'.repeat(64);
 
-export function makeEnv(opts: { apify?: boolean; kv?: ReturnType<typeof makeKv> } = {}): {
+/**
+ * Construct the worker Env shape for integration tests. The
+ * `EXTRACT_QUEUE` binding is a stub: send() dispatches each message
+ * back through `routeStage` via the supplied awaitable `ctx`, so the
+ * full fetch-post → extract → enrich pipeline runs to completion when
+ * the test awaits `ctx.settle()`. Transient throws (Gemini 503-style)
+ * are swallowed — they'd retry in production; in tests the after-state
+ * in KV reflects the partial failure.
+ *
+ * Pass the awaitable ctx (from `makeAwaitableCtx`) so each enqueued
+ * stage is scheduled via `ctx.waitUntil`, matching the production flow
+ * where each stage is its own Worker invocation.
+ */
+export function makeEnv(
+  opts: { apify?: boolean; kv?: ReturnType<typeof makeKv>; ctx?: WaitUntilCtx } = {},
+): {
   env: Env;
   kv: ReturnType<typeof makeKv>;
 } {
@@ -24,12 +42,58 @@ export function makeEnv(opts: { apify?: boolean; kv?: ReturnType<typeof makeKv> 
     RATE_LIMIT: { limit: async () => ({ success: true }) } as Env['RATE_LIMIT'],
     RC_REST_API_KEY: 'rc',
     EXTRACT_STATE: kv as unknown as KVNamespace,
+    EXTRACT_QUEUE: makeStubQueue(opts.ctx),
   };
+  // The stub queue's send() routes back through routeStage(msg, env, ctx).
+  // env was captured at queue-construction time and needs to see itself
+  // (so the queue's send is reachable to the next stage). Patch envWithSelf
+  // after env is constructed.
+  (env.EXTRACT_QUEUE as ReturnType<typeof makeStubQueue>).bindEnv(env);
   if (opts.apify ?? true) {
     env.APIFY_TOKEN = 'apify-token';
     env.APIFY_ACTOR_ID = 'apify~instagram-post-scraper';
   }
   return { env, kv };
+}
+
+function makeStubQueue(ctx: WaitUntilCtx | undefined): Env['EXTRACT_QUEUE'] & {
+  bindEnv(env: Env): void;
+} {
+  let env: Env | null = null;
+  const effectiveCtx: WaitUntilCtx = ctx ?? { waitUntil: () => {} };
+  const dispatch = async (body: ExtractJobMessage) => {
+    if (!env) throw new Error('stub queue not bound to env');
+    try {
+      await routeStage(body, env, effectiveCtx);
+    } catch (err) {
+      // Mimic CF Queues: transient throws auto-retry (eventually DLQ).
+      // For tests we just stop — the KV after-state shows the partial.
+      if (!(err instanceof TransientExtractError)) throw err;
+    }
+  };
+  const stub = {
+    bindEnv(e: Env) {
+      env = e;
+    },
+    async send(body: ExtractJobMessage) {
+      // Schedule the dispatch via ctx.waitUntil so settled() drains the
+      // whole pipeline in one drain pass — matching production where
+      // each stage runs as its own invocation rather than blocking the
+      // POST response.
+      effectiveCtx.waitUntil(dispatch(body));
+      return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+    },
+    async sendBatch(messages: Iterable<{ body: ExtractJobMessage }>) {
+      for (const m of messages) {
+        effectiveCtx.waitUntil(dispatch(m.body));
+      }
+      return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+    },
+    async metrics() {
+      return { backlogCount: 0, backlogBytes: 0 };
+    },
+  } satisfies Env['EXTRACT_QUEUE'] & { bindEnv(env: Env): void };
+  return stub;
 }
 
 /** Gateway URL prefix the worker constructs for any Gemini call (extract + blurb). */

@@ -27,10 +27,7 @@ const POLL_CONCURRENCY = 3;
  * Replaces the legacy url_fetch → ocr → extract sweep for kind='url' sources
  * — the worker owns those stages now.
  */
-export async function pollExtractForUrlSources(
-  db: Database,
-  ownerId: string,
-): Promise<void> {
+export async function pollExtractForUrlSources(db: Database, ownerId: string): Promise<void> {
   const rows = await db.getAllAsync<{
     id: string;
     content_hash: string;
@@ -85,6 +82,12 @@ async function pollAndApplyOne(
       delayMs: POLL_DELAY_MS,
       triggerOnMissing: true,
       url: row.url,
+      // Triage card shows a blank placeholder for kind='url' rows until
+      // file_path lands. Legacy path wrote file_path at url_fetch
+      // completion (fast, ahead of extract); the worker-driven path
+      // otherwise only writes at done (~30–60s for video). Hook the
+      // worker's `partial` state to apply caption + cover bytes early.
+      onPartial: (state) => applyPartial(db, row.id, state),
     });
   } catch (err) {
     console.warn('[poll-extract] failed for', row.id, err);
@@ -124,6 +127,47 @@ async function pollAndApplyOne(
 }
 
 /**
+ * Apply the worker's `partial` state to the local source row: download
+ * the cover bytes (if any) and write caption + file_path. COALESCE keeps
+ * existing values when a column is already populated — important for the
+ * follow-on `applyExtractDone` call, which COALESCEs again at the same
+ * columns and must not overwrite the early-applied cover when the
+ * `done` payload also carries it.
+ *
+ * Errors are caught and logged: a CDN hiccup on the cover should not
+ * break the poll loop or sink the source's extraction.
+ */
+async function applyPartial(
+  db: Database,
+  sourceId: string,
+  state: { caption?: string; coverUrl?: string },
+): Promise<void> {
+  let coverPath: string | null = null;
+  if (state.coverUrl) {
+    try {
+      coverPath = await downloadCoverImage(state.coverUrl);
+    } catch (err) {
+      console.warn('[poll-extract] partial cover download failed for', sourceId, err);
+    }
+  }
+  // Skip the UPDATE if there's nothing to write — keeps the SQL log clean
+  // and avoids a no-op live-query refresh.
+  if (coverPath === null && !state.caption) return;
+  await db.runAsync(
+    `UPDATE sources
+        SET file_path = COALESCE(?, file_path),
+            caption = COALESCE(?, caption),
+            updated_at = ?
+      WHERE id = ?`,
+    coverPath,
+    state.caption ?? null,
+    new Date().toISOString(),
+    sourceId,
+  );
+  notifyChange('sources');
+}
+
+/**
  * Mark a URL source as failed when the worker orchestrator reports a
  * terminal error. The legacy pipeline tracked per-source retry budgets
  * and flipped extraction_status='failed' after exhausting them; the
@@ -131,11 +175,7 @@ async function pollAndApplyOne(
  * we give up here too." A user-facing retry is a manual re-share, same
  * as the legacy path.
  */
-async function markSourceFailed(
-  db: Database,
-  sourceId: string,
-  reason: string,
-): Promise<void> {
+async function markSourceFailed(db: Database, sourceId: string, reason: string): Promise<void> {
   console.warn('[poll-extract] source failed', sourceId, reason);
   await db.runAsync(
     `UPDATE sources

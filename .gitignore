@@ -67,3 +67,6 @@ app-example
 expo-env.d.ts
 
 .firecrawl
+
+# Cloudflare Workers local state
+workers/extract-proxy/.wrangler/

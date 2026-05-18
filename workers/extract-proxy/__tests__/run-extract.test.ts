@@ -455,3 +455,122 @@ describe('RunExtractError', () => {
     expect(err.retryAfter).toBe('42');
   });
 });
+
+describe('runExtract — video mode Files-API cleanup ordering', () => {
+  let original: typeof fetch;
+  beforeEach(() => {
+    original = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = original;
+  });
+
+  // Regression for a 503-then-403 retry failure observed in prod:
+  //  - buildVideoPart used to call ctx.waitUntil(deleteFile(...)) BEFORE
+  //    returning, which fired the Files-API DELETE in parallel with
+  //    runExtract's generateContent call.
+  //  - When Gemini returned a transient 503, the in-call retry slept 1s
+  //    and re-issued generateContent with the same file_uri; by then the
+  //    DELETE had completed and Gemini answered 403 PERMISSION_DENIED.
+  // The fix moves DELETE scheduling to runExtract, AFTER the retry loop.
+  // This test enforces that ordering: at the time the second
+  // generateContent call fires, no DELETE has been issued.
+  it('defers Files-API DELETE until after the 503-retry succeeds', async () => {
+    // Force the Files-API transport by returning a body at exactly the
+    // cutoff. Using a real Uint8Array (not a stream) keeps the test fast.
+    const big = new Uint8Array(18 * 1024 * 1024);
+
+    const fileName = 'files/4qad0tru4zgm';
+    const fileUri = 'https://generativelanguage.googleapis.com/v1beta/files/4qad0tru4zgm';
+    const events: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+
+      // CDN
+      if (url.startsWith('https://cdn/')) {
+        events.push('cdn-fetch');
+        return new Response(big, { status: 200 });
+      }
+      // Files API upload start
+      if (url.includes('/upload/v1beta/files') && method === 'POST') {
+        events.push('upload-start');
+        return new Response('', {
+          status: 200,
+          headers: { 'x-goog-upload-url': 'https://upload/session/Z' },
+        });
+      }
+      // Files API upload finalize
+      if (url.startsWith('https://upload/session/Z') && method === 'POST') {
+        events.push('upload-finalize');
+        return new Response(
+          JSON.stringify({
+            file: { name: fileName, uri: fileUri, mimeType: 'video/mp4', state: 'ACTIVE' },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      // Files API DELETE — this must NOT happen between the two gen calls.
+      if (url.includes(fileName) && method === 'DELETE') {
+        events.push('file-delete');
+        return new Response('', { status: 200 });
+      }
+      // Gemini generateContent through AI Gateway
+      if (url.includes('/google-ai-studio/') && method === 'POST') {
+        const callIdx = events.filter((e) => e === 'gen-call').length;
+        events.push('gen-call');
+        if (callIdx === 0) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 503,
+                message: 'This model is currently experiencing high demand.',
+                status: 'UNAVAILABLE',
+              },
+            }),
+            { status: 503, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return geminiOk([{ name: 'A', city: 'B', category: 'food' }]);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const scheduled: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil(p: Promise<unknown>) {
+        scheduled.push(p);
+      },
+    };
+
+    const result = await runExtract(
+      {
+        mode: 'video',
+        video: { url: 'https://cdn/reel.mp4' },
+        caption: '',
+      },
+      makeEnv(),
+      ctx,
+    );
+
+    expect(result.places).toHaveLength(1);
+
+    // Synchronously after runExtract resolves, both gen calls must have
+    // fired BEFORE the DELETE was issued — even though the DELETE was
+    // scheduled via ctx.waitUntil, which kicks off the promise immediately.
+    const genCalls = events.filter((e) => e === 'gen-call').length;
+    expect(genCalls).toBe(2);
+
+    const firstDelete = events.indexOf('file-delete');
+    const lastGen = events.lastIndexOf('gen-call');
+    if (firstDelete !== -1) {
+      // If the DELETE has already happened, it must be AFTER both gen calls.
+      expect(firstDelete).toBeGreaterThan(lastGen);
+    }
+
+    // Flush the cleanup promise the way the runtime would.
+    await Promise.all(scheduled);
+    expect(events).toContain('file-delete');
+  });
+});

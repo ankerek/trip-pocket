@@ -73,6 +73,20 @@ export type BuildVideoPartResult = {
   transport: VideoTransport;
   /** Bytes downloaded from the CDN. Useful for logs. */
   bytes: number;
+  /**
+   * Files API cleanup. For `files_api` transport this is a thunk the caller
+   * MUST schedule (via `ctx.waitUntil`) AFTER the `generateContent` call —
+   * including any in-call retry — has finished. For `inline` transport this
+   * is `null` (nothing to clean up).
+   *
+   * Why the caller owns scheduling: a Files-API DELETE issued in parallel
+   * with `generateContent` (e.g. inside `buildVideoPart` via waitUntil) races
+   * the retry — when Gemini returns a transient 503 and the retry fires
+   * 1 s later, the file is already gone and the retry hits 403
+   * PERMISSION_DENIED. Returning the cleanup to the caller lets us delete
+   * only after the consumer of `file_uri` is done with it.
+   */
+  cleanup: (() => Promise<void>) | null;
 };
 
 /**
@@ -103,15 +117,20 @@ export type BuildVideoPartInput = {
 
 /**
  * Fetch a video URL and return the Gemini `parts` entry referencing it
- * (inline or via Files API). Side-effect: Files API uploads schedule a
- * DELETE through `ctx.waitUntil` so the response to the phone is not
- * blocked on cleanup.
+ * (inline or via Files API). For Files-API uploads, the result carries a
+ * `cleanup` thunk the caller MUST schedule (via `ctx.waitUntil`) AFTER
+ * `generateContent` — and its in-call retry — has finished, so the DELETE
+ * does not race the retry.
  */
 export async function buildVideoPart(
   input: BuildVideoPartInput,
   env: VideoEnv,
-  ctx: WaitUntilCtx,
+  _ctx: WaitUntilCtx,
 ): Promise<BuildVideoPartResult> {
+  // ctx is kept on the signature for API stability; cleanup scheduling now
+  // belongs to the caller (see BuildVideoPartResult.cleanup).
+  void _ctx;
+
   if (!env.GEMINI_API_KEY) {
     throw new VideoError('video-misconfigured', 500);
   }
@@ -131,15 +150,16 @@ export async function buildVideoPart(
       part: { inline_data: { mime_type: 'video/mp4', data: bytesToBase64(bytes) } },
       transport: 'inline',
       bytes: bytes.length,
+      cleanup: null,
     };
   }
 
   const file = await uploadViaFilesApi(bytes, env);
-  ctx.waitUntil(deleteFile(file.name, env));
   return {
     part: { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
     transport: 'files_api',
     bytes: bytes.length,
+    cleanup: () => deleteFile(file.name, env),
   };
 }
 

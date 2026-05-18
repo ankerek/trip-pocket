@@ -112,11 +112,13 @@ describe('buildVideoPart — inline transport', () => {
     expect(inline.inline_data?.mime_type).toBe('video/mp4');
     expect(inline.inline_data?.data).toBe(bytesToBase64(small));
     expect(ctx.promises).toHaveLength(0);
+    // Inline transport never touches the Files API → nothing to clean up.
+    expect(out.cleanup).toBeNull();
   });
 });
 
 describe('buildVideoPart — Files API transport', () => {
-  it('uploads, polls until ACTIVE, returns file_data, and schedules cleanup via ctx.waitUntil', async () => {
+  it('uploads, polls until ACTIVE, returns file_data, and returns a cleanup thunk', async () => {
     // Construct a body ≥ INLINE_TRANSPORT_CUTOFF_BYTES to force the Files
     // API path. Real videos are far larger; a single allocation is enough
     // to trip the cutoff for the test.
@@ -174,12 +176,18 @@ describe('buildVideoPart — Files API transport', () => {
     expect(fd.file_data?.mime_type).toBe('video/mp4');
     expect(fd.file_data?.file_uri).toBe(fileUri);
 
-    // Cleanup is scheduled via ctx.waitUntil — exercise it to confirm
-    // it actually completes without throwing.
-    expect(ctx.promises).toHaveLength(1);
-    await Promise.all(ctx.promises);
-    const methods = calls.map((c) => c.method);
-    expect(methods).toContain('DELETE');
+    // Cleanup is returned to the caller (runExtract) rather than scheduled
+    // inside buildVideoPart. Scheduling here would race the generateContent
+    // retry: a 503-then-1s-delayed retry would 403 on the now-deleted
+    // file_uri. Verify (a) no waitUntil was used, and (b) the returned thunk
+    // does the DELETE when invoked.
+    expect(ctx.promises).toHaveLength(0);
+    expect(typeof out.cleanup).toBe('function');
+    const beforeCleanupMethods = calls.map((c) => c.method);
+    expect(beforeCleanupMethods).not.toContain('DELETE');
+    await out.cleanup!();
+    const afterCleanupMethods = calls.map((c) => c.method);
+    expect(afterCleanupMethods).toContain('DELETE');
   });
 
   it('throws files-api-failed when the file state goes to FAILED', async () => {

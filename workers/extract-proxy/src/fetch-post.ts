@@ -127,6 +127,37 @@ export class RunFetchPostError extends Error {
 }
 
 /**
+ * Signals a transient upstream failure (Apify actor timed out, network blip,
+ * rate-limit hit) where retrying the same request likely succeeds. The
+ * orchestrator catches this and re-throws so the Cloudflare Queue runtime
+ * retries the fetch-post stage with backoff instead of writing a terminal
+ * `error` row that flips the source to "failed" in the client.
+ *
+ * Extends RunFetchPostError so the legacy HTTP path (`handleFetchPost`) still
+ * surfaces a 502 — the orchestrator is the only caller that branches on the
+ * concrete subtype.
+ */
+export class TransientFetchError extends RunFetchPostError {
+  constructor(public readonly detail: string) {
+    super('fetch-transient', 502);
+    this.name = 'TransientFetchError';
+  }
+}
+
+/**
+ * Apify error codes that represent transient upstream conditions — actor
+ * timeout, our HTTP-level abort, rate-limit, fetch-layer failure. Retrying
+ * the same request usually succeeds. Other codes (auth, actor-not-found,
+ * empty, generic 5xx) stay on the terminal-failure path.
+ */
+const TRANSIENT_APIFY_CODES = new Set([
+  'apify-timed-out',
+  'apify-timeout',
+  'apify-rate-limited',
+  'apify-network',
+]);
+
+/**
  * Pure (no Request, no Response) wrapper around the fetcher chain. Given a
  * raw URL string, runs the IG/TikTok dispatch and returns the populated
  * FetchPostResponse alongside the cacheKind. The HTTP wrapper uses cacheKind
@@ -163,6 +194,11 @@ export async function runFetchPost(
     const cacheKind: 'og' | 'apify' = chain.cacheKind === 'apify' ? 'apify' : 'og';
     return { result, cacheKind };
   } catch (err) {
+    // Transient apify failures (TIMED-OUT, rate-limit, network blip) ride
+    // through unwrapped so the orchestrator can branch on the subtype and
+    // re-throw, triggering Cloudflare Queues' retry-with-backoff instead of
+    // writing a terminal `error` row.
+    if (err instanceof TransientFetchError) throw err;
     if (err instanceof UpstreamError) {
       // 429 from upstream IG/TikTok surfaces as a 502 to the client (spec:
       // upstream rate-limits are transient and shouldn't be treated as the
@@ -428,6 +464,12 @@ async function fetchInstagram(
     } catch (err) {
       if (err instanceof ApifyError) {
         console.error('extract-proxy/fetch-post: apify-failed (reel)', err.code, err.status);
+        if (TRANSIENT_APIFY_CODES.has(err.code)) {
+          // No og fallback for /reel/ when Apify is configured — og is
+          // skipped entirely. The transient signal is the only path to a
+          // useful retry.
+          throw new TransientFetchError(err.code);
+        }
         throw new UpstreamError(502, 'fetch-failed');
       }
       throw err;
@@ -538,6 +580,13 @@ async function fetchInstagram(
       // so `wrangler tail` shows what actually went wrong. The client
       // response stays generic — same reasoning as the rest of the proxy.
       console.error('extract-proxy/fetch-post: apify-failed', err.code, err.status);
+      // Transient + no og fallback → let the queue retry. When og succeeded
+      // we have usable cover+caption already; keep the existing terminal
+      // failure there (the orchestrator would otherwise spin on a retry
+      // that may never recover the missing carousel slides).
+      if (!ogResult && TRANSIENT_APIFY_CODES.has(err.code)) {
+        throw new TransientFetchError(err.code);
+      }
       if (ogResult) throw new UpstreamError(502, 'fetch-failed');
       if (ogError) throw ogError;
       throw new UpstreamError(502, 'fetch-failed');

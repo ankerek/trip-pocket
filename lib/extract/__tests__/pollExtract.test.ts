@@ -7,8 +7,8 @@ function makeFetch(responses: Response[]): typeof fetch {
   let i = 0;
   // Clone before returning — Response.json() consumes the body, so reusing
   // the same instance across calls fails on the second consumption.
-  return jest.fn(
-    async () => responses[Math.min(i++, responses.length - 1)]!.clone(),
+  return jest.fn(async () =>
+    responses[Math.min(i++, responses.length - 1)]!.clone(),
   ) as unknown as typeof fetch;
 }
 
@@ -81,9 +81,7 @@ describe('pollExtract', () => {
   });
 
   it('returns missing on 404 when triggerOnMissing is false', async () => {
-    globalThis.fetch = makeFetch([
-      rjson({ contentHash: HASH, status: 'missing' }, 404),
-    ]);
+    globalThis.fetch = makeFetch([rjson({ contentHash: HASH, status: 'missing' }, 404)]);
     const result = await pollExtract({
       contentHash: HASH,
       rcUserId: VALID_ID,
@@ -223,6 +221,68 @@ describe('pollExtract', () => {
     });
     expect(result.status).toBe('done');
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('fires onPartial once with the partial state on pending → partial → done', async () => {
+    globalThis.fetch = makeFetch([
+      rjson({ contentHash: HASH, status: 'pending' }, 200),
+      rjson(
+        { contentHash: HASH, status: 'partial', caption: 'cap', coverUrl: 'https://c/d.jpg' },
+        200,
+      ),
+      rjson(
+        { contentHash: HASH, status: 'partial', caption: 'cap', coverUrl: 'https://c/d.jpg' },
+        200,
+      ),
+      rjson({ contentHash: HASH, status: 'done', places: [], model: 'm' }, 200),
+    ]);
+    const calls: Array<{ caption?: string; coverUrl?: string }> = [];
+    const result = await pollExtract({
+      contentHash: HASH,
+      rcUserId: VALID_ID,
+      workerBase: 'https://w.test',
+      maxAttempts: 6,
+      delayMs: 1,
+      onPartial: (s) => {
+        calls.push({ caption: s.caption, coverUrl: s.coverUrl });
+      },
+    });
+    expect(result.status).toBe('done');
+    expect(calls).toEqual([{ caption: 'cap', coverUrl: 'https://c/d.jpg' }]);
+  });
+
+  it('does not fire onPartial when the first observed state is done', async () => {
+    globalThis.fetch = makeFetch([
+      rjson({ contentHash: HASH, status: 'done', places: [], model: 'm' }, 200),
+    ]);
+    const onPartial = jest.fn();
+    await pollExtract({
+      contentHash: HASH,
+      rcUserId: VALID_ID,
+      workerBase: 'https://w.test',
+      maxAttempts: 3,
+      delayMs: 1,
+      onPartial,
+    });
+    expect(onPartial).not.toHaveBeenCalled();
+  });
+
+  it('keeps polling when onPartial throws', async () => {
+    globalThis.fetch = makeFetch([
+      rjson({ contentHash: HASH, status: 'partial', caption: 'cap' }, 200),
+      rjson({ contentHash: HASH, status: 'done', places: [], model: 'm' }, 200),
+    ]);
+    const result = await pollExtract({
+      contentHash: HASH,
+      rcUserId: VALID_ID,
+      workerBase: 'https://w.test',
+      maxAttempts: 3,
+      delayMs: 1,
+      onPartial: () => {
+        throw new Error('boom');
+      },
+    });
+    expect(result.status).toBe('done');
   });
 
   it('only retriggers stale-pending once per pollExtract call', async () => {

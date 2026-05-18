@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import Constants from 'expo-constants';
+import Purchases from 'react-native-purchases';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, Text, View } from '@/tw';
@@ -46,11 +47,15 @@ const EXTRACTED_SQL = `SELECT ps.source_id, p.id AS place_id, p.name, p.city, p.
                          JOIN places p ON p.id = ps.place_id
                      ORDER BY ps.extracted_at ASC`;
 
-// Status for every untriaged source — the FlatList window can mount cards
-// adjacent to the visible one, so we need per-id lookup, not just current.
+// Status + mutable card-display fields for every untriaged source. The
+// FlatList window can mount cards adjacent to the visible one, so we need
+// per-id lookup, not just current. `file_path` and `caption` ride along
+// because they're written mid-extraction (worker `partial` → applyPartial
+// for URL sources) and `items` is a one-shot snapshot — without the
+// live overlay the card stays on its initial blank state.
 const INBOX_STATUS_SQL = `SELECT id, ocr_status, extraction_status,
                                  extraction_paused_reason, url_fetch_paused_reason,
-                                 extraction_strategy
+                                 extraction_strategy, file_path, caption
                             FROM sources WHERE trip_id IS NULL`;
 type SourceStatusRow = {
   id: string;
@@ -59,6 +64,8 @@ type SourceStatusRow = {
   extraction_paused_reason: string | null;
   url_fetch_paused_reason: string | null;
   extraction_strategy: 'ocrTextLLM' | 'vision' | 'captionPlusVision' | null;
+  file_path: string | null;
+  caption: string | null;
 };
 // Tri-state. 'loading' (status query unresolved or row not yet in the result
 // set) renders identically to 'processing' so the user never flashes
@@ -92,6 +99,12 @@ export default function Triage() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [selections, setSelections] = useState<SelectionMap>(new Map());
   const [preview, setPreview] = useState<Source | null>(null);
+  // Remote cover URLs fetched directly from the worker's KV state, keyed
+  // by source id. Lets the card show the post preview while extraction is
+  // still running and `file_path` hasn't been downloaded locally yet —
+  // independent of pollExtractForUrlSources' partial-state path, which
+  // races React batching and the local poll cadence.
+  const [remoteCovers, setRemoteCovers] = useState<Map<string, string>>(new Map());
 
   // The hero is a fixed preview area, not a draggable surface. Kept short
   // so the place list — which can hold many extracted rows — gets the
@@ -118,6 +131,17 @@ export default function Triage() {
     return out;
   }, [statusRows]);
 
+  // Latest mutable display fields per source id. Overrides the stale
+  // values in the one-shot `items` snapshot so the cover image and
+  // caption appear as soon as the worker writes them.
+  const liveOverlayById = useMemo(() => {
+    const out = new Map<string, { filePath: string | null; caption: string | null }>();
+    for (const r of statusRows ?? []) {
+      out.set(r.id, { filePath: r.file_path, caption: r.caption });
+    }
+    return out;
+  }, [statusRows]);
+
   const getCardStatus = useCallback(
     (sourceId: string): CardStatus => {
       // Status query unresolved, OR resolved but no row for this id yet
@@ -139,6 +163,16 @@ export default function Triage() {
     return out;
   }, [extractedRows]);
 
+  // FlatList is PureComponent-like: it only re-renders rows when `data`
+  // changes by reference. `items` is set once via setState and never
+  // refetched (mid-triage stability), so without this marker the cards
+  // ignore live-query updates and stay stuck on "PROCESSING…" even
+  // after applyExtractDone fires notifyChange.
+  const listExtraData = useMemo(
+    () => ({ cardStatusById, placesBySource, liveOverlayById, remoteCovers }),
+    [cardStatusById, placesBySource, liveOverlayById, remoteCovers],
+  );
+
   useEffect(() => {
     let cancelled = false;
     if (!db) return;
@@ -151,6 +185,71 @@ export default function Triage() {
       cancelled = true;
     };
   }, [db, router]);
+
+  // For every URL source still missing a local file_path, poll the
+  // worker's GET /extract/:contentHash until its KV state has a coverUrl
+  // (or we run out of attempts). The `partial` (and `done`) payload
+  // carries the CDN cover URL — handing that straight to ExpoImage gives
+  // the user a visible preview during the long extract+enrich tail.
+  // Once pollExtractForUrlSources downloads the bytes locally, the live
+  // overlay's file_path takes precedence.
+  //
+  // We poll (rather than fetch once) because the worker writes `pending`
+  // immediately on POST receipt; `partial` (with coverUrl) only lands a
+  // few seconds later when fetch-post finishes. A one-shot GET would
+  // commonly catch the `pending` state and give up.
+  useEffect(() => {
+    if (!items || items.length === 0) return;
+    const workerBase = (Constants.expoConfig?.extra?.workerBase as string) ?? '';
+    if (!workerBase) return;
+    const remaining = new Map<string, string>();
+    for (const s of items) {
+      if (s.kind === 'url' && !s.filePath && s.contentHash) {
+        remaining.set(s.id, s.contentHash);
+      }
+    }
+    if (remaining.size === 0) return;
+    let cancelled = false;
+    (async () => {
+      let rcUserId: string;
+      try {
+        rcUserId = await Purchases.getAppUserID();
+      } catch {
+        return;
+      }
+      const MAX_ATTEMPTS = 20;
+      const DELAY_MS = 1500;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !cancelled; attempt++) {
+        for (const [id, contentHash] of Array.from(remaining)) {
+          if (cancelled) return;
+          try {
+            const resp = await fetch(`${workerBase}/extract/${contentHash}`, {
+              method: 'GET',
+              headers: { 'X-RC-User-Id': rcUserId },
+            });
+            if (!resp.ok) continue;
+            const body = (await resp.json()) as { coverUrl?: string };
+            if (!body.coverUrl) continue;
+            const coverUrl = body.coverUrl;
+            if (cancelled) return;
+            setRemoteCovers((prev) => {
+              const next = new Map(prev);
+              next.set(id, coverUrl);
+              return next;
+            });
+            remaining.delete(id);
+          } catch {
+            // Network hiccup; retry next round.
+          }
+        }
+        if (remaining.size === 0) return;
+        await new Promise<void>((resolve) => setTimeout(resolve, DELAY_MS));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
 
   const isSelected = useCallback(
     (sourceId: string, placeId: string): boolean => {
@@ -272,6 +371,7 @@ export default function Triage() {
         <RNFlatList
           ref={listRef}
           data={items}
+          extraData={listExtraData}
           keyExtractor={(s) => s.id}
           horizontal
           pagingEnabled
@@ -282,20 +382,30 @@ export default function Triage() {
             if (next !== index) setIndex(next);
           }}
           getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
-          renderItem={({ item }) => (
-            <TriageCard
-              width={width}
-              source={item}
-              places={placesBySource[item.id] ?? []}
-              status={getCardStatus(item.id)}
-              isSelected={(placeId) => isSelected(item.id, placeId)}
-              onToggleOne={(placeId) => toggleOne(item.id, placeId)}
-              bottomInset={insets.bottom + TRAY_HEIGHT + 16}
-              topInset={insets.top}
-              heroHeight={HERO_HEIGHT}
-              onPreview={() => setPreview(item)}
-            />
-          )}
+          renderItem={({ item }) => {
+            const overlay = liveOverlayById.get(item.id);
+            const liveSource: Source = overlay
+              ? { ...item, filePath: overlay.filePath, caption: overlay.caption }
+              : item;
+            const remoteCoverUrl = !liveSource.filePath
+              ? (remoteCovers.get(item.id) ?? null)
+              : null;
+            return (
+              <TriageCard
+                width={width}
+                source={liveSource}
+                remoteCoverUrl={remoteCoverUrl}
+                places={placesBySource[item.id] ?? []}
+                status={getCardStatus(item.id)}
+                isSelected={(placeId) => isSelected(item.id, placeId)}
+                onToggleOne={(placeId) => toggleOne(item.id, placeId)}
+                bottomInset={insets.bottom + TRAY_HEIGHT + 16}
+                topInset={insets.top}
+                heroHeight={HERO_HEIGHT}
+                onPreview={() => setPreview(liveSource)}
+              />
+            );
+          }}
         />
 
         {/* Top: close on the left, count chip pinned to the right. */}
@@ -464,6 +574,7 @@ function CountChip({ index, total }: { index: number; total: number }) {
 function TriageCard({
   width,
   source,
+  remoteCoverUrl,
   places,
   status,
   isSelected,
@@ -475,6 +586,7 @@ function TriageCard({
 }: {
   width: number;
   source: Source;
+  remoteCoverUrl: string | null;
   places: ExtractedPlace[];
   status: CardStatus;
   isSelected: (placeId: string) => boolean;
@@ -487,6 +599,9 @@ function TriageCard({
   const colors = useThemeColors();
   const total = places.length;
   const inFlight = status === 'loading' || status === 'processing';
+  const imageSource = source.filePath ?? remoteCoverUrl;
+  // Only the locally-downloaded file is safe to open in the fullscreen
+  // preview — the remote CDN URL might 403 by the time the user taps.
   const hasImage = source.filePath !== null;
   return (
     <View style={{ width, flex: 1 }}>
@@ -498,9 +613,9 @@ function TriageCard({
         style={{ marginTop: topInset }}
       >
         <View className="bg-surface" style={{ height: heroHeight, overflow: 'hidden' }}>
-          {source.filePath ? (
+          {imageSource ? (
             <ExpoImage
-              source={source.filePath}
+              source={imageSource}
               style={{ width: '100%', height: '100%' }}
               contentFit="contain"
               cachePolicy="memory-disk"

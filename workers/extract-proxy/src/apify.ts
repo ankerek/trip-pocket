@@ -129,6 +129,15 @@ export async function fetchInstagramViaApify(
       // ignore
     }
     console.error('extract-proxy/apify: non-2xx', resp.status, detail || '(empty body)');
+    // Apify returns 400 with `{ error: { type: 'run-failed', message:
+    // "...status: TIMED-OUT..." } }` when the actor exceeds its per-run
+    // timeout (the `&timeout=25` we set on the run-sync URL). That's a
+    // transient upstream condition — actor cold-start, slow IG page, etc.
+    // — and retrying typically succeeds. Classified distinctly so callers
+    // can promote it to a queue-retry signal instead of a terminal failure.
+    if (resp.status === 400 && /\bstatus:\s*TIMED-OUT\b/i.test(detail)) {
+      throw new ApifyError(504, 'apify-timed-out');
+    }
     throw new ApifyError(502, 'apify-upstream');
   }
 

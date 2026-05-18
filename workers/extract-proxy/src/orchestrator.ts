@@ -1,9 +1,14 @@
 import * as Sentry from '@sentry/cloudflare';
 import type { Env } from './index';
-import type { OrchestratorRequest, OrchestratorState, EnrichedPlace } from './orchestrator-schema';
+import type {
+  OrchestratorRequest,
+  OrchestratorState,
+  EnrichedPlace,
+  ExtractJobMessage,
+} from './orchestrator-schema';
 import type { WaitUntilCtx } from './video';
 import type { RequestBody, ExtractedPlace } from './schema';
-import { runFetchPost as defaultRunFetchPost } from './fetch-post';
+import { runFetchPost as defaultRunFetchPost, TransientFetchError } from './fetch-post';
 import { runExtract as defaultRunExtract } from './index';
 import type { FetchPostResponse } from './fetch-post';
 import { dedupePlaces } from './dedupe';
@@ -22,10 +27,15 @@ export const EXTRACT_STATE_TTL_SECONDS = 72 * 60 * 60;
 /**
  * Stale-pending threshold. If a KV state is `pending` (or `partial`) with a
  * startedAt older than this, the worker that wrote it is presumed dead
- * (isolate killed mid-run) and we re-orchestrate. Set generously above the
- * 95th-percentile real pipeline wall-clock for video extractions.
+ * (isolate killed mid-run, or a queue stage hit max_retries) and we
+ * re-orchestrate by enqueuing a fresh fetch-post message.
+ *
+ * Each stage now runs in its own Worker invocation with its own 30s
+ * ctx.waitUntil budget, so the practical pipeline ceiling is ~3x what it
+ * was before. 90s is still well above the worst observed end-to-end. Must
+ * stay in sync with the client-side mirror in lib/extract/pollExtract.ts.
  */
-export const STALE_PENDING_MS = 5 * 60 * 1000;
+export const STALE_PENDING_MS = 90 * 1000;
 
 const KV_KEY = (hash: string): string => `state:${hash}`;
 
@@ -88,41 +98,21 @@ async function writeState(state: OrchestratorState, env: Env): Promise<void> {
   });
 }
 
-/**
- * Run the full extraction pipeline for one source and cache the result in
- * EXTRACT_STATE KV keyed by content_hash.
- *
- * Idempotency: if a usable state already exists, do nothing. `done` and
- * `error` are terminal; `pending`/`partial` are honoured unless older than
- * STALE_PENDING_MS, in which case the worker that wrote them is presumed
- * dead and we re-run.
- *
- * The HTTP handler wraps this in `ctx.waitUntil` so the POST /extract
- * response can return immediately while the pipeline runs.
- */
-export async function orchestrate(
-  req: OrchestratorRequest,
-  env: Env,
-  ctx: WaitUntilCtx,
-  deps: OrchestrateDeps = {},
-): Promise<void> {
-  // Per-share isolation scope: every log/error emitted inside this callback
-  // is tagged with contentHash + source, so on a Sentry issue page you can
-  // see "this is share X for IG/TikTok" without each call-site repeating it.
-  // The scope is discarded when the callback returns, so concurrent shares
-  // can't leak tags into each other's events.
-  return Sentry.withIsolationScope(async () => {
-    Sentry.setTag('contentHash', req.contentHash);
-    await orchestrateImpl(req, env, ctx, deps);
-  });
-}
+// ---------------------------------------------------------------------------
+// Pipeline entry: queue producer
+// ---------------------------------------------------------------------------
 
-async function orchestrateImpl(
-  req: OrchestratorRequest,
-  env: Env,
-  ctx: WaitUntilCtx,
-  deps: OrchestrateDeps,
-): Promise<void> {
+/**
+ * Kick off the extraction pipeline for one share. Idempotent: if a usable
+ * state already exists, do nothing. `done` and `error` are terminal;
+ * `pending`/`partial` are honoured unless older than STALE_PENDING_MS, in
+ * which case the prior invocation is presumed dead and we re-enqueue.
+ *
+ * The pipeline runs as three sequential queue stages — fetch-post → extract
+ * → enrich — each in its own Worker invocation with its own ctx.waitUntil
+ * budget. POST /extract calls this and returns 202; the rest runs async.
+ */
+export async function kickOffPipeline(req: OrchestratorRequest, env: Env): Promise<void> {
   const existing = await readState(req.contentHash, env);
   if (existing && (existing.status === 'done' || existing.status === 'error')) {
     logEvent({
@@ -154,42 +144,111 @@ async function orchestrateImpl(
 
   const startedAt = new Date().toISOString();
   await writeState({ contentHash: req.contentHash, status: 'pending', startedAt }, env);
+  await env.EXTRACT_QUEUE.send({
+    stage: 'fetch-post',
+    contentHash: req.contentHash,
+    url: req.url,
+    ...(req.suggestedTripId ? { suggestedTripId: req.suggestedTripId } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Queue consumer: dispatches one message to the right stage handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Route one queue message to its stage handler. Wraps the call in a
+ * per-share Sentry isolation scope so the contentHash tag attaches to
+ * every event/error this invocation emits without leaking across shares.
+ *
+ * Stages signal:
+ *   - permanent failure → catch internally, writeState('error'), return.
+ *     The message will be ack'd by the caller.
+ *   - transient failure (will throw) → caller should let CF retry the
+ *     message with backoff (up to max_retries; then DLQ).
+ */
+export async function routeStage(
+  msg: ExtractJobMessage,
+  env: Env,
+  ctx: WaitUntilCtx,
+  deps: OrchestrateDeps = {},
+): Promise<void> {
+  return Sentry.withIsolationScope(async () => {
+    Sentry.setTag('contentHash', msg.contentHash);
+    Sentry.setTag('stage', msg.stage);
+    switch (msg.stage) {
+      case 'fetch-post':
+        return processFetchPostStage(msg, env, deps);
+      case 'extract':
+        return processExtractStage(msg, env, ctx, deps);
+      case 'enrich':
+        return processEnrichStage(msg, env, deps);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Stage 1: fetch-post
+// ---------------------------------------------------------------------------
+
+async function processFetchPostStage(
+  msg: { contentHash: string; url: string; suggestedTripId?: string },
+  env: Env,
+  deps: OrchestrateDeps,
+): Promise<void> {
+  const state = await readState(msg.contentHash, env);
+  if (state && (state.status === 'done' || state.status === 'error')) {
+    // A prior run already terminated. Don't redo the work.
+    logEvent({
+      event: 'orchestrate_skip',
+      contentHash: msg.contentHash,
+      status: state.status,
+    });
+    return;
+  }
+  const startedAt = state?.startedAt ?? new Date().toISOString();
 
   const runFetchPost = deps.runFetchPost ?? defaultRunFetchPost;
-  const runExtract = deps.runExtract ?? defaultRunExtract;
-  const searchAndDetails = deps.searchAndDetails ?? defaultSearchAndDetails;
-  const buildBulkBlurb = deps.buildBulkBlurb ?? defaultBuildBulkBlurb;
-  const fetchImageBase64 = deps.fetchImageBase64 ?? defaultFetchImageBase64;
 
+  const fetchStart = Date.now();
+  logEvent({ event: 'stage_start', stage: 'fetch-post', contentHash: msg.contentHash });
   let fetched: FetchPostResponse;
   let cacheKind: 'og' | 'apify';
-  const fetchStart = Date.now();
-  logEvent({ event: 'stage_start', stage: 'fetch-post', contentHash: req.contentHash });
   try {
-    const out = await runFetchPost(req.url, env);
+    const out = await runFetchPost(msg.url, env);
     fetched = out.result;
     cacheKind = out.cacheKind;
   } catch (err) {
+    if (err instanceof TransientFetchError) {
+      // Apify actor timeout / rate-limit / network blip. Let the queue
+      // runtime retry this stage with backoff (max_retries before DLQ);
+      // the KV state stays at `pending`, so the client keeps showing the
+      // processing spinner instead of flipping the source to "failed".
+      logEvent({
+        event: 'orchestrate_fetch_transient',
+        contentHash: msg.contentHash,
+        duration_ms: Date.now() - fetchStart,
+        detail: err.detail,
+      });
+      throw err;
+    }
     logStageError(err, {
       stage: 'fetch-post',
-      contentHash: req.contentHash,
+      contentHash: msg.contentHash,
       duration_ms: Date.now() - fetchStart,
       error_code: 'fetch-failed',
     });
     await writeState(
-      { contentHash: req.contentHash, status: 'error', error: 'fetch-failed', startedAt },
+      { contentHash: msg.contentHash, status: 'error', error: 'fetch-failed', startedAt },
       env,
     );
     return;
   }
-  // Tag the isolation scope with the resolved platform so every downstream
-  // event/error in this share has source=instagram|tiktok|... without each
-  // call-site re-passing it.
   Sentry.setTag('source', fetched.platform);
   logEvent({
     event: 'stage_done',
     stage: 'fetch-post',
-    contentHash: req.contentHash,
+    contentHash: msg.contentHash,
     source: fetched.platform,
     duration_ms: Date.now() - fetchStart,
     cache_kind: cacheKind,
@@ -197,21 +256,82 @@ async function orchestrateImpl(
 
   await writeState(
     {
-      contentHash: req.contentHash,
+      contentHash: msg.contentHash,
       status: 'partial',
       caption: fetched.caption,
       coverUrl: fetched.imageUrls[0],
       videoPresent: !!fetched.videoUrl,
+      fetched,
       startedAt,
     },
     env,
   );
 
+  await env.EXTRACT_QUEUE.send({ stage: 'extract', contentHash: msg.contentHash });
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2: extract (Gemini)
+// ---------------------------------------------------------------------------
+
+async function processExtractStage(
+  msg: { contentHash: string },
+  env: Env,
+  ctx: WaitUntilCtx,
+  deps: OrchestrateDeps,
+): Promise<void> {
+  const state = await readState(msg.contentHash, env);
+  if (!state) {
+    // KV TTL expired between fetch-post and extract — unusual (TTL is 72h)
+    // but possible if the queue backlogged. Surface as error; the user can
+    // re-share to recover.
+    logStageError(new Error('state-missing'), {
+      stage: 'extract',
+      contentHash: msg.contentHash,
+      error_code: 'state-missing',
+    });
+    return;
+  }
+  if (state.status === 'done' || state.status === 'error') {
+    logEvent({
+      event: 'orchestrate_skip',
+      contentHash: msg.contentHash,
+      status: state.status,
+    });
+    return;
+  }
+  if (!state.fetched) {
+    // The fetch-post stage didn't persist the fetched payload — shouldn't
+    // happen with current code, but defend against schema drift / older
+    // KV rows surviving a deploy.
+    logStageError(new Error('fetched-missing'), {
+      stage: 'extract',
+      contentHash: msg.contentHash,
+      error_code: 'fetched-missing',
+    });
+    await writeState(
+      {
+        ...state,
+        contentHash: msg.contentHash,
+        status: 'error',
+        error: 'fetched-missing',
+      },
+      env,
+    );
+    return;
+  }
+  const fetched = state.fetched;
+  const startedAt = state.startedAt ?? new Date().toISOString();
+  Sentry.setTag('source', fetched.platform);
+
+  const runExtract = deps.runExtract ?? defaultRunExtract;
+  const fetchImageBase64 = deps.fetchImageBase64 ?? defaultFetchImageBase64;
+
   const extractStart = Date.now();
   logEvent({
     event: 'stage_start',
     stage: 'extract',
-    contentHash: req.contentHash,
+    contentHash: msg.contentHash,
     source: fetched.platform,
   });
   let result: { places: ExtractedPlace[]; model: string };
@@ -222,43 +342,42 @@ async function orchestrateImpl(
       ctx,
       runExtract,
       fetchImageBase64,
-      req.contentHash,
+      msg.contentHash,
     );
   } catch (err) {
-    // Transient: every Gemini call in the fallback chain failed with a
-    // retryable upstream code (5xx / 429). Leave the existing `partial`
-    // state in KV alone — fetch-post's caption + cover are still valid
-    // for the triage card — and let the stale-pending recovery re-run
-    // the pipeline on the next POST. handleExtractPost falls through
-    // partial states (only done/error short-circuit), so the client's
-    // next foreground sweep that hits the stale-pending threshold will
-    // retrigger this orchestration with no manual user action.
     if (err instanceof TransientExtractError) {
+      // Every fallback mode failed transient. Re-throw so the queue runtime
+      // retries this stage with backoff (max_retries before DLQ). The KV
+      // partial state stays put — fetched is persisted, so the retry skips
+      // fetch-post entirely and goes straight to a fresh Gemini attempt.
       logEvent({
         event: 'orchestrate_extract_transient',
-        contentHash: req.contentHash,
+        contentHash: msg.contentHash,
         source: fetched.platform,
         duration_ms: Date.now() - extractStart,
         detail: err.details,
       });
-      return;
+      throw err;
     }
     const code = err instanceof Error ? err.message : String(err);
+    const errorCode =
+      code === 'no-extractable-content' ? 'no-extractable-content' : 'extract-failed';
     logStageError(err, {
       stage: 'extract',
-      contentHash: req.contentHash,
+      contentHash: msg.contentHash,
       source: fetched.platform,
       duration_ms: Date.now() - extractStart,
-      error_code: code === 'no-extractable-content' ? 'no-extractable-content' : 'extract-failed',
+      error_code: errorCode,
     });
     await writeState(
       {
-        contentHash: req.contentHash,
+        contentHash: msg.contentHash,
         status: 'error',
-        error: code === 'no-extractable-content' ? 'no-extractable-content' : 'extract-failed',
+        error: errorCode,
         caption: fetched.caption,
         coverUrl: fetched.imageUrls[0],
         videoPresent: !!fetched.videoUrl,
+        fetched,
         startedAt,
       },
       env,
@@ -268,51 +387,243 @@ async function orchestrateImpl(
   logEvent({
     event: 'stage_done',
     stage: 'extract',
-    contentHash: req.contentHash,
+    contentHash: msg.contentHash,
     source: fetched.platform,
     duration_ms: Date.now() - extractStart,
   });
 
-  // Wrap enrichment because Promise.all over N Google Places lookups can
-  // throw runtime exceptions the inner try/catches don't capture — most
-  // notably Workers' "Too many subrequests by single Worker invocation"
-  // when a carousel yields enough places that the cumulative subrequest
-  // budget (50 on Workers Free, 1000 on Paid) is exhausted. Without this
-  // wrap the throw escaped into ctx.waitUntil which swallowed it, leaving
-  // state stuck at `partial`. Surfacing it as `enrich-failed` makes the
-  // failure visible to the user and lets the source row flip to `failed`
-  // instead of spinning.
+  // Write `done` with un-enriched places. The source unsticks now; the
+  // enrich stage runs next in its own invocation and overwrites with
+  // Google-Places-enriched data. If the enrich stage hits its own budget,
+  // the un-enriched done is already in place and the client's lazy
+  // enricher backfills the missing fields.
+  const extractedDeduped = dedupePlaces(result.places);
+  const unenrichedPlaces: EnrichedPlace[] = extractedDeduped.map((p) => ({
+    ...p,
+    blurb: null,
+    blurb_status: 'failed' as const,
+  }));
+  await writeState(
+    {
+      contentHash: msg.contentHash,
+      status: 'done',
+      caption: fetched.caption,
+      coverUrl: fetched.imageUrls[0],
+      videoPresent: !!fetched.videoUrl,
+      fetched,
+      places: unenrichedPlaces,
+      model: result.model,
+      startedAt,
+    },
+    env,
+  );
+  logEvent({
+    event: 'orchestrate_early_done',
+    contentHash: msg.contentHash,
+    source: fetched.platform,
+    place_count: unenrichedPlaces.length,
+  });
+
+  await env.EXTRACT_QUEUE.send({ stage: 'enrich', contentHash: msg.contentHash });
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3: enrich (Google Places upgrade)
+// ---------------------------------------------------------------------------
+
+async function processEnrichStage(
+  msg: { contentHash: string },
+  env: Env,
+  deps: OrchestrateDeps,
+): Promise<void> {
+  const state = await readState(msg.contentHash, env);
+  if (!state) {
+    logStageError(new Error('state-missing'), {
+      stage: 'enrich',
+      contentHash: msg.contentHash,
+      error_code: 'state-missing',
+    });
+    return;
+  }
+  if (state.status === 'error') {
+    logEvent({
+      event: 'orchestrate_skip',
+      contentHash: msg.contentHash,
+      status: state.status,
+    });
+    return;
+  }
+  if (state.status !== 'done' || !state.places || state.places.length === 0) {
+    // The extract stage should have left a `done` with places. If we're
+    // here without that, the prior stage must have failed; log + return.
+    logStageError(new Error('enrich-precondition'), {
+      stage: 'enrich',
+      contentHash: msg.contentHash,
+      error_code: 'enrich-precondition',
+    });
+    return;
+  }
+  // Skip if already enriched (idempotency for queue redelivery): at least
+  // one place has an external_place_id.
+  const alreadyEnriched = state.places.some((p) => p.external_place_id);
+  if (alreadyEnriched) {
+    logEvent({
+      event: 'orchestrate_skip',
+      contentHash: msg.contentHash,
+      status: 'done',
+    });
+    return;
+  }
+
+  const fetched = state.fetched;
+  const source = fetched?.platform;
+  if (source) Sentry.setTag('source', source);
+
+  const searchAndDetails = deps.searchAndDetails ?? defaultSearchAndDetails;
+  const buildBulkBlurb = deps.buildBulkBlurb ?? defaultBuildBulkBlurb;
+
+  const enrichStart = Date.now();
+  logEvent({
+    event: 'stage_start',
+    stage: 'enrich',
+    contentHash: msg.contentHash,
+    source,
+    place_count: state.places.length,
+  });
+
   try {
-    await enrichAndWriteDone(
-      result,
+    const enrichedPlaces = await runEnrichment(
+      state.places,
+      fetched?.caption ?? state.caption ?? '',
       env,
       searchAndDetails,
       buildBulkBlurb,
-      req,
-      fetched,
-      startedAt,
+      msg.contentHash,
+      source,
     );
-  } catch (err) {
-    logStageError(err, {
+    logEvent({
+      event: 'stage_done',
       stage: 'enrich',
-      contentHash: req.contentHash,
-      source: fetched.platform,
-      error_code: 'enrich-failed',
+      contentHash: msg.contentHash,
+      source,
+      duration_ms: Date.now() - enrichStart,
+      place_count: enrichedPlaces.length,
     });
+
     await writeState(
       {
-        contentHash: req.contentHash,
-        status: 'error',
-        error: 'enrich-failed',
-        caption: fetched.caption,
-        coverUrl: fetched.imageUrls[0],
-        videoPresent: !!fetched.videoUrl,
-        startedAt,
+        ...state,
+        contentHash: msg.contentHash,
+        status: 'done',
+        places: enrichedPlaces,
       },
       env,
     );
+  } catch (err) {
+    // Don't downgrade to error — the early-done state from the extract
+    // stage is still in KV and the client's lazy enricher will pick up
+    // the missing fields. Log for triage and let the message ack.
+    logStageError(err, {
+      stage: 'enrich',
+      contentHash: msg.contentHash,
+      source,
+      duration_ms: Date.now() - enrichStart,
+      error_code: 'enrich-upgrade-failed',
+    });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Test helper: synchronously run the full pipeline in-process
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the complete fetch-post → extract → enrich pipeline synchronously in
+ * the current isolate. Wraps EXTRACT_QUEUE in a stub that dispatches each
+ * `send()` to the corresponding stage handler immediately, so the test sees
+ * the same KV state transitions a real queue would produce — just without
+ * the asynchronous handoff.
+ *
+ * Production code MUST NOT call this. POST /extract should call
+ * `kickOffPipeline` and let the queue handler run the stages on their own
+ * invocations (each with its own 30s ctx.waitUntil budget).
+ */
+export async function orchestrate(
+  req: OrchestratorRequest,
+  env: Env,
+  ctx: WaitUntilCtx,
+  deps: OrchestrateDeps = {},
+): Promise<void> {
+  return Sentry.withIsolationScope(async () => {
+    Sentry.setTag('contentHash', req.contentHash);
+    const stubQueue = createSyncStubQueue(env, ctx, deps);
+    const envWithStub: Env = { ...env, EXTRACT_QUEUE: stubQueue };
+    await kickOffPipeline(req, envWithStub);
+  });
+}
+
+/**
+ * In-process queue stub for tests / synchronous orchestrate(). `send()`
+ * routes the message back through `routeStage` immediately, so a test
+ * call to orchestrate() runs all three stages end-to-end.
+ *
+ * Throws from `routeStage` are intentionally swallowed: in production a
+ * thrown stage handler signals "retry me", and the queue runtime
+ * eventually drops the message into the DLQ. For test purposes the
+ * after-state in KV is what matters (transient throws leave `partial`,
+ * permanent failures wrote `error` before throwing); orchestrate()
+ * always returns cleanly so existing test patterns stay readable.
+ */
+function createSyncStubQueue(
+  env: Env,
+  ctx: WaitUntilCtx,
+  deps: OrchestrateDeps,
+): Env['EXTRACT_QUEUE'] {
+  let envWithStub: Env;
+  const stub: Env['EXTRACT_QUEUE'] = {
+    async send(body: ExtractJobMessage): Promise<QueueSendResponse> {
+      try {
+        await routeStage(body, envWithStub, ctx, deps);
+      } catch (err) {
+        if (err instanceof TransientExtractError) {
+          // Mimic queue auto-retry → max_retries → DLQ. In tests we just
+          // stop; the existing `partial` state in KV reflects the failure.
+          return makeStubSendResponse();
+        }
+        throw err;
+      }
+      return makeStubSendResponse();
+    },
+    async sendBatch(messages): Promise<QueueSendBatchResponse> {
+      for (const m of messages) {
+        try {
+          await routeStage(m.body as ExtractJobMessage, envWithStub, ctx, deps);
+        } catch (err) {
+          if (!(err instanceof TransientExtractError)) throw err;
+        }
+      }
+      return makeStubSendBatchResponse();
+    },
+    async metrics(): Promise<QueueMetrics> {
+      return { backlogCount: 0, backlogBytes: 0 };
+    },
+  };
+  envWithStub = { ...env, EXTRACT_QUEUE: stub };
+  return stub;
+}
+
+function makeStubSendResponse(): QueueSendResponse {
+  return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+}
+
+function makeStubSendBatchResponse(): QueueSendBatchResponse {
+  return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+}
+
+// ---------------------------------------------------------------------------
+// Extraction & enrichment helpers (unchanged logic, refactored into shared
+// helpers callable from the extract and enrich stages above).
+// ---------------------------------------------------------------------------
 
 /**
  * Extraction with graceful fallback across modes. Workers' egress IPs are
@@ -333,9 +644,8 @@ async function orchestrateImpl(
 /**
  * Thrown by tryExtractWithFallback when every fallback mode failed with a
  * transient upstream code (Gemini 5xx, 429, network blip). Distinct from a
- * generic Error so orchestrate can preserve the existing `partial` state
- * and let stale-pending recovery retry — instead of writing a terminal
- * `error` that the user sees as "couldn't read" with no auto-retry path.
+ * generic Error so the extract stage can let the queue runtime retry the
+ * message rather than write a terminal `error` row.
  */
 export class TransientExtractError extends Error {
   constructor(public readonly details: string) {
@@ -475,31 +785,29 @@ async function tryExtractWithFallback(
   throw new Error(errors.join(', '));
 }
 
-async function enrichAndWriteDone(
-  result: { places: ExtractedPlace[]; model: string },
+/**
+ * Resolve each extracted place against Google Places (searchText +
+ * placeDetails), dedupe by place_id, and return the upgraded
+ * EnrichedPlace[]. Thrown PlacesError per place becomes `not-found` —
+ * those places ship without the enrichment fields but the source still
+ * succeeds; the client's lazy enricher can retry them later.
+ *
+ * Non-PlacesError throws (e.g. Workers' "Too many subrequests") bubble
+ * up so the caller can decide whether to retry the message or just log
+ * and let the un-enriched done stand.
+ */
+async function runEnrichment(
+  inputPlaces: EnrichedPlace[],
+  caption: string,
   env: Env,
   searchAndDetails: SearchAndDetailsFn,
   buildBulkBlurb: BuildBulkBlurbFn,
-  req: OrchestratorRequest,
-  fetched: FetchPostResponse,
-  startedAt: string,
-): Promise<void> {
-  const extractedDeduped = dedupePlaces(result.places);
-  const enrichStart = Date.now();
-  logEvent({
-    event: 'stage_start',
-    stage: 'enrich',
-    contentHash: req.contentHash,
-    source: fetched.platform,
-    place_count: extractedDeduped.length,
-  });
-
-  // Enrich each place against Google Places in parallel. PlacesError per
-  // place becomes "not-found" — the place still ships, just without the
-  // enrichment fields. This is the same fallback the client uses today.
-  const enrichmentInput = extractedDeduped.map((p, i) => ({
+  contentHash: string,
+  source: string | undefined,
+): Promise<EnrichedPlace[]> {
+  const enrichmentInput = inputPlaces.map((p, i) => ({
     place: p,
-    enrichKey: `${i}`, // stable index id used during enrich-by-place_id dedup
+    enrichKey: `${i}`,
   }));
 
   const detailsResults = await Promise.all(
@@ -510,7 +818,7 @@ async function enrichAndWriteDone(
             name: item.place.name,
             city: item.place.city,
             address: item.place.address,
-            ocr_caption: fetched.caption ?? '',
+            ocr_caption: caption,
             extracted_place_id: item.enrichKey,
           },
           env,
@@ -521,8 +829,8 @@ async function enrichAndWriteDone(
           logEvent({
             event: 'stage_warn',
             stage: 'enrich',
-            contentHash: req.contentHash,
-            source: fetched.platform,
+            contentHash,
+            source,
             error_code: `places-${err.status}`,
             place_name: item.place.name,
           });
@@ -550,60 +858,32 @@ async function enrichAndWriteDone(
     survivors.push(item);
   }
 
-  // Bulk-blurb only the items that have details (i.e. that Google Places
-  // matched). For not-found rows we don't have anything grounded to write
-  // a blurb against.
+  // Defer bulk-blurb to client-driven per-place retries. The enrich queue
+  // stage already runs in its own 30s budget, but the bulk-blurb call adds
+  // 3-10s on top of the Google Places fan-out — when carousels push 15+
+  // places it's safer to ship Google Places data now and let the client
+  // hit /enrich for blurbs.
   const blurbInputs = survivors
     .filter((s): s is typeof s & { details: PlaceDetails } => s.details !== null)
     .map((s) => ({
       id: s.details.id,
       name: s.place.name,
       city: s.place.city,
-      ocr_caption: fetched.caption ?? '',
+      ocr_caption: caption,
       details: s.details,
     }));
-
-  const enrichDuration = Date.now() - enrichStart;
-  const matched = detailsResults.filter((d) => d.details !== null).length;
-  logEvent({
-    event: 'stage_done',
-    stage: 'enrich',
-    contentHash: req.contentHash,
-    source: fetched.platform,
-    duration_ms: enrichDuration,
-    place_count: detailsResults.length,
-    matched_count: matched,
-  });
-
-  // Defer bulk-blurb to client-driven per-place retries. Cloudflare's
-  // `ctx.waitUntil` is capped at 30s wall-clock after the response is
-  // sent (https://developers.cloudflare.com/workers/runtime-apis/context),
-  // and an 8-slide / 20-place carousel can spend 25-28s on fetch-post +
-  // vision + enrich before reaching this point. With <3s remaining the
-  // runtime cancels the in-flight Gemini fetch mid-call and leaves state
-  // stuck at `partial`, regardless of any Promise.race timeout we'd add
-  // (the runtime tears down the isolate, not the JS frame, and races
-  // against fetch-post's natural variability are inherently fragile).
-  //
-  // Instead: write `done` immediately with `blurb_status='failed'` on
-  // every place. The client (modules/enrichment/enrichment.ts) already
-  // polls those rows via /enrich, each retry in its own fresh worker
-  // invocation with its own 30s budget. The source becomes usable right
-  // away with all Google Places details; blurbs trickle in over the
-  // next few seconds.
   logEvent({
     event: 'blurb_deferred',
-    contentHash: req.contentHash,
-    source: fetched.platform,
+    contentHash,
+    source,
     place_count: blurbInputs.length,
   });
-  // `buildBulkBlurb` stays in the dep map for signature stability across
-  // tests and so it can be re-enabled if we ever move to a model where
-  // the bulk call is cheap enough to fit inline.
+  // Keep `buildBulkBlurb` in the dep map for signature stability and as a
+  // re-enable seam if we ever move to a cheaper bulk model.
   void buildBulkBlurb;
   const blurbsByPlaceId: Map<string, BlurbResult> = new Map();
 
-  const enrichedPlaces: EnrichedPlace[] = survivors.map((s) => {
+  return survivors.map((s) => {
     if (s.details === null) {
       return {
         ...s.place,
@@ -625,27 +905,9 @@ async function enrichAndWriteDone(
       external_url: s.details.googleMapsUri,
       editorial_summary: s.details.editorialSummary,
       blurb: blurbResult?.text ?? null,
-      // Missing entry = the bulk call returned nothing for this id, so we
-      // treat it as 'failed' — client can /blurb-retry. Present entry
-      // with outcome='empty' means the model abstained intentionally; no
-      // retry. Present entry with outcome='ok' means we have a blurb.
       blurb_status: blurbResult ? blurbResult.outcome : 'failed',
     };
   });
-
-  await writeState(
-    {
-      contentHash: req.contentHash,
-      status: 'done',
-      caption: fetched.caption,
-      coverUrl: fetched.imageUrls[0],
-      videoPresent: !!fetched.videoUrl,
-      places: enrichedPlaces,
-      model: result.model,
-      startedAt,
-    },
-    env,
-  );
 }
 
 async function defaultFetchImageBase64(url: string): Promise<string> {

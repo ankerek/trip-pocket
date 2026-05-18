@@ -1,5 +1,15 @@
-import { orchestrate, EXTRACT_STATE_TTL_SECONDS, STALE_PENDING_MS } from '../src/orchestrator';
-import type { OrchestratorRequest, OrchestratorState } from '../src/orchestrator-schema';
+import {
+  orchestrate,
+  routeStage,
+  EXTRACT_STATE_TTL_SECONDS,
+  STALE_PENDING_MS,
+} from '../src/orchestrator';
+import type {
+  ExtractJobMessage,
+  OrchestratorRequest,
+  OrchestratorState,
+} from '../src/orchestrator-schema';
+import { TransientFetchError } from '../src/fetch-post';
 import type { FetchPostResponse } from '../src/fetch-post';
 import { RunExtractError } from '../src/index';
 import type { Env } from '../src/index';
@@ -183,12 +193,15 @@ describe('orchestrate', () => {
     expect(final.places![0]!.external_place_id).toBe('place_A');
   });
 
-  it('writes terminal error when enrichment throws (e.g. Too many subrequests)', async () => {
+  it('keeps the early un-enriched `done` when enrichment throws (e.g. Too many subrequests)', async () => {
     // Real-world repro: 8-slide IG carousel extracts 20 places, then the
     // parallel Google Places fan-out tips the Worker over the 50/1000
-    // subrequest cap. The runtime exception bubbles out of Promise.all
-    // and orchestrate must surface it as `enrich-failed` rather than let
-    // ctx.waitUntil swallow it and leave the source stuck at `partial`.
+    // subrequest cap and Promise.all throws. We must NOT downgrade the
+    // safety-net `done` (written right after extract, with un-enriched
+    // places) to `error` — the source is already unstuck with usable
+    // places, and the client's lazy enricher will fill in the missing
+    // Google Places fields on its own schedule. Downgrading to error
+    // would surface a misleading "failed import" to the user.
     const kv = makeKv();
     const env = makeEnv(kv);
     await orchestrate(
@@ -214,12 +227,75 @@ describe('orchestrate', () => {
       },
     );
     const final = captureState(kv)!;
-    expect(final.status).toBe('error');
-    expect(final.error).toBe('enrich-failed');
-    // Partial fields (caption + cover) preserved so the UI can still
-    // render a triage card alongside the failure state.
+    expect(final.status).toBe('done');
+    // Un-enriched payload: places came from extract, but blurb_status is
+    // 'failed' and there's no external_place_id. The client inserts these
+    // with enrichment_status='pending' and runs its lazy enricher.
+    expect(final.places).toHaveLength(2);
+    expect(final.places![0]!.blurb_status).toBe('failed');
+    expect(final.places![0]!.external_place_id).toBeUndefined();
     expect(final.caption).toBe('cap');
     expect(final.coverUrl).toBe('https://cdn/c.jpg');
+  });
+
+  it('writes an early un-enriched `done` BEFORE Google Places is called', async () => {
+    // Safety net for the ctx.waitUntil 30s cap. After a successful extract
+    // the orchestrator writes a `done` with un-enriched places (so the
+    // source unsticks immediately) and ONLY THEN starts the per-place
+    // Google Places fan-out. If the runtime kills the isolate mid-enrich,
+    // the user already has usable places — the client's lazy enricher
+    // backfills the rest.
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    // Snapshot KV state at the moment searchAndDetails is first invoked.
+    let stateAtEnrichStart: OrchestratorState | null = null;
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/x/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap', imageUrls: ['https://cdn/c.jpg'] }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async () => ({
+          places: [{ name: 'A', city: 'B', address: '', category: 'food', country_code: '' }],
+          model: 'm',
+        }),
+        fetchImageBase64: async () => 'b64',
+        searchAndDetails: async () => {
+          if (stateAtEnrichStart === null) stateAtEnrichStart = captureState(kv);
+          return {
+            id: 'place_A',
+            latitude: 1,
+            longitude: 2,
+            formattedAddress: 'addr',
+            photoName: null,
+            rating: null,
+            priceLevel: null,
+            googleMapsUri: null,
+            displayName: 'A',
+            types: [],
+            editorialSummary: null,
+            city: 'B',
+            countryCode: 'US',
+          };
+        },
+      },
+    );
+
+    // KV at the moment Google Places started: status='done', places present,
+    // but un-enriched (no external_place_id, blurb_status='failed').
+    expect(stateAtEnrichStart).not.toBeNull();
+    expect(stateAtEnrichStart!.status).toBe('done');
+    expect(stateAtEnrichStart!.places).toHaveLength(1);
+    expect(stateAtEnrichStart!.places![0]!.external_place_id).toBeUndefined();
+    expect(stateAtEnrichStart!.places![0]!.blurb_status).toBe('failed');
+
+    // After enrichment completes, KV upgraded to the fully-enriched payload.
+    const final = captureState(kv)!;
+    expect(final.status).toBe('done');
+    expect(final.places![0]!.external_place_id).toBe('place_A');
   });
 
   it('writes error state when runExtract throws', async () => {
@@ -819,5 +895,323 @@ describe('orchestrate — enrichment', () => {
 describe('EXTRACT_STATE_TTL_SECONDS', () => {
   it('is 72 hours', () => {
     expect(EXTRACT_STATE_TTL_SECONDS).toBe(72 * 60 * 60);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage-level edge cases driven through `routeStage` directly. The
+// orchestrate() tests above exercise the happy path / failure path with all
+// three stages running in-process via the sync stub queue. These tests cover
+// the cross-invocation / queue-redelivery scenarios that the sync helper
+// can't reach: a stage receiving a message for a hash whose KV state is
+// missing, stale, or already past the stage's work.
+// ---------------------------------------------------------------------------
+
+/**
+ * No-op queue stub for stage-level tests that don't expect any stage to
+ * fire `.send()` (i.e. the stage either skips or writes a terminal state).
+ * Captures sends so a test can assert nothing was enqueued.
+ */
+function makeNoopQueue(): {
+  queue: Env['EXTRACT_QUEUE'];
+  sent: ExtractJobMessage[];
+} {
+  const sent: ExtractJobMessage[] = [];
+  const queue: Env['EXTRACT_QUEUE'] = {
+    async send(body: ExtractJobMessage) {
+      sent.push(body);
+      return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+    },
+    async sendBatch() {
+      return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+    },
+    async metrics() {
+      return { backlogCount: 0, backlogBytes: 0 };
+    },
+  };
+  return { queue, sent };
+}
+
+function envWithQueue(kv: ReturnType<typeof makeKv>, queue: Env['EXTRACT_QUEUE']): Env {
+  return { ...makeEnv(kv), EXTRACT_QUEUE: queue };
+}
+
+describe('routeStage — fetch-post stage redelivery', () => {
+  it('re-throws TransientFetchError so the queue retries; KV state stays at pending', async () => {
+    // Real-world repro: Apify's IG actor ran past its per-run timeout
+    // budget on a /reel/ share. The legacy classification of this as a
+    // terminal `fetch-failed` row meant the user saw "couldn't read" with
+    // no automatic recovery — the only way back was to re-share from
+    // Instagram. Treating actor TIMED-OUT as transient lets Cloudflare
+    // Queues' retry-with-backoff kick in, which usually succeeds on the
+    // next attempt without any user intervention.
+    const kv = makeKv();
+    const startedAt = new Date().toISOString();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'pending',
+        startedAt,
+      } satisfies OrchestratorState),
+    );
+    const { queue, sent } = makeNoopQueue();
+    const env = envWithQueue(kv, queue);
+
+    let runFetchPostCalls = 0;
+    await expect(
+      routeStage(
+        {
+          stage: 'fetch-post',
+          contentHash: HASH,
+          url: 'https://www.instagram.com/reel/x/',
+        },
+        env,
+        noopCtx,
+        {
+          runFetchPost: async () => {
+            runFetchPostCalls++;
+            throw new TransientFetchError('apify-timed-out');
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(TransientFetchError);
+
+    expect(runFetchPostCalls).toBe(1);
+    // KV stays at pending — the queue retry will run fetch-post again
+    // cleanly. A terminal `error` write here would defeat the whole
+    // point: the client would mark the source `failed` and the user
+    // would see "COULDN'T READ" before the retry even runs.
+    const state = captureState(kv)!;
+    expect(state.status).toBe('pending');
+    expect(state.startedAt).toBe(startedAt);
+    // No downstream stage enqueued.
+    expect(sent).toEqual([]);
+  });
+
+  it('skips when the prior run already terminated as `done` (idempotent on redelivery)', async () => {
+    // The queue can redeliver a message that was already processed before
+    // ack reached the runtime (network blip between ack and dispatcher).
+    // The fetch-post stage must not redo work or overwrite the terminal
+    // `done` row.
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'done',
+        places: [],
+        model: 'cached',
+      } satisfies OrchestratorState),
+    );
+    const { queue, sent } = makeNoopQueue();
+    const env = envWithQueue(kv, queue);
+
+    let runFetchPostCalled = false;
+    await routeStage(
+      {
+        stage: 'fetch-post',
+        contentHash: HASH,
+        url: 'https://www.instagram.com/p/x/',
+      },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => {
+          runFetchPostCalled = true;
+          return { result: makeFetched(), cacheKind: 'og' };
+        },
+      },
+    );
+
+    expect(runFetchPostCalled).toBe(false);
+    expect(sent).toEqual([]);
+    // KV unchanged.
+    expect(captureState(kv)!.status).toBe('done');
+    expect(captureState(kv)!.model).toBe('cached');
+  });
+});
+
+describe('routeStage — extract stage edge cases', () => {
+  it('logs and returns when KV state is missing (TTL expired between stages)', async () => {
+    // Edge case: KV's 72h TTL elapsed while the extract message sat in the
+    // queue. There's no fetched payload to consume; just return cleanly so
+    // the message can ack — re-sharing produces a fresh contentHash + run.
+    const kv = makeKv(); // empty
+    const { queue, sent } = makeNoopQueue();
+    const env = envWithQueue(kv, queue);
+
+    await routeStage({ stage: 'extract', contentHash: HASH }, env, noopCtx);
+
+    expect(captureState(kv)).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it('skips when state is already terminal (`done` from a prior run)', async () => {
+    // Idempotent on redelivery: a re-delivered `extract` message for a
+    // contentHash that already completed must not redo work.
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'done',
+        places: [],
+        model: 'cached',
+      } satisfies OrchestratorState),
+    );
+    const { queue, sent } = makeNoopQueue();
+    const env = envWithQueue(kv, queue);
+
+    let runExtractCalled = false;
+    await routeStage({ stage: 'extract', contentHash: HASH }, env, noopCtx, {
+      runExtract: async () => {
+        runExtractCalled = true;
+        return { places: [], model: 'm' };
+      },
+    });
+
+    expect(runExtractCalled).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it('writes `error` (fetched-missing) when state lacks the fetched payload', async () => {
+    // Schema-drift defense: an older KV row (pre-queues) may have
+    // status=partial without a `fetched` field. Without this guard the
+    // stage would crash on `fetched.platform` and the queue would retry
+    // forever. Instead, surface as terminal error so the client sees a
+    // failed import.
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'partial',
+        caption: 'cap',
+        coverUrl: 'https://cdn/c.jpg',
+        videoPresent: false,
+        startedAt: new Date().toISOString(),
+        // fetched intentionally omitted
+      } satisfies OrchestratorState),
+    );
+    const { queue, sent } = makeNoopQueue();
+    const env = envWithQueue(kv, queue);
+
+    await routeStage({ stage: 'extract', contentHash: HASH }, env, noopCtx);
+
+    const final = captureState(kv)!;
+    expect(final.status).toBe('error');
+    expect(final.error).toBe('fetched-missing');
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('routeStage — enrich stage edge cases', () => {
+  it('logs and returns when KV state is missing', async () => {
+    const kv = makeKv();
+    const { queue, sent } = makeNoopQueue();
+    const env = envWithQueue(kv, queue);
+
+    await routeStage({ stage: 'enrich', contentHash: HASH }, env, noopCtx);
+
+    expect(captureState(kv)).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it('skips when state is `error` (extract stage failed terminally)', async () => {
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'error',
+        error: 'extract-failed',
+      } satisfies OrchestratorState),
+    );
+    const env = envWithQueue(kv, makeNoopQueue().queue);
+
+    let searchCalled = false;
+    await routeStage({ stage: 'enrich', contentHash: HASH }, env, noopCtx, {
+      searchAndDetails: async () => {
+        searchCalled = true;
+        return null;
+      },
+    });
+
+    expect(searchCalled).toBe(false);
+    expect(captureState(kv)!.status).toBe('error');
+  });
+
+  it('logs and returns when precondition fails (state is still `partial`, no places)', async () => {
+    // Defensive: the extract stage should have left a `done` row with
+    // places before enqueueing enrich. If we get here with `partial`, the
+    // pipeline is in an unexpected state — log so it shows up in Sentry,
+    // but don't blow up.
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'partial',
+        caption: 'cap',
+        startedAt: new Date().toISOString(),
+      } satisfies OrchestratorState),
+    );
+    const env = envWithQueue(kv, makeNoopQueue().queue);
+
+    let searchCalled = false;
+    await routeStage({ stage: 'enrich', contentHash: HASH }, env, noopCtx, {
+      searchAndDetails: async () => {
+        searchCalled = true;
+        return null;
+      },
+    });
+
+    expect(searchCalled).toBe(false);
+    expect(captureState(kv)!.status).toBe('partial');
+  });
+
+  it('is idempotent on redelivery: skips when places are already enriched', async () => {
+    // The most important idempotency guard: a redelivered `enrich` message
+    // (e.g. ack lost between worker and runtime) must NOT redo the Google
+    // Places fan-out — both for cost reasons (~2 subrequests per place)
+    // and to avoid overwriting blurb data with a degraded second run.
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'done',
+        caption: 'cap',
+        places: [
+          {
+            name: 'A',
+            city: 'B',
+            address: '',
+            category: 'food',
+            country_code: '',
+            external_place_id: 'place_A',
+            blurb_status: 'ok',
+            blurb: 'A nice spot',
+          },
+        ],
+        model: 'gemini-test',
+      } satisfies OrchestratorState),
+    );
+    const env = envWithQueue(kv, makeNoopQueue().queue);
+
+    let searchCalled = false;
+    await routeStage({ stage: 'enrich', contentHash: HASH }, env, noopCtx, {
+      searchAndDetails: async () => {
+        searchCalled = true;
+        return null;
+      },
+    });
+
+    expect(searchCalled).toBe(false);
+    // KV unchanged.
+    const final = captureState(kv)!;
+    expect(final.places![0]!.external_place_id).toBe('place_A');
+    expect(final.places![0]!.blurb).toBe('A nice spot');
   });
 });

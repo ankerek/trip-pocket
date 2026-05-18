@@ -31,7 +31,11 @@ export type LogFields = {
     | 'share_received'
     | 'share_cache_hit'
     | 'orchestrate_skip'
-    | 'orchestrate_stale_pending';
+    | 'orchestrate_stale_pending'
+    | 'orchestrate_early_done'
+    | 'orchestrate_extract_transient'
+    | 'orchestrate_fetch_transient'
+    | 'blurb_deferred';
   stage?: Stage;
   /** Hex content_hash — doubles as the per-share trace id. */
   contentHash?: string;
@@ -56,6 +60,8 @@ export type LogFields = {
   slide_error?: string;
   /** Place name on per-place enrich warnings (NOT user text, just the LLM-emitted name). */
   place_name?: string;
+  /** Free-form short detail string (e.g. concatenated fallback-mode error codes). */
+  detail?: string;
 };
 
 function emit(fields: LogFields): void {

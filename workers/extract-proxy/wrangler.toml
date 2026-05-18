@@ -48,6 +48,33 @@ binding = "EXTRACT_STATE"
 id = "5353ac64da7649469ac6472675dbfabd"
 preview_id = "ac2ec4b46c41485c83bd70122384e01e"
 
+# --- Queues: stage-split orchestrator pipeline ----------------------------
+# POST /extract enqueues a `fetch-post` message; each stage handler
+# enqueues the next stage (extract → enrich). Same worker is producer +
+# consumer. Each stage gets its own Worker invocation, lifting the
+# pipeline off the single-isolate 30 s ctx.waitUntil cap that was
+# stranding video shares mid-pipeline.
+#
+# Queue + DLQ must exist on the account before first deploy:
+#   wrangler queues create trip-pocket-extract
+#   wrangler queues create trip-pocket-extract-dlq
+[[queues.producers]]
+binding = "EXTRACT_QUEUE"
+queue = "trip-pocket-extract"
+
+[[queues.consumers]]
+queue = "trip-pocket-extract"
+# One share per consumer invocation so each stage gets the full 30 s
+# ctx.waitUntil window for its current work.
+max_batch_size = 1
+# Slight batching window — irrelevant at max_batch_size=1 but the
+# runtime requires it. Keep low for snappy stage handoff.
+max_batch_timeout = 1
+# Retry transient stage failures (Gemini 503, Apify timeout, KV blip).
+# After 3 attempts the message lands in the DLQ for manual triage.
+max_retries = 3
+dead_letter_queue = "trip-pocket-extract-dlq"
+
 # Logs include status, latency, and error class only — never OCR text.
 [observability]
 enabled = true

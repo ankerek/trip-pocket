@@ -9,6 +9,9 @@ import {
   extractAuthorFromTikTokUrl,
   extractAuthorFromTikTokTitle,
   handleFetchPost,
+  runFetchPost,
+  RunFetchPostError,
+  TransientFetchError,
 } from '../src/fetch-post';
 import type { FetchPostResponse } from '../src/fetch-post';
 import type { Env } from '../src/index';
@@ -826,6 +829,71 @@ describe('handleFetchPost — Instagram', () => {
       const body = (await resp.json()) as { videoUrl?: string; videoDuration?: number | null };
       expect(body.videoUrl).toBe('https://cdn/reel.mp4');
       expect(body.videoDuration ?? null).toBeNull();
+    });
+  });
+
+  describe('runFetchPost — transient apify failures (queue-retry signal)', () => {
+    // The orchestrator branches on TransientFetchError to decide whether to
+    // write a terminal `error` row (permanent) or re-throw so the Cloudflare
+    // Queue runtime retries the message with backoff (transient). These tests
+    // pin the classification at the runFetchPost boundary — the surface the
+    // orchestrator actually consumes.
+    function envWithApifyAtTop(): Env {
+      return makeEnv({
+        APIFY_TOKEN: 'tok',
+        APIFY_ACTOR_ID: 'apify~instagram-post-scraper',
+      });
+    }
+
+    it('throws TransientFetchError when Apify returns TIMED-OUT on a /reel/', async () => {
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () =>
+            new Response(
+              JSON.stringify({
+                error: {
+                  type: 'run-failed',
+                  message: 'Actor run did not succeed (run ID: abc, status: TIMED-OUT).',
+                },
+              }),
+              { status: 400, headers: { 'content-type': 'application/json' } },
+            ),
+        },
+      ]);
+      await expect(
+        runFetchPost('https://www.instagram.com/reel/REELX/', envWithApifyAtTop()),
+      ).rejects.toBeInstanceOf(TransientFetchError);
+    });
+
+    it('throws TransientFetchError when Apify returns 429 on a /reel/', async () => {
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => new Response('', { status: 429 }),
+        },
+      ]);
+      await expect(
+        runFetchPost('https://www.instagram.com/reel/REELY/', envWithApifyAtTop()),
+      ).rejects.toBeInstanceOf(TransientFetchError);
+    });
+
+    it('throws plain RunFetchPostError (not transient) when Apify returns a 5xx', async () => {
+      // Generic 5xx stays on the existing terminal-failure path. We only
+      // promote codes that are reliably transient (timeout, rate-limit,
+      // network blip) to the queue-retry signal.
+      global.fetch = scriptedFetch([
+        {
+          match: (url) => url.includes('api.apify.com'),
+          response: () => new Response('', { status: 503 }),
+        },
+      ]);
+      const err = await runFetchPost(
+        'https://www.instagram.com/reel/REELZ/',
+        envWithApifyAtTop(),
+      ).catch((e) => e);
+      expect(err).toBeInstanceOf(RunFetchPostError);
+      expect(err).not.toBeInstanceOf(TransientFetchError);
     });
   });
 });

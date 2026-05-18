@@ -216,6 +216,58 @@ describe('fetchInstagramViaApify', () => {
     ).rejects.toMatchObject({ code: 'apify-upstream' });
   });
 
+  it('throws apify-timed-out (504) when the actor exceeds its per-run timeout', async () => {
+    // Apify returns 400 with a `run-failed` body whose message names the
+    // terminal run status. TIMED-OUT means the actor didn't finish within the
+    // `timeout=` we set on the run-sync URL — a transient upstream condition
+    // (cold-start, slow IG response). Classified distinctly so the
+    // orchestrator can let the queue retry instead of marking the source as
+    // permanently failed.
+    global.fetch = scriptedFetch([
+      {
+        match: () => true,
+        response: () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                type: 'run-failed',
+                message:
+                  'Actor run did not succeed (run ID: sjpfdOLtcgd6Ugczd, status: TIMED-OUT).',
+              },
+            }),
+            { status: 400, headers: { 'content-type': 'application/json' } },
+          ),
+      },
+    ]);
+    await expect(
+      fetchInstagramViaApify('https://www.instagram.com/p/X/', opts),
+    ).rejects.toMatchObject({ code: 'apify-timed-out', status: 504 });
+  });
+
+  it('still throws apify-upstream on a 400 with a non-TIMED-OUT run-failed body', async () => {
+    // Other terminal statuses (FAILED, ABORTED, etc.) aren't classified as
+    // transient — they typically signal an input/actor problem that retrying
+    // won't fix. Stay on the generic apify-upstream path.
+    global.fetch = scriptedFetch([
+      {
+        match: () => true,
+        response: () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                type: 'run-failed',
+                message: 'Actor run did not succeed (run ID: x, status: FAILED).',
+              },
+            }),
+            { status: 400, headers: { 'content-type': 'application/json' } },
+          ),
+      },
+    ]);
+    await expect(
+      fetchInstagramViaApify('https://www.instagram.com/p/X/', opts),
+    ).rejects.toMatchObject({ code: 'apify-upstream' });
+  });
+
   it('throws apify-not-configured when token or actorId is empty', async () => {
     await expect(
       fetchInstagramViaApify('https://x/p/Q/', { token: '', actorId: 'a' }),
