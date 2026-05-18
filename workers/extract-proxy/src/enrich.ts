@@ -600,8 +600,9 @@ export async function buildBulkBlurb(
     return out;
   }
 
-  const candidateText = (body as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> })
-    .candidates?.[0]?.content?.parts?.[0]?.text;
+  const candidateText = (
+    body as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> }
+  ).candidates?.[0]?.content?.parts?.[0]?.text;
   if (typeof candidateText !== 'string') return out;
 
   let parsed: unknown;

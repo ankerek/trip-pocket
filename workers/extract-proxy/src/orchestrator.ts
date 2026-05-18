@@ -1,15 +1,12 @@
 import type { Env } from './index';
-import type {
-  OrchestratorRequest,
-  OrchestratorState,
-  EnrichedPlace,
-} from './orchestrator-schema';
+import type { OrchestratorRequest, OrchestratorState, EnrichedPlace } from './orchestrator-schema';
 import type { WaitUntilCtx } from './video';
 import type { RequestBody, ExtractedPlace } from './schema';
 import { runFetchPost as defaultRunFetchPost } from './fetch-post';
 import { runExtract as defaultRunExtract } from './index';
 import type { FetchPostResponse } from './fetch-post';
 import { dedupePlaces } from './dedupe';
+import { RunExtractError } from './index';
 import {
   searchAndDetailsForPlace as defaultSearchAndDetails,
   buildBulkBlurb as defaultBuildBulkBlurb,
@@ -42,7 +39,13 @@ export type RunExtractFn = (
 ) => Promise<{ places: ExtractedPlace[]; model: string }>;
 
 export type SearchAndDetailsFn = (
-  req: { name: string; city: string; address: string; ocr_caption: string; extracted_place_id: string },
+  req: {
+    name: string;
+    city: string;
+    address: string;
+    ocr_caption: string;
+    extracted_place_id: string;
+  },
   env: Env,
 ) => Promise<PlaceDetails | null>;
 
@@ -66,10 +69,7 @@ export type OrchestrateDeps = {
   fetchImageBase64?: (url: string) => Promise<string>;
 };
 
-export async function readState(
-  hash: string,
-  env: Env,
-): Promise<OrchestratorState | null> {
+export async function readState(hash: string, env: Env): Promise<OrchestratorState | null> {
   const raw = await env.EXTRACT_STATE.get(KV_KEY(hash));
   if (!raw) return null;
   try {
@@ -119,10 +119,7 @@ export async function orchestrate(
   }
 
   const startedAt = new Date().toISOString();
-  await writeState(
-    { contentHash: req.contentHash, status: 'pending', startedAt },
-    env,
-  );
+  await writeState({ contentHash: req.contentHash, status: 'pending', startedAt }, env);
 
   const runFetchPost = deps.runFetchPost ?? defaultRunFetchPost;
   const runExtract = deps.runExtract ?? defaultRunExtract;
@@ -155,106 +152,17 @@ export async function orchestrate(
     env,
   );
 
-  let extractBody: RequestBody;
-  if (fetched.videoUrl) {
-    extractBody = {
-      mode: 'video',
-      video: {
-        url: fetched.videoUrl,
-        durationSec: fetched.videoDuration ?? undefined,
-        // Use the canonical post URL as Referer for the CDN fetch.
-        // TikTok's CDN rejects playAddr URLs that don't carry the
-        // per-video page URL here; IG's videoUrl historically tolerates
-        // homepage Referer but the per-post URL is friendlier.
-        refererUrl: fetched.permalink,
-      },
-      caption: fetched.caption,
-    };
-  } else if (fetched.imageUrls.length > 0) {
-    let imageBase64: string;
-    try {
-      imageBase64 = await fetchImageBase64(fetched.imageUrls[0]!);
-    } catch (err) {
-      console.error('orchestrate: cover fetch failed', String(err));
-      // Soft-degrade: drop to text mode using the caption if we have one.
-      if (fetched.caption.trim().length > 0) {
-        extractBody = { mode: 'text', text: fetched.caption };
-      } else {
-        await writeState(
-          {
-            contentHash: req.contentHash,
-            status: 'error',
-            error: 'no-extractable-content',
-            caption: fetched.caption,
-            startedAt,
-          },
-          env,
-        );
-        return;
-      }
-      await runExtractAndWriteDone(
-        extractBody,
-        env,
-        ctx,
-        runExtract,
-        searchAndDetails,
-        buildBulkBlurb,
-        req,
-        fetched,
-        startedAt,
-      );
-      return;
-    }
-    extractBody = { mode: 'vision', imageBase64, caption: fetched.caption };
-  } else if (fetched.caption.trim().length > 0) {
-    extractBody = { mode: 'text', text: fetched.caption };
-  } else {
-    await writeState(
-      {
-        contentHash: req.contentHash,
-        status: 'error',
-        error: 'no-extractable-content',
-        startedAt,
-      },
-      env,
-    );
-    return;
-  }
-
-  await runExtractAndWriteDone(
-    extractBody,
-    env,
-    ctx,
-    runExtract,
-    searchAndDetails,
-    buildBulkBlurb,
-    req,
-    fetched,
-    startedAt,
-  );
-}
-
-async function runExtractAndWriteDone(
-  extractBody: RequestBody,
-  env: Env,
-  ctx: WaitUntilCtx,
-  runExtract: RunExtractFn,
-  searchAndDetails: SearchAndDetailsFn,
-  buildBulkBlurb: BuildBulkBlurbFn,
-  req: OrchestratorRequest,
-  fetched: FetchPostResponse,
-  startedAt: string,
-): Promise<void> {
   let result: { places: ExtractedPlace[]; model: string };
   try {
-    result = await runExtract(extractBody, env, ctx);
+    result = await tryExtractWithFallback(fetched, env, ctx, runExtract, fetchImageBase64);
   } catch (err) {
-    console.error('orchestrate: extract failed', String(err));
+    const code = err instanceof Error ? err.message : String(err);
+    console.error('orchestrate: all extract modes failed', code);
     await writeState(
       {
         contentHash: req.contentHash,
         status: 'error',
-        error: 'extract-failed',
+        error: code === 'no-extractable-content' ? 'no-extractable-content' : 'extract-failed',
         caption: fetched.caption,
         coverUrl: fetched.imageUrls[0],
         videoPresent: !!fetched.videoUrl,
@@ -265,6 +173,119 @@ async function runExtractAndWriteDone(
     return;
   }
 
+  await enrichAndWriteDone(result, env, searchAndDetails, buildBulkBlurb, req, fetched, startedAt);
+}
+
+/**
+ * Extraction with graceful fallback across modes. Workers' egress IPs are
+ * frequently blocked by TikTok's CDN even with browser-shaped headers,
+ * leaving us with video-fetch-4xx. The fetch-post step already returns
+ * the cover image + caption, so falling back to vision (then text) keeps
+ * the place-extraction signal flowing even when video bytes are denied.
+ *
+ *   1. video        — most informative, requires CDN access
+ *   2. vision       — cover image + caption
+ *   3. text         — caption only
+ *
+ * The function returns the first mode that yields a Gemini response.
+ * Throws when no mode is available (the post had no video, no cover,
+ * and no caption — vanishingly rare) or every available mode failed
+ * upstream.
+ */
+async function tryExtractWithFallback(
+  fetched: FetchPostResponse,
+  env: Env,
+  ctx: WaitUntilCtx,
+  runExtract: RunExtractFn,
+  fetchImageBase64: (url: string) => Promise<string>,
+): Promise<{ places: ExtractedPlace[]; model: string }> {
+  const errors: string[] = [];
+
+  if (fetched.videoUrl) {
+    try {
+      return await runExtract(
+        {
+          mode: 'video',
+          video: {
+            url: fetched.videoUrl,
+            durationSec: fetched.videoDuration ?? undefined,
+            refererUrl: fetched.permalink,
+          },
+          caption: fetched.caption,
+        },
+        env,
+        ctx,
+      );
+    } catch (err) {
+      const code = err instanceof RunExtractError ? err.code : String(err);
+      console.warn('orchestrate: video-mode failed, falling back', code);
+      errors.push('video:' + code);
+    }
+  }
+
+  if (fetched.imageUrls.length > 0) {
+    // Carousel posts surface every slide via Apify. Fetch them in parallel
+    // and forward every slide that came back so the LLM can read place
+    // names that appear on slides 2+ (very common for "10 spots in X"
+    // listicles where slide 1 is just a hero image). Slide-level fetch
+    // failures are tolerated — a 403 on slide 7 shouldn't sink the post —
+    // but if every fetch fails we fall through to text mode.
+    const settled = await Promise.allSettled(fetched.imageUrls.map((u) => fetchImageBase64(u)));
+    const imageBase64: string[] = [];
+    for (let i = 0; i < settled.length; i++) {
+      const r = settled[i]!;
+      if (r.status === 'fulfilled') {
+        imageBase64.push(r.value);
+      } else {
+        const code = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        console.warn(
+          'orchestrate: carousel slide fetch failed',
+          'idx=' + i,
+          'count=' + fetched.imageUrls.length,
+          code,
+        );
+      }
+    }
+    if (imageBase64.length > 0) {
+      try {
+        return await runExtract(
+          { mode: 'vision', imageBase64, caption: fetched.caption },
+          env,
+          ctx,
+        );
+      } catch (err) {
+        const code = err instanceof Error ? err.message : String(err);
+        console.warn('orchestrate: vision-mode failed, falling back', code);
+        errors.push('vision:' + code);
+      }
+    } else {
+      errors.push('vision:image-fetch-all-failed');
+    }
+  }
+
+  if (fetched.caption.trim().length > 0) {
+    try {
+      return await runExtract({ mode: 'text', text: fetched.caption }, env, ctx);
+    } catch (err) {
+      const code = err instanceof RunExtractError ? err.code : String(err);
+      console.warn('orchestrate: text-mode failed', code);
+      errors.push('text:' + code);
+    }
+  }
+
+  if (errors.length === 0) throw new Error('no-extractable-content');
+  throw new Error(errors.join(', '));
+}
+
+async function enrichAndWriteDone(
+  result: { places: ExtractedPlace[]; model: string },
+  env: Env,
+  searchAndDetails: SearchAndDetailsFn,
+  buildBulkBlurb: BuildBulkBlurbFn,
+  req: OrchestratorRequest,
+  fetched: FetchPostResponse,
+  startedAt: string,
+): Promise<void> {
   const extractedDeduped = dedupePlaces(result.places);
 
   // Enrich each place against Google Places in parallel. PlacesError per

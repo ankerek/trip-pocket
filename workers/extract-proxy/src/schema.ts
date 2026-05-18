@@ -47,9 +47,18 @@ const textModeSchema = z.object({
   }),
 });
 
+// imageBase64 accepts either a single base64 string (canonical for client
+// screenshot uploads — one image per share) or an array (the orchestrator
+// fans out IG carousels into one part per slide). Both shapes normalise to
+// a non-empty string[] so downstream code only deals with one type.
 const visionModeSchema = z.object({
   mode: z.literal('vision'),
-  imageBase64: z.string().min(1, 'imageBase64 must be non-empty'),
+  imageBase64: z
+    .union([
+      z.string().min(1, 'imageBase64 must be non-empty'),
+      z.array(z.string().min(1, 'imageBase64 entries must be non-empty')).min(1),
+    ])
+    .transform((v) => (Array.isArray(v) ? v : [v])),
   caption: z.string().optional(),
 });
 

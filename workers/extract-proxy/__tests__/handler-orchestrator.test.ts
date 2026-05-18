@@ -157,11 +157,7 @@ describe('handleExtractPost', () => {
   it('returns 400 for missing url with kind=url', async () => {
     const env = makeEnv();
     const ctx = { waitUntil: jest.fn() };
-    const res = await handleExtractPost(
-      postExtract({ contentHash: HASH, kind: 'url' }),
-      env,
-      ctx,
-    );
+    const res = await handleExtractPost(postExtract({ contentHash: HASH, kind: 'url' }), env, ctx);
     expect(res.status).toBe(400);
   });
 

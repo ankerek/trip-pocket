@@ -1,12 +1,5 @@
-import {
-  orchestrate,
-  EXTRACT_STATE_TTL_SECONDS,
-  STALE_PENDING_MS,
-} from '../src/orchestrator';
-import type {
-  OrchestratorRequest,
-  OrchestratorState,
-} from '../src/orchestrator-schema';
+import { orchestrate, EXTRACT_STATE_TTL_SECONDS, STALE_PENDING_MS } from '../src/orchestrator';
+import type { OrchestratorRequest, OrchestratorState } from '../src/orchestrator-schema';
 import type { FetchPostResponse } from '../src/fetch-post';
 import type { Env } from '../src/index';
 
@@ -18,11 +11,7 @@ function makeKv() {
   return {
     store,
     ttls,
-    async put(
-      key: string,
-      value: string,
-      opts?: { expirationTtl?: number },
-    ): Promise<void> {
+    async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
       store.set(key, value);
       if (opts?.expirationTtl != null) ttls.set(key, opts.expirationTtl);
     },
@@ -187,7 +176,7 @@ describe('orchestrate', () => {
   it('chooses vision mode when no video but cover present', async () => {
     const env = makeEnv();
     let observedMode: string | null = null;
-    let observedImage: string | null = null;
+    let observedImage: string | string[] | null = null;
     await orchestrate(
       { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
       env,
@@ -206,7 +195,90 @@ describe('orchestrate', () => {
       },
     );
     expect(observedMode).toBe('vision');
-    expect(observedImage).toBe('b64data');
+    expect(observedImage).toEqual(['b64data']);
+  });
+
+  it('sends every carousel slide to runExtract in vision mode', async () => {
+    const env = makeEnv();
+    let observedImages: string[] | null = null;
+    const fetchCalls: string[] = [];
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({
+            imageUrls: ['https://cdn/c1.jpg', 'https://cdn/c2.jpg', 'https://cdn/c3.jpg'],
+          }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async (body) => {
+          if (body.mode === 'vision') observedImages = body.imageBase64;
+          return { places: [], model: 'm' };
+        },
+        fetchImageBase64: async (u) => {
+          fetchCalls.push(u);
+          return `b64:${u.split('/').pop()}`;
+        },
+      },
+    );
+    expect(fetchCalls).toEqual(['https://cdn/c1.jpg', 'https://cdn/c2.jpg', 'https://cdn/c3.jpg']);
+    expect(observedImages).toEqual(['b64:c1.jpg', 'b64:c2.jpg', 'b64:c3.jpg']);
+  });
+
+  it('tolerates per-slide fetch failures and forwards the survivors', async () => {
+    const env = makeEnv();
+    let observedImages: string[] | null = null;
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({
+            imageUrls: ['https://cdn/c1.jpg', 'https://cdn/c2.jpg', 'https://cdn/c3.jpg'],
+          }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async (body) => {
+          if (body.mode === 'vision') observedImages = body.imageBase64;
+          return { places: [], model: 'm' };
+        },
+        fetchImageBase64: async (u) => {
+          if (u.endsWith('c2.jpg')) throw new Error('image-fetch-403');
+          return `b64:${u.split('/').pop()}`;
+        },
+      },
+    );
+    expect(observedImages).toEqual(['b64:c1.jpg', 'b64:c3.jpg']);
+  });
+
+  it('falls back to text mode when every carousel slide fetch fails', async () => {
+    const env = makeEnv();
+    let observedMode: string | null = null;
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({
+            caption: 'a long caption naming places',
+            imageUrls: ['https://cdn/c1.jpg', 'https://cdn/c2.jpg'],
+          }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async (body) => {
+          observedMode = body.mode;
+          return { places: [], model: 'm' };
+        },
+        fetchImageBase64: async () => {
+          throw new Error('image-fetch-403');
+        },
+      },
+    );
+    expect(observedMode).toBe('text');
   });
 
   it('chooses text mode when no video and no cover but caption present', async () => {
@@ -380,7 +452,13 @@ describe('orchestrate — enrichment', () => {
           places: [
             { name: 'Tartine', city: 'SF', address: '', category: 'food', country_code: 'US' },
             // Same Google place_id as above — should be deduped after Places lookup.
-            { name: 'Tartine Bakery SF', city: 'SF', address: '', category: 'food', country_code: 'US' },
+            {
+              name: 'Tartine Bakery SF',
+              city: 'SF',
+              address: '',
+              category: 'food',
+              country_code: 'US',
+            },
             // Distinct place — should survive.
             { name: 'Mister Jius', city: 'SF', address: '', category: 'food', country_code: 'US' },
           ],
@@ -469,9 +547,7 @@ describe('orchestrate — enrichment', () => {
           cacheKind: 'og',
         }),
         runExtract: async () => ({
-          places: [
-            { name: 'X', city: 'SF', address: '', category: 'food', country_code: 'US' },
-          ],
+          places: [{ name: 'X', city: 'SF', address: '', category: 'food', country_code: 'US' }],
           model: 'gemini-test',
         }),
         fetchImageBase64: async () => 'b64',
@@ -517,7 +593,13 @@ describe('orchestrate — enrichment', () => {
         }),
         runExtract: async () => ({
           places: [
-            { name: 'Imaginary Spot', city: 'Nowhere', address: '', category: 'food', country_code: '' },
+            {
+              name: 'Imaginary Spot',
+              city: 'Nowhere',
+              address: '',
+              category: 'food',
+              country_code: '',
+            },
           ],
           model: 'gemini-test',
         }),

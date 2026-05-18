@@ -1,7 +1,4 @@
-import {
-  orchestratorRequestSchema,
-  orchestratorStateSchema,
-} from '../src/orchestrator-schema';
+import { orchestratorRequestSchema, orchestratorStateSchema } from '../src/orchestrator-schema';
 
 describe('orchestratorRequestSchema', () => {
   it('accepts kind=url with a valid url and 64-hex contentHash', () => {
@@ -66,9 +63,7 @@ describe('orchestratorStateSchema', () => {
       status: 'done',
       caption: 'hi',
       coverUrl: 'https://cdn.example/a.jpg',
-      places: [
-        { name: 'Tartine', city: 'SF', address: '', category: 'food', country_code: 'US' },
-      ],
+      places: [{ name: 'Tartine', city: 'SF', address: '', category: 'food', country_code: 'US' }],
       model: 'gemini-2.5-flash-lite',
     });
     expect(r.success).toBe(true);

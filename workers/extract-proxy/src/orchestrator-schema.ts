@@ -33,10 +33,7 @@ export const enrichedPlaceSchema = placeSchema.extend({
   // Mirrors enrichDebugSchema.blurbOutcome plus 'not-found' for places
   // that lacked a Google Places match (we still record the place but
   // can't generate a grounded blurb without `displayName` and details).
-  blurb_status: z
-    .enum(['ok', 'empty', 'failed', 'not-found'])
-    .nullable()
-    .optional(),
+  blurb_status: z.enum(['ok', 'empty', 'failed', 'not-found']).nullable().optional(),
 });
 
 export type EnrichedPlace = z.infer<typeof enrichedPlaceSchema>;

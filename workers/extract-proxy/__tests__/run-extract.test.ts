@@ -27,9 +27,7 @@ function geminiOk(
   const padded = places.map((p) => ({ address: '', country_code: '', ...p }));
   return new Response(
     JSON.stringify({
-      candidates: [
-        { content: { parts: [{ text: JSON.stringify({ places: padded }) }] } },
-      ],
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ places: padded }) }] } }],
     }),
     { status: 200, headers: { 'content-type': 'application/json' } },
   );
@@ -165,8 +163,7 @@ describe('runExtract — error classification', () => {
   });
 
   it('throws upstream-error on Gemini 5xx', async () => {
-    globalThis.fetch = (async () =>
-      new Response('boom', { status: 500 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response('boom', { status: 500 })) as typeof fetch;
     await expect(runExtract({ mode: 'text', text: 'hi' }, makeEnv())).rejects.toMatchObject({
       code: 'upstream-error',
       status: 502,
@@ -264,7 +261,7 @@ describe('runExtract — vision mode', () => {
   it('sends inline_data with image/jpeg mime when bytes are JPEG', async () => {
     const fetchSpy = jest.fn(async () => geminiOk([])) as unknown as typeof fetch;
     globalThis.fetch = fetchSpy;
-    await runExtract({ mode: 'vision', imageBase64: jpegB64 }, makeEnv());
+    await runExtract({ mode: 'vision', imageBase64: [jpegB64] }, makeEnv());
     const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string) as {
       contents: [{ parts: Array<Record<string, unknown>> }];
@@ -278,7 +275,7 @@ describe('runExtract — vision mode', () => {
   it('falls back to image/jpeg when bytes are not recognised', async () => {
     const fetchSpy = jest.fn(async () => geminiOk([])) as unknown as typeof fetch;
     globalThis.fetch = fetchSpy;
-    await runExtract({ mode: 'vision', imageBase64: btoa('totally-random') }, makeEnv());
+    await runExtract({ mode: 'vision', imageBase64: [btoa('totally-random')] }, makeEnv());
     const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string) as {
       contents: [{ parts: Array<Record<string, unknown>> }];
@@ -291,7 +288,7 @@ describe('runExtract — vision mode', () => {
     const fetchSpy = jest.fn(async () => geminiOk([])) as unknown as typeof fetch;
     globalThis.fetch = fetchSpy;
     await runExtract(
-      { mode: 'vision', imageBase64: jpegB64, caption: 'check out Tartine' },
+      { mode: 'vision', imageBase64: [jpegB64], caption: 'check out Tartine' },
       makeEnv(),
     );
     const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
@@ -299,23 +296,46 @@ describe('runExtract — vision mode', () => {
       contents: [{ parts: Array<Record<string, unknown>> }];
     };
     expect(body.contents[0].parts).toHaveLength(2);
-    expect((body.contents[0].parts[1] as { text: string }).text).toContain(
-      'check out Tartine',
-    );
+    expect((body.contents[0].parts[1] as { text: string }).text).toContain('check out Tartine');
   });
 
   it('does not append a caption part when caption is empty or whitespace', async () => {
     const fetchSpy = jest.fn(async () => geminiOk([])) as unknown as typeof fetch;
     globalThis.fetch = fetchSpy;
+    await runExtract({ mode: 'vision', imageBase64: [jpegB64], caption: '   ' }, makeEnv());
+    const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as {
+      contents: [{ parts: Array<Record<string, unknown>> }];
+    };
+    expect(body.contents[0].parts).toHaveLength(1);
+  });
+
+  it('sends one inline_data part per image for multi-image carousels', async () => {
+    const fetchSpy = jest.fn(async () => geminiOk([])) as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
+    // PNG magic-number: 0x89 0x50 0x4e 0x47 0x0d 0x0a 0x1a 0x0a
+    const pngB64 = btoa('\x89PNG\r\n\x1a\n\x00\x00\x00\x0d');
     await runExtract(
-      { mode: 'vision', imageBase64: jpegB64, caption: '   ' },
+      { mode: 'vision', imageBase64: [jpegB64, pngB64, jpegB64], caption: 'cap' },
       makeEnv(),
     );
     const init = (fetchSpy as unknown as jest.Mock).mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string) as {
       contents: [{ parts: Array<Record<string, unknown>> }];
     };
-    expect(body.contents[0].parts).toHaveLength(1);
+    const parts = body.contents[0].parts;
+    // 3 images + 1 caption
+    expect(parts).toHaveLength(4);
+    expect(parts[0]).toEqual({
+      inline_data: { mime_type: 'image/jpeg', data: jpegB64 },
+    });
+    expect(parts[1]).toEqual({
+      inline_data: { mime_type: 'image/png', data: pngB64 },
+    });
+    expect(parts[2]).toEqual({
+      inline_data: { mime_type: 'image/jpeg', data: jpegB64 },
+    });
+    expect((parts[3] as { text: string }).text).toContain('cap');
   });
 });
 

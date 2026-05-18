@@ -26,7 +26,7 @@ Out of scope:
 - **Styling:** NativeWind v5 + Tailwind v4 (`react-native-css` pipeline). Single token file (Sea+Teal palette, spacing, type scale); dark mode supported.
 - **Monetization:** RevenueCat (`react-native-purchases`) wrapping StoreKit. Anonymous-only RC identity. Worker-side `requireEntitlement` middleware fronts the AI proxy.
 - **Crash + analytics:** Sentry for crashes + non-fatals (JS + native, anonymous install UUID identity, sourcemaps uploaded by `eas-build-on-success`). Product analytics (PostHog) deferred — spec is written but unshipped; `modules/pipeline-log` covers per-source debugging in the interim.
-- **Backend:** a thin AI / scraping proxy on Cloudflare Workers. Stateless, no database. Endpoints: `POST /extract`, `POST /enrich`, `GET /photo/:name`, `POST /fetch-post`. The device is still the source of truth for everything except the LLM calls and external scraping.
+- **Backend:** a thin AI / scraping proxy on Cloudflare Workers. No database; one Workers KV namespace (`EXTRACT_STATE`, 72h TTL) caches the share-time pre-warm orchestrator's per-`content_hash` state. Per-IP rate limit binding (100 req / 60s). Endpoints: `POST /extract` (orchestrator pre-warm — 202 + `ctx.waitUntil`), `GET /extract/:contentHash` (poll cached state), `POST /enrich`, `GET /photo/:name`. The Gemini LLM call (text / vision / video) is routed through **Cloudflare AI Gateway** → Google AI Studio, model `gemini-2.5-flash-lite`. The legacy public `POST /extract` (text/vision/video body) and `POST /fetch-post` routes were folded into internal helpers (`runExtract`, `runFetchPost`) the orchestrator drives directly. The device is still the source of truth for everything except the LLM calls and external scraping.
 - **Platforms:** iOS only through v1.0. Android lives in the v1.x parking lot.
 
 ## Data model
@@ -38,7 +38,7 @@ The shape is **places-first**: each ingested item is a `source` (a screenshot fi
 Tables:
 
 - `trips` — `id`, `name`, `color`, `owner_id`, `created_at`, `updated_at`.
-- `sources` — `id`, `kind` (`image` | `url` | `pasted`), `platform` (`instagram` | `tiktok` | NULL for screenshots), `trip_id` (nullable; NULL = Inbox), `file_path` (image kind), `url` + `caption` (url kind), `content_hash`, `origin` (`share` | `auto` | `manual`), `ocr_status`, `ocr_text`, `extraction_status`, `extraction_paused_reason` (nullable), `enrichment_paused_reason` (nullable), `fetch_post_paused_reason` (nullable), `captured_at`, `owner_id`, `created_at`, `updated_at`. UNIQUE index on `content_hash` (SHA-256 of file bytes for images; SHA-256 of normalized canonical URL for url kind).
+- `sources` — `id`, `kind` (`image` | `url` | `pasted`), `platform` (`instagram` | `tiktok` | NULL for screenshots), `trip_id` (nullable; NULL = Inbox), `file_path` (image kind, or the worker-resolved cover for url kind), `url` + `caption` (url kind), `content_hash`, `origin` (`share` | `auto` | `manual`), `ocr_status`, `ocr_text`, `extraction_status`, `extraction_strategy` (nullable — `ocrTextLLM` / `vision` / `captionPlusVision` / `videoPlusCaption`; NULL legacy rows treated as `ocrTextLLM`), `fetched_via` (nullable — telemetry tag naming the worker `LinkFetcher` that resolved the URL), `extraction_paused_reason` (nullable), `enrichment_paused_reason` (nullable), `fetch_post_paused_reason` (nullable), `captured_at`, `owner_id`, `created_at`, `updated_at`. UNIQUE index on `content_hash` (SHA-256 of file bytes for images; SHA-256 of normalized canonical URL for url kind).
 - `places` — `id`, `trip_id`, `name`, `city`, `country_code` (ISO-2), `category` (one of `food` / `drinks` / `stays` / `sights` / `activities` / `shops`, nullable), `normalized_key`, `external_place_id` (Google Place ID), `photo_name`, `description`, `rating`, `price_level`, `external_url`, `latitude`, `longitude`, `formatted_address`, `enrichment_status` (`pending` | `enriched` | `not-found` | `failed`), `enriched_at`, `enrichment_model`, `owner_id`, `created_at`, `updated_at`. UNIQUE on (`external_place_id`, `owner_id`) where `external_place_id IS NOT NULL`; non-unique index on `normalized_key` (same-name chains like "Starbucks in Tokyo" don't auto-collapse, the extractor enforces sole-match dedup).
 - `place_sources` — junction: `place_id`, `source_id` (composite PK), `extracted_at`, `raw_text` (the OCR snippet the LLM used), `extracted_address`, `confidence`, `extraction_model`, `owner_id`, timestamps. One source can produce zero, one, or many places; one place can be backed by many sources.
 - `pending_imports` — `id`, `kind` (`image` | `url`), `app_group_path` (image), `url` (url), `suggested_trip_id`, `created_at`. Written by the share extension, consumed by the main app on next foreground. Not synced.
@@ -108,17 +108,21 @@ Boundaries:
 
 The share extension is a _dumb mailbox_. It never runs OCR or anything memory-heavy — iOS extensions have ~120 MB and a few seconds of runtime, both easy to blow past. If the post-copy database write fails it removes its own staged file to keep Retry idempotent.
 
-### Ingestion: share extension (URL)
+### Ingestion: share extension (URL) — share-time pre-warm
 
 1. User taps Share on an Instagram or TikTok post inside those apps; the share sheet hands a `URL` to Trip Pocket (the extension's `Info.plist` declares `NSExtensionActivationSupportsWebURLWithMaxCount=1`).
 2. Same entitlement gate, same trip picker.
 3. Extension writes a `pending_imports` row (`kind='url'`, `url`, `suggested_trip_id`) — no file copy.
-4. On the main app's next foreground, `modules/capture`:
+4. Extension fires a **background `URLSession` POST to the worker's `/extract` orchestrator** with `{ contentHash, kind: 'url', url, suggestedTripId? }` and `X-RC-User-Id` read from App Group `UserDefaults` (the main app mirrors the RC anonymous id there on launch). The host app's `AppDelegate.handleEventsForBackgroundURLSession` keeps the upload alive after the extension is killed by iOS. Goal: the pipeline starts _while the user is still in Photos_, so by the time they open Trip Pocket the result is cached.
+5. The worker checks `EXTRACT_STATE` KV for that `content_hash`. Cache hit → 200 with the cached state. Cache miss → write `pending`, return 202, and schedule the orchestrator via `ctx.waitUntil` (Workers Paid plan affords ~5 min wall-clock — enough for Apify + Gemini video extraction). The orchestrator: calls `runFetchPost(url)` → writes `partial` state with caption + cover URL → picks the extract mode (video > vision > text) → calls `runExtract` → dedupes places → writes `done` (or `error`) state.
+6. On the main app's next foreground, `modules/capture`:
    - Normalizes the URL (canonical IG / TikTok form), hashes it (SHA-256 of the normalized URL string), dedupes against `sources`.
-   - Writes a `sources` row with `kind='url'`, `platform='instagram' | 'tiktok'`, `ocr_status='pending'`, etc.
-   - Kicks off the worker `POST /fetch-post` call, which resolves cover image + caption (via `og:*` meta tags, Apify, or TikTok rehydration JSON depending on the post type — see "Fetch-post" below).
+   - Writes a `sources` row with `kind='url'`, `platform='instagram' | 'tiktok'`, `extraction_status='pending'`, `extraction_strategy=NULL` (stamped after fetch returns).
+   - Hands the row to `pollExtract(contentHash)` which polls `GET /extract/:contentHash` until `status='done' | 'error'`. On `done` the client persists `places` + `place_sources` rows in one transaction (running the same cross-source `findSoleMatchByNormalizedKey` dedup as the device-side flow) and flips `sources.extraction_status='done'`.
 
-Manual import inside the app uses `expo-image-picker` and the same trip-picker component, with `origin='manual'`. URL pasting follows the same code path as URL share, with `origin='manual'`.
+Manual import inside the app uses `expo-image-picker` and the same trip-picker component, with `origin='manual'`. URL pasting follows the same code path as URL share (including the worker `/extract` call), with `origin='manual'`. The legacy in-app `enqueueUrlFetch` path was removed (commit `7dd0d19`, 2026-05-18); URL sources now go through the orchestrator exclusively.
+
+(Screenshot / image-share pre-warm is **out of scope** for v1 of the orchestrator — screenshots stay on the on-device OCR + extract flow. v2 will add a `/upload` route + R2 bucket so image shares can pre-warm too.)
 
 (Background screenshot auto-detect was originally listed here but is a permanent non-goal — share-sheet capture is the wedge. ROADMAP.md has the rationale.)
 
@@ -135,13 +139,30 @@ Manual import inside the app uses `expo-image-picker` and the same trip-picker c
 
 ### Extraction (AI)
 
-- After a source's `ocr_status` flips to `done`, `modules/extraction` is eligible to process it.
-- Pre-flight: checks `lib/entitlement.isEntitled()`. If inactive, the source row gets `extraction_paused_reason='entitlement'` and is parked. (The entitlement gate is also enforced server-side — see "Worker auth".)
-- If allowed: posts `{ ocr_text, content_type_hint?, request_id }` to `POST /extract` with header `X-RC-User-Id: <RC anonymous id>`. The image bytes don't leave the device.
-- Worker forwards to Gemini 2.5 Flash-Lite via Cloudflare AI Gateway with a fixed prompt asking for `[{name, city, country_code, category, confidence}]` as JSON. Empty result = noise classifier (the LLM is allowed to say "no places here").
-- On response, `modules/extraction` performs sole-match dedup against existing `places` (by `external_place_id` first when available, otherwise by `normalized_key` scoped to the owner). Writes new `places` rows or attaches a `place_sources` junction to an existing place; either path runs the LLM's `name`, `city`, `country_code`, `category` through the asymmetric-fill rules so a previously-NULL field can be filled by a later extraction.
-- Failure modes (network down, proxy 5xx, LLM bad JSON): `extraction_status='failed'`, retried on next foreground up to N attempts. 401 pauses instead.
-- Single-flight discipline: one source at a time. No background extraction in v1.0.
+Extraction is **composable**: each source row carries an `extraction_strategy` stamped at import time (or after worker fetch for URL sources). The orchestrator dispatches to one of four strategies, all of which converge on a shared sole-match dedup + persist step.
+
+**Strategies** (`modules/extraction/strategies/`):
+
+- **`ocrTextLLM`** — original text-mode path. Runs Apple Vision OCR on the image, then sends `ocr_text` to the worker. Used for plain screenshots without EXIF GPS, and as the universal soft-degrade fallback.
+- **`vision`** — sends the image bytes (base64) directly to Gemini in vision mode, skipping device-side OCR. Default for image shares without a caption hint.
+- **`captionPlusVision`** — vision + an EXIF-derived "Photo taken in X" caption hint (camera photos with GPS), or, for URL sources, the post caption alongside the cover image. Lets the LLM ground place inferences in location signal it otherwise wouldn't have.
+- **`videoPlusCaption`** — short video (IG Reel / TikTok video) + caption. Worker fetches the signed video URL itself (closer to the CDN than the phone, no cellular cost) and forwards bytes to Gemini either inline (<18 MB) or via Gemini's Files API (>=18 MB, with a `ctx.waitUntil`'d cleanup DELETE). Hard caps: 25 MB body, 90s duration — beyond either, fall back to `captionPlusVision` on the cover frame. The strategy may report `telemetry.fallbackUsed=true` so dashboards distinguish "video succeeded" from "video succeeded via fallback".
+
+Strategy is selected by `strategyForImageImport` / `strategyForUrlAfterFetch` (`modules/extraction/strategies/select.ts`) from `app.config.extra.forceStrategy` (developer override, `auto` in production) plus row context (`hasCaption`, `hasFile`, `hasVideo`). Soft-degrade rules send missing prerequisites down the safe path — e.g. `force=video` on an image row picks `vision`; `videoPlusCaption` without a cover file falls all the way back to `ocrTextLLM`.
+
+**Flow:**
+
+- After a row becomes eligible (text strategies wait for `ocr_status='done'`; vision/video strategies need only `file_path`), `modules/extraction` enqueues it.
+- Pre-flight: checks `lib/entitlement.isEntitled()`. If inactive, the row gets `extraction_paused_reason='entitlement'` and is parked. (The entitlement gate is also enforced server-side — see "Worker auth".)
+- The strategy posts the appropriate request shape to the worker with `X-RC-User-Id`:
+  - text mode: `{ mode: 'text', text }` (or the legacy `{ ocr_text }` alias the worker still accepts for one release)
+  - vision mode: `{ mode: 'vision', imageBase64, caption? }`
+  - video mode: `{ mode: 'video', video: { url, durationSec? }, caption? }`
+  - URL-source orchestrator: `pollExtract(contentHash)` against `GET /extract/:contentHash`, which returns the worker-side composed result (worker picks the mode based on what `runFetchPost` resolved).
+- Worker forwards to **Gemini 2.5 Flash-Lite** via **Cloudflare AI Gateway** (`gateway.ai.cloudflare.com/v1/{accountId}/{gatewayName}/google-ai-studio/...`) authenticated with a `cf-aig-authorization` bearer (Authenticated Gateways). Fixed `SYSTEM_PROMPT` + structured `responseSchema` returning `{ places: [{ name, city, address, category, country_code }] }`. Video mode appends a `VIDEO_PROMPT_SUFFIX` reminding the model to read on-screen text overlays carefully (Reel place mentions live in title cards, not the caption). Empty array = noise classifier (the LLM is allowed to say "no places here").
+- On response, `modules/extraction` runs per-call dedup (case-insensitive `name + city + address`), then sole-match dedup against existing `places` by `normalized_key` scoped to owner. Writes new `places` rows or attaches a `place_sources` junction to an existing place; either path runs `name`, `city`, `country_code`, `category` through asymmetric-fill rules so a previously-NULL field can be filled by a later extraction, but a non-NULL value is never overwritten (enrichment from Google Places is the only path that overwrites). `address` is persisted on the junction row (`place_sources.extracted_address`) and forwarded to `/enrich` as a hint.
+- Failure modes (network down, proxy 5xx, LLM bad JSON): `extraction_status='failed'`, retried on next foreground up to 3 attempts. 401 pauses instead. 429 defers via `retry-after` without consuming the budget.
+- Single-flight discipline: one source at a time on-device. No background extraction in v1.0 — the share-time pre-warm orchestrator runs in the worker, not the phone.
 
 ### Enrichment
 
@@ -150,14 +171,17 @@ Manual import inside the app uses `expo-image-picker` and the same trip-picker c
 - Three write paths handled: no-collision (insert), merge-winner (existing place gets enriched fields), merge-skip (different non-null trips — keep both rows, write descriptive fields but withhold `external_place_id` to satisfy the UNIQUE index).
 - Same 401-pause semantics as extraction.
 
-### Fetch-post (URL captures)
+### Fetch-post (URL resolution — internal helper)
 
-- `POST /fetch-post` on the worker resolves an IG or TikTok URL to `{ cover_image_url, caption, platform, _debug? }`.
-- IG fast path: scrape `og:image` + `og:description` from the public canonical URL.
-- IG fallback: Apify `apify/instagram-post-scraper` actor for carousels (detected via base64-decoded `efg` parameter) and for og: failures. Soft-degrades to "not configured" when `APIFY_TOKEN` is unset so dev environments don't need a paid token.
-- TikTok primary: parse `__UNIVERSAL_DATA_FOR_REHYDRATION__` script-tag JSON (`data.__DEFAULT_SCOPE__['webapp.reflow.video.detail'].itemInfo.itemStruct`). Recovers all photo-slideshow slides; discriminates photo vs video via `imagePost` field.
-- TikTok fallback: oEmbed.
-- Worker caches Apify results 7 days, rehydration results 1 day (TikTok signed URLs expire ~47h). `_debug` echo (dev only) carries route, og outcome, Apify outcome, cache hit.
+`runFetchPost(url)` lives in `workers/extract-proxy/src/fetch-post.ts` and is invoked by the orchestrator (no public HTTP route — the legacy `POST /fetch-post` was removed when the share-time pre-warm orchestrator landed). It resolves an IG or TikTok URL to `{ platform, permalink, caption, imageUrls, author, videoUrl?, videoDuration?, _debug }`, dispatched via the pluggable `LinkFetcher` chain (`src/fetchers/`):
+
+- **IG `/p/` posts:** og:\* fast path on the canonical URL. Uses the base64-decoded `efg` query param on `og:image` to classify single / carousel / clips cheaply. Singles ship og only; carousels (and unknown `efg`) escalate to Apify (`apify~instagram-post-scraper`) for slides 2..N.
+- **IG `/reel/` and `/tv/`:** with Apify configured, **skip og: entirely and go straight to Apify** — IG's production Reel HTML no longer exposes `og:video*` so the round-trip is pure latency. Without Apify configured, soft-degrades to og: (cover + caption only, no video extraction).
+- **TikTok primary:** parse `__UNIVERSAL_DATA_FOR_REHYDRATION__` script-tag JSON (`data.__DEFAULT_SCOPE__['webapp.reflow.video.detail'].itemInfo.itemStruct`). Recovers all photo-slideshow slides; discriminates photo vs video via `imagePost`; extracts `playAddr` / `downloadAddr` for video mode.
+- **TikTok fallback:** oEmbed (officially documented; safety net when the rehydration parser fails — anti-bot stub, schema drift, deleted post).
+- **Caching:** Apify-backed responses get `Cache-Control: public, s-maxage=604800` (7 days); og-only / TikTok rehydration get 1 day (TikTok signed URLs expire ~47h). Errors get `Cache-Control: no-store` so a transient Apify outage doesn't poison a URL for the full success TTL.
+- **`_debug` echo** (closed vocabulary: `route`, `ogOutcome`, `apifyOutcome`, `cacheHit`) is forwarded by the client into the pipeline log's `url_fetch` stage so `wrangler tail` isn't needed to see which path the worker took.
+- Apify is gated by `APIFY_TOKEN` + `APIFY_ACTOR_ID` Wrangler secrets; soft-degrades to "not configured" when unset.
 
 ### Browse / search
 
@@ -226,7 +250,7 @@ A handful of small Swift modules, each ~100–300 lines. We own them — communi
 - SQL migrations as numbered files in `modules/storage/migrations/`. Linear, no down-migrations.
 - A migration runner applies anything new on launch and stores the current version in `meta`.
 - **Pre-v0.3 dev DB wipe.** While there were no users, schema changes that would otherwise require a migration were sometimes applied by editing `0001_init.ts` in place rather than carrying old shapes forward. To pick up such a change locally: long-press the simulator app → Remove app → Delete, or remove `trip-pocket.db` from the simulator app sandbox. The shape stabilised before TestFlight; from `0002_url_share.ts` onward all schema changes ship as proper numbered migrations.
-- Currently shipped migrations: `0001_init`, `0002_url_share`, `0003_pending_imports_nullable_path`, `0004_rename_screenshot_to_image`, `0005_pipeline_events`, `0006_country_search`, `0007_entitlement_paused_reason`, `0008_category_rename`, `0009_drop_tags`.
+- Currently shipped migrations: `0001_init`, `0002_url_share`, `0003_pending_imports_nullable_path`, `0004_rename_screenshot_to_image`, `0005_pipeline_events`, `0006_country_search`, `0007_entitlement_paused_reason`, `0008_category_rename`, `0009_drop_tags`, `0010_extraction_strategy_columns`.
 
 ### Paywall + trial (v1.0 — shipped)
 
@@ -270,20 +294,30 @@ The app is paid from day one. There is no free tier.
 
 The proxy is the only piece of server-side infrastructure. Keep it boring.
 
-- **Runtime:** Cloudflare Workers (`workers/extract-proxy/`). Stateless, no database.
+- **Runtime:** Cloudflare Workers (`workers/extract-proxy/`, Wrangler 4). Mostly stateless — one Workers KV namespace + one Rate Limit binding.
+- **Bindings / vars (`wrangler.toml`):**
+  - `EXTRACT_STATE` KV — share-time pre-warm orchestrator state keyed by `content_hash`. State machine: `pending → partial → done` (or `error`). 72h `expirationTtl` on each put; stale `pending` / `partial` older than 5 min is presumed dead and re-orchestrated.
+  - `RATE_LIMIT` unsafe ratelimit binding — 100 req / 60s per `CF-Connecting-IP`. Cheap insurance against a leaked URL being abused.
+  - `CF_ACCOUNT_ID` + `AI_GATEWAY_NAME` vars (public) — Cloudflare AI Gateway routing.
+  - `APIFY_ACTOR_ID` var (default `apify~instagram-post-scraper`, swappable per env).
+  - Secrets: `GEMINI_API_KEY` (Google AI Studio, forwarded as `?key=`), `GOOGLE_PLACES_API_KEY` (Maps Platform, restricted to Worker egress IPs), `CF_AIG_TOKEN` (AI Gateway Authenticated Gateways bearer), `APIFY_TOKEN`, `RC_REST_API_KEY` (RevenueCat REST, server-side).
 - **Endpoints:**
-  - `POST /extract` — takes `{ ocr_text, content_type_hint?, request_id }`, calls Gemini 2.5 Flash-Lite via Cloudflare AI Gateway with a fixed prompt + response schema, returns `[{ name, city, country_code, category, confidence }]` or `[]` (noise classifier).
-  - `POST /enrich` — takes a place's name + optional city/country, fans out to Google Places `searchText` (with `languageCode=en`) then `places/{id}` for details, then a short Gemini narrative; returns `{ external_place_id, display_name, city, country_code, photo_name, description, rating, price_level, lat, lng, formatted_address }`.
-  - `GET /photo/:name` — image proxy that resolves a Google Places photo name to bytes, resized to the client-requested width.
-  - `POST /fetch-post` — takes `{ url }`, returns `{ cover_image_url, caption, platform, _debug? }` resolved via og: meta tags → Apify → TikTok rehydration JSON fallback chain (see "Fetch-post" above).
-- **LLM call:** fixed prompt + structured JSON response schema (`GEMINI_RESPONSE_SCHEMA`). Prompt and model are server-pinned; the client doesn't choose.
-- **Auth:** `requireEntitlement` middleware on `/extract`, `/enrich`, and `/fetch-post`. Validates `X-RC-User-Id` header (shape + RC REST `/v1/subscribers/{id}` with 60s edge cache). 401 on no header / invalid header / expired entitlement. `/photo` is unauthenticated — it's a passthrough for already-extracted photo names and adds no marginal LLM cost. The client treats 401 as a pause signal (see "Paused-state pipeline").
-- **Apify:** secondary scraping path for IG carousels and TikTok backups. Gated by `APIFY_TOKEN` + `APIFY_ACTOR_ID` Wrangler secrets; soft-degrades to "not configured" when unset so dev environments don't need a paid token. 7-day cache on Apify-backed responses.
-- **Logging:** request id, latency, HTTP status, error class. No OCR text or LLM response bodies in logs. The `_debug` field on `/fetch-post` responses (route / og outcome / Apify outcome / cache hit) is an echo for the client diagnostics screen, not server-side logging.
-- **Privacy:** the proxy never persists OCR text, captions, or LLM output. It forwards, transforms, and returns.
-- **Cost ceiling:** at expected volume the LLM and Places costs are small; the worker primarily exists to keep API keys off-device and to enforce the entitlement gate.
+  - `POST /extract` — share-time pre-warm orchestrator. Body: `{ contentHash, kind: 'url', url, suggestedTripId? }`. Cache hit → 200 with the cached `OrchestratorState`. Cache miss → 202 `{ status: 'pending' }` and schedules `orchestrate()` via `ctx.waitUntil`. The orchestrator runs `runFetchPost` → writes `partial` with caption + cover URL → picks extract mode (video > vision > text) → calls `runExtract` → dedupes via `dedupePlaces` → writes `done` (or `error`). Workers Paid plan affords ~5 min wall-clock — comfortably more than the 95th-percentile real pipeline wall-clock for video extractions.
+  - `GET /extract/:contentHash` — poll the cached state. 200 with `OrchestratorState`, or 404 `{ status: 'missing' }` when the TTL expired / orchestrator was never triggered. Client uses this from `pollExtract` on app foreground.
+  - `POST /enrich` — body `{ extracted_place_id, name, city, address?, ocr_caption }`. Fans out to Google Places `searchText` (with `languageCode=en`) → `places/{id}` for details → a short Gemini narrative. Returns either `{ status: 'enriched', external_place_id, display_name, city, country_code, photo_name, description, rating, price_level, latitude, longitude, formatted_address, external_url, model, _debug }` or `{ status: 'not-found', _debug }`. `_debug` carries closed-vocab per-step outcomes (`searchOutcome`, `detailsOutcome`, `blurbOutcome`).
+  - `GET /photo/:name` — image proxy that resolves a Google Places photo name to bytes, resized to the client-requested width. Unauthenticated (passthrough for already-extracted names, no marginal LLM cost).
+- **Internal helpers (no HTTP surface):**
+  - `runExtract(body, env, ctx)` — pure wrapper around the Gemini call. Accepts the three internal request modes (`text` / `vision` / `video`) and returns `{ places, model }`. Throws `RunExtractError(code, status, retryAfter?)`. Used by the orchestrator and by an older direct-call path the test suite still exercises.
+  - `runFetchPost(url, env)` — pure wrapper around the `LinkFetcher` chain. Returns `{ result, cacheKind }`. Throws `RunFetchPostError(code, status)`.
+- **LLM call:** Gemini 2.5 Flash-Lite (`gemini-2.5-flash-lite`) via Cloudflare AI Gateway → Google AI Studio (`/v1beta/models/{model}:generateContent`). Fixed `SYSTEM_PROMPT` + `responseSchema` ⇒ structured JSON guaranteed. Video mode appends `VIDEO_PROMPT_SUFFIX`. Prompt and model are server-pinned; the client doesn't choose. The gateway gives us caching / analytics / a single chokepoint for upstream provider swaps.
+- **Video transport (Gemini Files API):** for inputs <18 MB the worker inlines `inline_data`; for >=18 MB and up to 25 MB it does a resumable upload to Gemini's Files API and references the resulting `file_uri` in `file_data`. The Files API upload bypasses AI Gateway (file lifecycle isn't a generative request); the actual `generateContent` call still flows through the gateway. The DELETE-after-use runs through `ctx.waitUntil` so the response isn't blocked on cleanup. Hard rejects: video > 90s duration or > 25 MB body.
+- **Auth:** `requireEntitlement` middleware on `POST /extract`, `GET /extract/:hash`, and `POST /enrich`. Validates `X-RC-User-Id` header (shape + RC REST `/v1/subscribers/{id}` with 60s edge cache). 401 on no header / invalid header / expired entitlement. `/photo` is unauthenticated. The client treats 401 as a pause signal (see "Paused-state pipeline").
+- **Apify:** secondary scraping path for IG carousels and TikTok backups. Soft-degrades to "not configured" when `APIFY_TOKEN` is unset so dev environments don't need a paid token. 7-day cache on Apify-backed responses (set via `Cache-Control: public, s-maxage=604800`).
+- **Logging:** request id, latency, HTTP status, error class. No OCR text, captions, or LLM response bodies in logs. The `_debug` fields on `/extract` and `/enrich` responses are echoes for the client diagnostics screen, not server-side logging.
+- **Privacy:** the proxy persists no content. KV only carries the structured pipeline state (caption + cover URL + final `places[]` shape), TTL'd at 72h. It forwards, transforms, and returns.
+- **Cost ceiling:** at expected volume the LLM, Places, and Apify costs are small; the worker primarily exists to keep API keys off-device, run the share-time pre-warm, and enforce the entitlement gate.
 
-The device-side `modules/extraction`, `modules/enrichment`, and `modules/capture` (for URL fetch) are the only clients. If we ever need a second client (backfill script, etc.) it talks to the same endpoints with its own RC user identity.
+The device-side `modules/extraction`, `modules/enrichment`, and `modules/capture` (orchestrator poll for URL sources) are the only clients. The iOS share extension is also a client (it fires the `POST /extract` pre-warm via background `URLSession`). If we ever need a third client (backfill script, etc.) it talks to the same endpoints with its own RC user identity.
 
 ## Forward look (v1.x and beyond)
 
@@ -326,8 +360,11 @@ Resolved (kept for the record):
 
 - ~~Subscription pricing~~ — Yearly $39.99 (7-day trial) + Weekly $3.99 (3-day trial); monthly dropped (2026-05-14, weekly lowered to $3.99 on 2026-05-16).
 - ~~Paywall placement~~ — after onboarding for first-launch; separate `/paywall-lapse` root modal for lapse.
-- ~~LLM provider~~ — Gemini 2.5 Flash-Lite via Cloudflare AI Gateway.
-- ~~Proxy runtime~~ — Cloudflare Workers.
+- ~~LLM provider~~ — Gemini 2.5 Flash-Lite (`gemini-2.5-flash-lite`) via Cloudflare AI Gateway → Google AI Studio.
+- ~~Proxy runtime~~ — Cloudflare Workers + one Workers KV namespace (`EXTRACT_STATE`) + a `RATE_LIMIT` binding.
+- ~~Where does the URL-share pipeline run?~~ — In the worker, kicked off at share time via background `URLSession` from the iOS share extension. The phone polls `GET /extract/:contentHash`. Replaces the old on-device "fetch-post + extract" two-call client flow (2026-05-17 share-time pre-warm).
+- ~~Single-strategy extraction vs multi-mode?~~ — Multi-mode. Strategies (`ocrTextLLM` / `vision` / `captionPlusVision` / `videoPlusCaption`) are stamped on `sources.extraction_strategy` at import time and dispatched by the orchestrator (2026-05-16 extraction-pipeline composability).
+- ~~Video extraction transport~~ — Inline `inline_data` for <18 MB; Gemini Files API for 18–25 MB with `ctx.waitUntil`'d cleanup. 90s duration ceiling.
 
 Still open:
 

@@ -143,10 +143,7 @@ export async function buildVideoPart(
   };
 }
 
-async function fetchVideoBytes(
-  url: string,
-  refererUrl?: string,
-): Promise<Uint8Array> {
+async function fetchVideoBytes(url: string, refererUrl?: string): Promise<Uint8Array> {
   const platform = detectPlatform(url);
   // Browser-realistic header set. TikTok's CDN (and increasingly IG's)
   // checks a combination of Referer, Origin, sec-fetch-*, and the

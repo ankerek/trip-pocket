@@ -1,8 +1,4 @@
-import {
-  extractionResponseSchema,
-  type ExtractionResponse,
-  type RequestBody,
-} from './schema';
+import { extractionResponseSchema, type ExtractionResponse, type RequestBody } from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT, VIDEO_PROMPT_SUFFIX } from './prompt';
 import { handleEnrich } from './enrich';
 import { handlePhoto } from './photo';
@@ -297,10 +293,12 @@ function buildGeminiParts(body: RequestBody): Array<Record<string, unknown>> {
     return [{ text: body.text.slice(0, TEXT_INPUT_CAP) }];
   }
   if (body.mode === 'vision') {
-    const mimeType = sniffImageMime(body.imageBase64) ?? DEFAULT_IMAGE_MIME;
-    const parts: Array<Record<string, unknown>> = [
-      { inline_data: { mime_type: mimeType, data: body.imageBase64 } },
-    ];
+    // One inline_data part per image. For IG carousels the orchestrator
+    // fans out every slide here; for single screenshots the array has one
+    // entry. Caption (one per post, even for carousels) is appended last.
+    const parts: Array<Record<string, unknown>> = body.imageBase64.map((data) => ({
+      inline_data: { mime_type: sniffImageMime(data) ?? DEFAULT_IMAGE_MIME, data },
+    }));
     if (body.caption && body.caption.trim().length > 0) {
       parts.push({ text: `User-supplied caption:\n${body.caption.slice(0, TEXT_INPUT_CAP)}` });
     }
@@ -361,7 +359,8 @@ async function route(request: Request, env: Env, ctx: WaitUntilCtx): Promise<Res
   // both are now internal helpers (runExtract, runFetchPost) the
   // orchestrator drives directly.
   if (path === '/extract' && request.method === 'POST') return handleExtractPost(request, env, ctx);
-  if (path.startsWith('/extract/') && request.method === 'GET') return handleExtractGet(request, env);
+  if (path.startsWith('/extract/') && request.method === 'GET')
+    return handleExtractGet(request, env);
   if (path === '/enrich') return handleEnrich(request, env);
   if (path.startsWith('/photo/')) return handlePhoto(request, env);
   return errorResponse('not-found', 404);
