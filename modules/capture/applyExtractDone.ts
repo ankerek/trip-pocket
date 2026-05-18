@@ -1,10 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import type { Database } from '@/modules/storage/db';
 import { notifyChange } from '@/modules/storage/live-query';
-import {
-  findSoleMatchByNormalizedKey,
-  normalizePlaceKey,
-} from '@/modules/storage/places';
+import { findSoleMatchByNormalizedKey, normalizePlaceKey } from '@/modules/storage/places';
 import { linkPlaceSource } from '@/modules/storage/place_sources';
 import type { ExtractedPlace } from '@/lib/extract/pollExtract';
 
@@ -36,10 +33,7 @@ export type ApplyExtractDoneInput = {
  * The whole thing runs inside a single transaction so the source row
  * never flips to extraction_status='done' without its places landing.
  */
-export async function applyExtractDone(
-  db: Database,
-  input: ApplyExtractDoneInput,
-): Promise<void> {
+export async function applyExtractDone(db: Database, input: ApplyExtractDoneInput): Promise<void> {
   await db.withTransactionAsync(async () => {
     const source = await db.getFirstAsync<{ trip_id: string | null }>(
       `SELECT trip_id FROM sources WHERE id = ?`,
@@ -127,6 +121,39 @@ async function resolveOrInsertPlace(
     return existing;
   }
 
+  // Secondary resolve by external_place_id. The same Google place can come
+  // back under a slightly different LLM-extracted name on a re-share (e.g.
+  // "Shibuya" then "Shibuya District" — both resolve to the same Google
+  // place_id), so the normalized-key lookup misses. Without this fallback
+  // the INSERT below hits the (external_place_id, owner_id) UNIQUE index
+  // and the whole applyExtractDone transaction rolls back, leaving the
+  // source stuck at extraction_status='pending'.
+  if (candidate.external_place_id) {
+    const existingByExt = await db.getFirstAsync<{ id: string }>(
+      `SELECT id FROM places
+         WHERE external_place_id = ? AND owner_id = ?
+         LIMIT 1`,
+      candidate.external_place_id,
+      ownerId,
+    );
+    if (existingByExt) {
+      // Same asymmetric country_code fill as the normalizedKey path. We
+      // don't touch enrichment_status — a row matched by external_place_id
+      // is by definition already enriched.
+      if (countryCode !== null) {
+        await db.runAsync(
+          `UPDATE places
+              SET country_code = ?, updated_at = ?
+            WHERE id = ? AND country_code IS NULL`,
+          countryCode,
+          ts,
+          existingByExt.id,
+        );
+      }
+      return existingByExt.id;
+    }
+  }
+
   const newId = Crypto.randomUUID();
 
   // If the worker shipped Google-Places-enriched data with the place,
@@ -140,11 +167,7 @@ async function resolveOrInsertPlace(
   const externalPlaceId = candidate.external_place_id ?? null;
   const blurbStatus = candidate.blurb_status ?? null;
   const enrichmentStatus =
-    externalPlaceId !== null
-      ? 'enriched'
-      : blurbStatus === 'not-found'
-        ? 'not-found'
-        : 'pending';
+    externalPlaceId !== null ? 'enriched' : blurbStatus === 'not-found' ? 'not-found' : 'pending';
 
   // Use the worker's authoritative display_name when present (Google's
   // displayName is canonical — e.g. "Tartine Bakery" rather than the

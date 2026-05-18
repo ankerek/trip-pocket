@@ -1,6 +1,9 @@
 name = "trip-pocket-extract-proxy"
 main = "src/index.ts"
 compatibility_date = "2025-01-15"
+# nodejs_compat: required by @sentry/cloudflare for AsyncLocalStorage-backed
+# isolation scopes (per-request tags/context).
+compatibility_flags = ["nodejs_compat"]
 
 # Per-IP rate limit: 100 req / 60s. Cheap insurance until v1.0 auth lands.
 # A leaked URL costs only a few dollars to abuse before this cuts in.
@@ -34,6 +37,8 @@ APIFY_ACTOR_ID = "apify~instagram-post-scraper"
 #                            Used by requireEntitlement to look up the
 #                            subscriber's pro entitlement. See docs/superpowers/
 #                            specs/2026-05-14-paywall-and-entitlement-gate-design.md.
+#   SENTRY_DSN             — Sentry project DSN for the worker. Optional: when
+#                            absent, withSentry becomes a no-op (local/dev/test).
 
 # Per-content_hash extraction state for the share-time pre-warm orchestrator.
 # Writes: pending → partial → done (or error). TTL via expirationTtl on each

@@ -38,7 +38,11 @@ export function SkeletonBlock({ testID, style }: CommonProps) {
   return (
     <Animated.View
       testID={testID ?? 'skeleton-block'}
-      style={[{ width: '100%', height: '100%', backgroundColor: colors.surface }, style, animStyle]}
+      style={[
+        { width: '100%', height: '100%', backgroundColor: colors.skeleton },
+        style,
+        animStyle,
+      ]}
     />
   );
 }
@@ -60,7 +64,7 @@ export function SkeletonLine({
           width: `${widthPercent}%`,
           height,
           borderRadius: 4,
-          backgroundColor: colors.surface,
+          backgroundColor: colors.skeleton,
         },
         style,
         animStyle,
@@ -87,7 +91,7 @@ export function SkeletonLines({ count, testID }: CommonProps & { count: number }
 export function SkeletonRow({ testID }: CommonProps) {
   const colors = useThemeColors();
   const pulse = usePulse();
-  const surface = { backgroundColor: colors.surface };
+  const bar = { backgroundColor: colors.skeleton };
   return (
     <RNView
       testID={testID ?? 'skeleton-row'}
@@ -101,10 +105,10 @@ export function SkeletonRow({ testID }: CommonProps) {
         borderBottomColor: colors.hairline,
       }}
     >
-      <Animated.View style={[{ width: 44, height: 44, borderRadius: 10 }, surface, pulse]} />
+      <Animated.View style={[{ width: 44, height: 44, borderRadius: 10 }, bar, pulse]} />
       <RNView style={{ flex: 1, gap: 6 }}>
-        <Animated.View style={[{ width: '60%', height: 13, borderRadius: 4 }, surface, pulse]} />
-        <Animated.View style={[{ width: '38%', height: 11, borderRadius: 4 }, surface, pulse]} />
+        <Animated.View style={[{ width: '60%', height: 13, borderRadius: 4 }, bar, pulse]} />
+        <Animated.View style={[{ width: '38%', height: 11, borderRadius: 4 }, bar, pulse]} />
       </RNView>
     </RNView>
   );

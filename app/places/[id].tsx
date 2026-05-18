@@ -44,6 +44,11 @@ export default function PlaceDetail() {
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'loaded'; place: Place | null }>(
     { kind: 'loading' },
   );
+  // Tracks whether the blurb-retry /enrich call kicked off on open is still
+  // in flight. Set when we enqueue the retry, cleared once `description`
+  // lands OR after a fallback timeout (the throttle/permanent-failure path
+  // could otherwise leave the skeleton onscreen forever).
+  const [isFetchingBlurb, setIsFetchingBlurb] = useState(false);
 
   const tick = useLiveQuery<{ v: number }>(`SELECT 0 AS v`, [], ['places']);
 
@@ -91,7 +96,21 @@ export default function PlaceDetail() {
     if (status === 'pending' || status === 'failed' || needsBlurbRetry) {
       getEnricher()?.enqueueEnrichment(state.place.id);
     }
+    if (needsBlurbRetry) setIsFetchingBlurb(true);
   }, [state]);
+
+  // Clear the blurb-loading flag once the description lands. Also cap the
+  // skeleton at ~20s as a safety net: if the retry was throttled or the
+  // worker fails again, we'd otherwise show a perma-skeleton.
+  useEffect(() => {
+    if (!isFetchingBlurb) return;
+    if (state.kind === 'loaded' && state.place?.description) {
+      setIsFetchingBlurb(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsFetchingBlurb(false), 20000);
+    return () => clearTimeout(timer);
+  }, [isFetchingBlurb, state]);
 
   if (state.kind === 'loading') {
     return (
@@ -336,8 +355,9 @@ export default function PlaceDetail() {
           <View className="px-4 pt-4 pb-4">
             <Text className="text-text text-[15px] leading-5">{place.description}</Text>
           </View>
-        ) : isEnriching ? (
-          <View className="px-4 pt-4 pb-4">
+        ) : isEnriching || isFetchingBlurb ? (
+          <View className="gap-2 px-4 pt-4 pb-4">
+            <Text className="text-text-muted text-[12px]">Fetching description…</Text>
             <SkeletonLines count={3} />
           </View>
         ) : null}

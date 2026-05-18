@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare';
 import { extractionResponseSchema, type ExtractionResponse, type RequestBody } from './schema';
 import { GEMINI_MODEL, GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT, VIDEO_PROMPT_SUFFIX } from './prompt';
 import { handleEnrich } from './enrich';
@@ -6,6 +7,7 @@ import { requireEntitlement } from './entitlement';
 import { buildVideoPart, VideoError, type WaitUntilCtx } from './video';
 import { orchestratorRequestSchema } from './orchestrator-schema';
 import { orchestrate, readState } from './orchestrator';
+import { logEvent, logStageError } from './logger';
 
 export interface RateLimitBinding {
   limit(args: { key: string }): Promise<{ success: boolean }>;
@@ -24,6 +26,12 @@ export interface Env {
   APIFY_ACTOR_ID?: string;
   RC_REST_API_KEY: string;
   EXTRACT_STATE: KVNamespace;
+  /**
+   * Sentry DSN for the worker. Optional — when unset (dev/test), withSentry
+   * still wraps the handler but events go nowhere, so the rest of the code
+   * can call Sentry APIs unconditionally.
+   */
+  SENTRY_DSN?: string;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' } as const;
@@ -50,6 +58,17 @@ function errorResponse(
 // (text/vision modes never schedule waitUntil work).
 const NOOP_CTX: WaitUntilCtx = { waitUntil: () => {} };
 
+// One transient retry of the Gemini call. Calibrated to handle Gemini's
+// "model is currently experiencing high demand" 503, which typically clears
+// within a second or two. Permanent errors (4xx, malformed responses) don't
+// retry — see the loop in runExtract.
+const GEMINI_FETCH_MAX_ATTEMPTS = 2;
+const GEMINI_FETCH_RETRY_DELAY_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class RunExtractError extends Error {
   constructor(
     public readonly code: string,
@@ -74,20 +93,17 @@ export async function runExtract(
   // Misconfiguration is the operator's problem, not the client's. 500 so
   // the client treats it as retryable; the operator sees the error class
   // in Workers Logs.
-  if (!env.GEMINI_API_KEY) {
-    console.error('extract-proxy: GEMINI_API_KEY missing');
-    throw new RunExtractError('server-misconfigured', 500);
-  }
-  if (!env.CF_ACCOUNT_ID) {
-    console.error('extract-proxy: CF_ACCOUNT_ID missing');
-    throw new RunExtractError('server-misconfigured', 500);
-  }
-  if (!env.AI_GATEWAY_NAME) {
-    console.error('extract-proxy: AI_GATEWAY_NAME missing');
-    throw new RunExtractError('server-misconfigured', 500);
-  }
-  if (!env.CF_AIG_TOKEN) {
-    console.error('extract-proxy: CF_AIG_TOKEN missing');
+  const missing =
+    (!env.GEMINI_API_KEY && 'GEMINI_API_KEY') ||
+    (!env.CF_ACCOUNT_ID && 'CF_ACCOUNT_ID') ||
+    (!env.AI_GATEWAY_NAME && 'AI_GATEWAY_NAME') ||
+    (!env.CF_AIG_TOKEN && 'CF_AIG_TOKEN');
+  if (missing) {
+    logStageError(new Error('server-misconfigured'), {
+      stage: 'extract',
+      mode: body.mode,
+      error_code: `missing-${missing}`,
+    });
     throw new RunExtractError('server-misconfigured', 500);
   }
 
@@ -120,7 +136,7 @@ export async function runExtract(
       systemPrompt = SYSTEM_PROMPT + VIDEO_PROMPT_SUFFIX;
     } catch (err) {
       if (err instanceof VideoError) {
-        console.error('extract-proxy/video: ' + err.code);
+        logStageError(err, { stage: 'extract', mode: 'video', error_code: err.code });
         throw new RunExtractError(err.code, err.status);
       }
       throw err;
@@ -137,26 +153,51 @@ export async function runExtract(
     `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.AI_GATEWAY_NAME}` +
     `/google-ai-studio/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
 
-  let geminiResp: Response;
-  try {
-    geminiResp = await fetch(gatewayUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
-      },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: GEMINI_RESPONSE_SCHEMA,
+  // One transient retry. Gemini's "model is currently experiencing high
+  // demand" 503 is the textbook transient case; a single 1s-delayed retry
+  // catches the common short spike. Permanent failures (4xx except 429,
+  // schema/parse errors) skip the retry — re-sending the same payload to
+  // the same model wouldn't change the outcome.
+  let geminiResp!: Response;
+  for (let attempt = 1; attempt <= GEMINI_FETCH_MAX_ATTEMPTS; attempt++) {
+    try {
+      geminiResp = await fetch(gatewayUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
         },
-      }),
-    });
-  } catch (err) {
-    console.error('extract-proxy: gemini-network-error', String(err));
-    throw new RunExtractError('upstream-network-error', 502);
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: GEMINI_RESPONSE_SCHEMA,
+          },
+        }),
+      });
+    } catch (err) {
+      // Network-class failure (DNS / TLS / connection reset). Transient by
+      // nature — retry once, then give up.
+      if (attempt < GEMINI_FETCH_MAX_ATTEMPTS) {
+        await sleep(GEMINI_FETCH_RETRY_DELAY_MS);
+        continue;
+      }
+      logStageError(err, {
+        stage: 'extract',
+        mode: body.mode,
+        error_code: 'gemini-network-error',
+      });
+      throw new RunExtractError('upstream-network-error', 502);
+    }
+    // 5xx and 429 are transient — retry once. Other non-2xx (4xx auth /
+    // bad request) are permanent; surface immediately.
+    const transient = geminiResp.status === 429 || geminiResp.status >= 500;
+    if (transient && attempt < GEMINI_FETCH_MAX_ATTEMPTS) {
+      await sleep(GEMINI_FETCH_RETRY_DELAY_MS);
+      continue;
+    }
+    break;
   }
 
   if (geminiResp.status === 429) {
@@ -164,35 +205,55 @@ export async function runExtract(
     throw new RunExtractError('upstream-rate-limited', 429, retryAfter);
   }
   if (!geminiResp.ok) {
-    console.error('extract-proxy: gemini-upstream-error', geminiResp.status);
+    logStageError(new Error(`gemini-${geminiResp.status}`), {
+      stage: 'extract',
+      mode: body.mode,
+      error_code: `gemini-${geminiResp.status}`,
+    });
     throw new RunExtractError('upstream-error', 502);
   }
 
   let geminiBody: unknown;
   try {
     geminiBody = await geminiResp.json();
-  } catch {
-    console.error('extract-proxy: gemini-non-json-body');
+  } catch (err) {
+    logStageError(err, {
+      stage: 'extract',
+      mode: body.mode,
+      error_code: 'gemini-non-json-body',
+    });
     throw new RunExtractError('upstream-non-json', 502);
   }
 
   const candidateText = extractCandidateText(geminiBody);
   if (candidateText === null) {
-    console.error('extract-proxy: gemini-shape-unexpected');
+    logStageError(new Error('gemini-shape-unexpected'), {
+      stage: 'extract',
+      mode: body.mode,
+      error_code: 'gemini-shape-unexpected',
+    });
     throw new RunExtractError('upstream-bad-shape', 502);
   }
 
   let inner: unknown;
   try {
     inner = JSON.parse(candidateText);
-  } catch {
-    console.error('extract-proxy: gemini-inner-parse-failed');
+  } catch (err) {
+    logStageError(err, {
+      stage: 'extract',
+      mode: body.mode,
+      error_code: 'gemini-inner-parse-failed',
+    });
     throw new RunExtractError('upstream-malformed-inner-json', 502);
   }
 
   const validated = extractionResponseSchema.safeParse(inner);
   if (!validated.success) {
-    console.error('extract-proxy: gemini-schema-violation');
+    logStageError(new Error('gemini-schema-violation'), {
+      stage: 'extract',
+      mode: body.mode,
+      error_code: 'gemini-schema-violation',
+    });
     throw new RunExtractError('upstream-schema-violation', 502);
   }
 
@@ -237,23 +298,60 @@ export async function handleExtractPost(
   const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
   if (!rateOk) return errorResponse('rate-limited', 429, { 'retry-after': '60' });
 
+  const source = detectSource(parsed.data.url);
+  logEvent({
+    event: 'share_received',
+    contentHash: parsed.data.contentHash,
+    source,
+  });
+
   const cached = await readState(parsed.data.contentHash, env);
   if (cached) {
+    logEvent({
+      event: 'share_cache_hit',
+      contentHash: parsed.data.contentHash,
+      source,
+      status: cached.status,
+    });
+  }
+  // Only terminal states short-circuit. Pending/partial fall through so
+  // orchestrate()'s stale-pending recovery (STALE_PENDING_MS check in
+  // orchestrator.ts) stays reachable — otherwise an isolate that died
+  // between writing `partial` and the terminal write would leave the hash
+  // stuck for the 72h KV TTL, with every subsequent POST handing back the
+  // stale partial and never re-scheduling.
+  if (cached && (cached.status === 'done' || cached.status === 'error')) {
     return jsonResponse(cached, { status: 200 });
   }
 
-  // Schedule the pipeline after the response. The async work survives
-  // until ctx.waitUntil's budget runs out.
+  // Schedule the pipeline after the response. Orchestrate is idempotent —
+  // no-ops on fresh in-flight pending/partial, re-runs on stale-pending.
   ctx.waitUntil(orchestrate(parsed.data, env, ctx));
 
   return jsonResponse(
-    {
+    cached ?? {
       contentHash: parsed.data.contentHash,
       status: 'pending',
       startedAt: new Date().toISOString(),
     },
     { status: 202 },
   );
+}
+
+/**
+ * Best-effort source detection from a share URL. Used only to tag logs —
+ * the orchestrator re-derives this from fetched.platform once fetch-post
+ * runs. Falls back to 'unknown' so we never crash on a weird URL.
+ */
+function detectSource(url: string): string {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes('instagram')) return 'instagram';
+    if (host.includes('tiktok')) return 'tiktok';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**
@@ -345,11 +443,29 @@ function extractCandidateText(geminiBody: unknown): string | null {
   return typeof text === 'string' ? text : null;
 }
 
-export default {
+// Sentry wrapper: `Sentry.withSentry` initializes the SDK and creates a
+// per-request isolation scope so tags/context set inside a handler don't
+// leak across concurrent requests. When `SENTRY_DSN` is unset (dev/test)
+// the wrapper is still installed but events go nowhere — the rest of the
+// worker can call Sentry APIs unconditionally.
+//
+// `sendDefaultPii` stays off: we don't want client IPs / request bodies
+// (caption text, OCR) attached to events. `tracesSampleRate: 0` avoids
+// span quota until we're ready to enable distributed tracing.
+const handler = {
   fetch(request: Request, env: Env, ctx: WaitUntilCtx): Promise<Response> {
     return route(request, env, ctx);
   },
-};
+} satisfies ExportedHandler<Env>;
+
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN ?? '',
+    sendDefaultPii: false,
+    tracesSampleRate: 0,
+  }),
+  handler,
+);
 
 async function route(request: Request, env: Env, ctx: WaitUntilCtx): Promise<Response> {
   const url = new URL(request.url);

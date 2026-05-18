@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare';
 import type { Env } from './index';
 import type { OrchestratorRequest, OrchestratorState, EnrichedPlace } from './orchestrator-schema';
 import type { WaitUntilCtx } from './video';
@@ -14,6 +15,7 @@ import {
   type PlaceDetails,
   type BlurbResult,
 } from './enrich';
+import { logEvent, logStageError, type ExtractMode } from './logger';
 
 export const EXTRACT_STATE_TTL_SECONDS = 72 * 60 * 60;
 
@@ -104,18 +106,50 @@ export async function orchestrate(
   ctx: WaitUntilCtx,
   deps: OrchestrateDeps = {},
 ): Promise<void> {
+  // Per-share isolation scope: every log/error emitted inside this callback
+  // is tagged with contentHash + source, so on a Sentry issue page you can
+  // see "this is share X for IG/TikTok" without each call-site repeating it.
+  // The scope is discarded when the callback returns, so concurrent shares
+  // can't leak tags into each other's events.
+  return Sentry.withIsolationScope(async () => {
+    Sentry.setTag('contentHash', req.contentHash);
+    await orchestrateImpl(req, env, ctx, deps);
+  });
+}
+
+async function orchestrateImpl(
+  req: OrchestratorRequest,
+  env: Env,
+  ctx: WaitUntilCtx,
+  deps: OrchestrateDeps,
+): Promise<void> {
   const existing = await readState(req.contentHash, env);
-  if (existing && (existing.status === 'done' || existing.status === 'error')) return;
+  if (existing && (existing.status === 'done' || existing.status === 'error')) {
+    logEvent({
+      event: 'orchestrate_skip',
+      contentHash: req.contentHash,
+      status: existing.status,
+    });
+    return;
+  }
   if (existing && (existing.status === 'pending' || existing.status === 'partial')) {
     const startedAt = existing.startedAt ? Date.parse(existing.startedAt) : 0;
     const age = Date.now() - startedAt;
-    if (Number.isFinite(age) && age < STALE_PENDING_MS) return;
-    console.warn(
-      'orchestrate: re-running stale state',
-      'hash=' + req.contentHash,
-      'status=' + existing.status,
-      'ageMs=' + age,
-    );
+    if (Number.isFinite(age) && age < STALE_PENDING_MS) {
+      logEvent({
+        event: 'orchestrate_skip',
+        contentHash: req.contentHash,
+        status: existing.status,
+        duration_ms: age,
+      });
+      return;
+    }
+    logEvent({
+      event: 'orchestrate_stale_pending',
+      contentHash: req.contentHash,
+      status: existing.status,
+      duration_ms: age,
+    });
   }
 
   const startedAt = new Date().toISOString();
@@ -128,17 +162,38 @@ export async function orchestrate(
   const fetchImageBase64 = deps.fetchImageBase64 ?? defaultFetchImageBase64;
 
   let fetched: FetchPostResponse;
+  let cacheKind: 'og' | 'apify';
+  const fetchStart = Date.now();
+  logEvent({ event: 'stage_start', stage: 'fetch-post', contentHash: req.contentHash });
   try {
     const out = await runFetchPost(req.url, env);
     fetched = out.result;
+    cacheKind = out.cacheKind;
   } catch (err) {
-    console.error('orchestrate: fetch failed', String(err));
+    logStageError(err, {
+      stage: 'fetch-post',
+      contentHash: req.contentHash,
+      duration_ms: Date.now() - fetchStart,
+      error_code: 'fetch-failed',
+    });
     await writeState(
       { contentHash: req.contentHash, status: 'error', error: 'fetch-failed', startedAt },
       env,
     );
     return;
   }
+  // Tag the isolation scope with the resolved platform so every downstream
+  // event/error in this share has source=instagram|tiktok|... without each
+  // call-site re-passing it.
+  Sentry.setTag('source', fetched.platform);
+  logEvent({
+    event: 'stage_done',
+    stage: 'fetch-post',
+    contentHash: req.contentHash,
+    source: fetched.platform,
+    duration_ms: Date.now() - fetchStart,
+    cache_kind: cacheKind,
+  });
 
   await writeState(
     {
@@ -152,12 +207,50 @@ export async function orchestrate(
     env,
   );
 
+  const extractStart = Date.now();
+  logEvent({
+    event: 'stage_start',
+    stage: 'extract',
+    contentHash: req.contentHash,
+    source: fetched.platform,
+  });
   let result: { places: ExtractedPlace[]; model: string };
   try {
-    result = await tryExtractWithFallback(fetched, env, ctx, runExtract, fetchImageBase64);
+    result = await tryExtractWithFallback(
+      fetched,
+      env,
+      ctx,
+      runExtract,
+      fetchImageBase64,
+      req.contentHash,
+    );
   } catch (err) {
+    // Transient: every Gemini call in the fallback chain failed with a
+    // retryable upstream code (5xx / 429). Leave the existing `partial`
+    // state in KV alone — fetch-post's caption + cover are still valid
+    // for the triage card — and let the stale-pending recovery re-run
+    // the pipeline on the next POST. handleExtractPost falls through
+    // partial states (only done/error short-circuit), so the client's
+    // next foreground sweep that hits the stale-pending threshold will
+    // retrigger this orchestration with no manual user action.
+    if (err instanceof TransientExtractError) {
+      logEvent({
+        event: 'orchestrate_extract_transient',
+        contentHash: req.contentHash,
+        source: fetched.platform,
+        duration_ms: Date.now() - extractStart,
+        detail: err.details,
+      });
+      return;
+    }
     const code = err instanceof Error ? err.message : String(err);
-    console.error('orchestrate: all extract modes failed', code);
+    logStageError(err, {
+      stage: 'extract',
+      contentHash: req.contentHash,
+      source: fetched.platform,
+      duration_ms: Date.now() - extractStart,
+      error_code: code === 'no-extractable-content' ? 'no-extractable-content' : 'extract-failed',
+    });
     await writeState(
       {
         contentHash: req.contentHash,
@@ -172,8 +265,53 @@ export async function orchestrate(
     );
     return;
   }
+  logEvent({
+    event: 'stage_done',
+    stage: 'extract',
+    contentHash: req.contentHash,
+    source: fetched.platform,
+    duration_ms: Date.now() - extractStart,
+  });
 
-  await enrichAndWriteDone(result, env, searchAndDetails, buildBulkBlurb, req, fetched, startedAt);
+  // Wrap enrichment because Promise.all over N Google Places lookups can
+  // throw runtime exceptions the inner try/catches don't capture — most
+  // notably Workers' "Too many subrequests by single Worker invocation"
+  // when a carousel yields enough places that the cumulative subrequest
+  // budget (50 on Workers Free, 1000 on Paid) is exhausted. Without this
+  // wrap the throw escaped into ctx.waitUntil which swallowed it, leaving
+  // state stuck at `partial`. Surfacing it as `enrich-failed` makes the
+  // failure visible to the user and lets the source row flip to `failed`
+  // instead of spinning.
+  try {
+    await enrichAndWriteDone(
+      result,
+      env,
+      searchAndDetails,
+      buildBulkBlurb,
+      req,
+      fetched,
+      startedAt,
+    );
+  } catch (err) {
+    logStageError(err, {
+      stage: 'enrich',
+      contentHash: req.contentHash,
+      source: fetched.platform,
+      error_code: 'enrich-failed',
+    });
+    await writeState(
+      {
+        contentHash: req.contentHash,
+        status: 'error',
+        error: 'enrich-failed',
+        caption: fetched.caption,
+        coverUrl: fetched.imageUrls[0],
+        videoPresent: !!fetched.videoUrl,
+        startedAt,
+      },
+      env,
+    );
+  }
 }
 
 /**
@@ -192,14 +330,77 @@ export async function orchestrate(
  * and no caption — vanishingly rare) or every available mode failed
  * upstream.
  */
+/**
+ * Thrown by tryExtractWithFallback when every fallback mode failed with a
+ * transient upstream code (Gemini 5xx, 429, network blip). Distinct from a
+ * generic Error so orchestrate can preserve the existing `partial` state
+ * and let stale-pending recovery retry — instead of writing a terminal
+ * `error` that the user sees as "couldn't read" with no auto-retry path.
+ */
+export class TransientExtractError extends Error {
+  constructor(public readonly details: string) {
+    super('extract-transient: ' + details);
+    this.name = 'TransientExtractError';
+  }
+}
+
 async function tryExtractWithFallback(
   fetched: FetchPostResponse,
   env: Env,
   ctx: WaitUntilCtx,
   runExtract: RunExtractFn,
   fetchImageBase64: (url: string) => Promise<string>,
+  contentHash: string,
 ): Promise<{ places: ExtractedPlace[]; model: string }> {
   const errors: string[] = [];
+  // Tracks whether every Gemini call that actually ran failed with a
+  // transient code. A single permanent failure (4xx auth/bad-request,
+  // malformed response) flips this off — we want the user to see those
+  // as terminal rather than spinning forever.
+  let attemptedCalls = 0;
+  let allTransient = true;
+
+  const tryMode = async (
+    mode: ExtractMode,
+    body: RequestBody,
+  ): Promise<{ places: ExtractedPlace[]; model: string } | null> => {
+    const start = Date.now();
+    attemptedCalls++;
+    try {
+      const out = await runExtract(body, env, ctx);
+      logEvent({
+        event: 'stage_done',
+        stage: 'extract',
+        mode,
+        contentHash,
+        source: fetched.platform,
+        duration_ms: Date.now() - start,
+      });
+      return out;
+    } catch (err) {
+      const code = err instanceof RunExtractError ? err.code : String(err);
+      // Codes representing a retryable upstream condition. Anything else
+      // — non-RunExtractError throws, schema/parse violations from
+      // Gemini's response (deterministic — retrying the same input gives
+      // the same bad output), misconfig — counts as permanent.
+      const transient =
+        code === 'upstream-error' ||
+        code === 'upstream-network-error' ||
+        code === 'upstream-rate-limited';
+      if (!transient) allTransient = false;
+      logEvent({
+        event: 'stage_warn',
+        stage: 'extract',
+        mode,
+        contentHash,
+        source: fetched.platform,
+        duration_ms: Date.now() - start,
+        error_code: code,
+      });
+      errors.push(`${mode}:${code}`);
+      return null;
+    }
+  };
 
   // Skip video mode for TikTok: their CDN blocks Cloudflare Workers' egress
   // IPs (residential-IP enforcement), so every video-bytes fetch 403s. We
@@ -210,25 +411,16 @@ async function tryExtractWithFallback(
   // policy (re-shares will start succeeding via the next-best path
   // regardless, so this isn't urgent to discover).
   if (fetched.videoUrl && fetched.platform !== 'tiktok') {
-    try {
-      return await runExtract(
-        {
-          mode: 'video',
-          video: {
-            url: fetched.videoUrl,
-            durationSec: fetched.videoDuration ?? undefined,
-            refererUrl: fetched.permalink,
-          },
-          caption: fetched.caption,
-        },
-        env,
-        ctx,
-      );
-    } catch (err) {
-      const code = err instanceof RunExtractError ? err.code : String(err);
-      console.warn('orchestrate: video-mode failed, falling back', code);
-      errors.push('video:' + code);
-    }
+    const out = await tryMode('video', {
+      mode: 'video',
+      video: {
+        url: fetched.videoUrl,
+        durationSec: fetched.videoDuration ?? undefined,
+        refererUrl: fetched.permalink,
+      },
+      caption: fetched.caption,
+    });
+    if (out) return out;
   }
 
   if (fetched.imageUrls.length > 0) {
@@ -246,42 +438,40 @@ async function tryExtractWithFallback(
         imageBase64.push(r.value);
       } else {
         const code = r.reason instanceof Error ? r.reason.message : String(r.reason);
-        console.warn(
-          'orchestrate: carousel slide fetch failed',
-          'idx=' + i,
-          'count=' + fetched.imageUrls.length,
-          code,
-        );
+        logEvent({
+          event: 'stage_warn',
+          stage: 'extract',
+          mode: 'vision',
+          contentHash,
+          source: fetched.platform,
+          error_code: 'carousel-slide-fetch-failed',
+          slide_idx: i,
+          slide_count: fetched.imageUrls.length,
+          slide_error: code,
+        });
       }
     }
     if (imageBase64.length > 0) {
-      try {
-        return await runExtract(
-          { mode: 'vision', imageBase64, caption: fetched.caption },
-          env,
-          ctx,
-        );
-      } catch (err) {
-        const code = err instanceof Error ? err.message : String(err);
-        console.warn('orchestrate: vision-mode failed, falling back', code);
-        errors.push('vision:' + code);
-      }
+      const out = await tryMode('vision', {
+        mode: 'vision',
+        imageBase64,
+        caption: fetched.caption,
+      });
+      if (out) return out;
     } else {
       errors.push('vision:image-fetch-all-failed');
     }
   }
 
   if (fetched.caption.trim().length > 0) {
-    try {
-      return await runExtract({ mode: 'text', text: fetched.caption }, env, ctx);
-    } catch (err) {
-      const code = err instanceof RunExtractError ? err.code : String(err);
-      console.warn('orchestrate: text-mode failed', code);
-      errors.push('text:' + code);
-    }
+    const out = await tryMode('text', { mode: 'text', text: fetched.caption });
+    if (out) return out;
   }
 
   if (errors.length === 0) throw new Error('no-extractable-content');
+  if (attemptedCalls > 0 && allTransient) {
+    throw new TransientExtractError(errors.join(', '));
+  }
   throw new Error(errors.join(', '));
 }
 
@@ -295,6 +485,14 @@ async function enrichAndWriteDone(
   startedAt: string,
 ): Promise<void> {
   const extractedDeduped = dedupePlaces(result.places);
+  const enrichStart = Date.now();
+  logEvent({
+    event: 'stage_start',
+    stage: 'enrich',
+    contentHash: req.contentHash,
+    source: fetched.platform,
+    place_count: extractedDeduped.length,
+  });
 
   // Enrich each place against Google Places in parallel. PlacesError per
   // place becomes "not-found" — the place still ships, just without the
@@ -320,7 +518,14 @@ async function enrichAndWriteDone(
         return { ...item, details };
       } catch (err) {
         if (err instanceof PlacesError) {
-          console.warn('orchestrate: places lookup failed', item.place.name, err.status);
+          logEvent({
+            event: 'stage_warn',
+            stage: 'enrich',
+            contentHash: req.contentHash,
+            source: fetched.platform,
+            error_code: `places-${err.status}`,
+            place_name: item.place.name,
+          });
           return { ...item, details: null };
         }
         throw err;
@@ -358,13 +563,45 @@ async function enrichAndWriteDone(
       details: s.details,
     }));
 
-  let blurbsByPlaceId: Map<string, BlurbResult>;
-  try {
-    blurbsByPlaceId = await buildBulkBlurb(blurbInputs, env);
-  } catch (err) {
-    console.warn('orchestrate: bulk blurb threw', String(err));
-    blurbsByPlaceId = new Map();
-  }
+  const enrichDuration = Date.now() - enrichStart;
+  const matched = detailsResults.filter((d) => d.details !== null).length;
+  logEvent({
+    event: 'stage_done',
+    stage: 'enrich',
+    contentHash: req.contentHash,
+    source: fetched.platform,
+    duration_ms: enrichDuration,
+    place_count: detailsResults.length,
+    matched_count: matched,
+  });
+
+  // Defer bulk-blurb to client-driven per-place retries. Cloudflare's
+  // `ctx.waitUntil` is capped at 30s wall-clock after the response is
+  // sent (https://developers.cloudflare.com/workers/runtime-apis/context),
+  // and an 8-slide / 20-place carousel can spend 25-28s on fetch-post +
+  // vision + enrich before reaching this point. With <3s remaining the
+  // runtime cancels the in-flight Gemini fetch mid-call and leaves state
+  // stuck at `partial`, regardless of any Promise.race timeout we'd add
+  // (the runtime tears down the isolate, not the JS frame, and races
+  // against fetch-post's natural variability are inherently fragile).
+  //
+  // Instead: write `done` immediately with `blurb_status='failed'` on
+  // every place. The client (modules/enrichment/enrichment.ts) already
+  // polls those rows via /enrich, each retry in its own fresh worker
+  // invocation with its own 30s budget. The source becomes usable right
+  // away with all Google Places details; blurbs trickle in over the
+  // next few seconds.
+  logEvent({
+    event: 'blurb_deferred',
+    contentHash: req.contentHash,
+    source: fetched.platform,
+    place_count: blurbInputs.length,
+  });
+  // `buildBulkBlurb` stays in the dep map for signature stability across
+  // tests and so it can be re-enabled if we ever move to a model where
+  // the bulk call is cheap enough to fit inline.
+  void buildBulkBlurb;
+  const blurbsByPlaceId: Map<string, BlurbResult> = new Map();
 
   const enrichedPlaces: EnrichedPlace[] = survivors.map((s) => {
     if (s.details === null) {

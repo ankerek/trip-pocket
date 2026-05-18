@@ -6,6 +6,8 @@
 // (offline-at-share, missing RC id), `triggerOnMissing` POSTs to kick off
 // the pipeline and the loop polls until done or timeout.
 
+import * as Sentry from '@sentry/react-native';
+
 export type ExtractedPlace = {
   // Extraction fields (always present).
   name: string;
@@ -101,6 +103,22 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
   const getUrl = `${opts.workerBase}/extract/${opts.contentHash}`;
   let missingTriggered = false;
   let staleTriggered = false;
+  const start = Date.now();
+
+  // Trace the share→extract lifecycle as Sentry breadcrumbs. When something
+  // user-visible breaks (e.g. a captureException downstream), the breadcrumb
+  // trail tells us *what stage* the share got to before failing — without
+  // it, all we have is "the screen showed an error".
+  Sentry.addBreadcrumb({
+    category: 'extract.poll',
+    level: 'info',
+    message: 'pollExtract start',
+    data: {
+      contentHash: opts.contentHash,
+      urlHost: hostOf(opts.url),
+      triggerOnMissing: !!opts.triggerOnMissing,
+    },
+  });
 
   for (let attempt = 0; attempt < opts.maxAttempts; attempt++) {
     const resp = await fetch(getUrl, {
@@ -111,22 +129,32 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
     if (resp.status === 404) {
       if (opts.triggerOnMissing && opts.url && !missingTriggered) {
         missingTriggered = true;
+        Sentry.addBreadcrumb({
+          category: 'extract.poll',
+          level: 'info',
+          message: 'POST /extract (missing)',
+          data: { contentHash: opts.contentHash, attempt },
+        });
         await postExtract(opts);
         if (attempt < opts.maxAttempts - 1) await sleep(opts.delayMs);
         continue;
       }
-      return { status: 'missing', contentHash: opts.contentHash };
+      return finish(opts.contentHash, { status: 'missing', contentHash: opts.contentHash }, start);
     }
 
     let body: ExtractState;
     try {
       body = (await resp.json()) as ExtractState;
     } catch {
-      return { status: 'error', contentHash: opts.contentHash, error: 'non-json-response' };
+      return finish(
+        opts.contentHash,
+        { status: 'error', contentHash: opts.contentHash, error: 'non-json-response' },
+        start,
+      );
     }
 
-    if (body.status === 'done') return body;
-    if (body.status === 'error') return body;
+    if (body.status === 'done') return finish(opts.contentHash, body, start);
+    if (body.status === 'error') return finish(opts.contentHash, body, start);
     if (body.status === 'pending' || body.status === 'partial') {
       // Stale-state recovery: if the worker wrote this state more than
       // STALE_PENDING_MS ago, the pipeline isolate is presumed dead.
@@ -139,6 +167,12 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
         isStaleStartedAt(body.startedAt)
       ) {
         staleTriggered = true;
+        Sentry.addBreadcrumb({
+          category: 'extract.poll',
+          level: 'warning',
+          message: 'POST /extract (stale-recovery)',
+          data: { contentHash: opts.contentHash, attempt, startedAt: body.startedAt },
+        });
         await postExtract(opts);
       }
       if (attempt < opts.maxAttempts - 1) await sleep(opts.delayMs);
@@ -146,9 +180,38 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
     }
     // Schema drift safety: any unexpected status string ends the poll
     // rather than looping forever.
-    return { status: 'error', contentHash: opts.contentHash, error: 'unknown-status' };
+    return finish(
+      opts.contentHash,
+      { status: 'error', contentHash: opts.contentHash, error: 'unknown-status' },
+      start,
+    );
   }
-  return { status: 'timeout', contentHash: opts.contentHash };
+  return finish(opts.contentHash, { status: 'timeout', contentHash: opts.contentHash }, start);
+}
+
+// Final-breadcrumb sink. Centralised so every exit path leaves the same
+// shape ("pollExtract end" + status + duration) and we don't forget one.
+function finish(contentHash: string, state: ExtractState, start: number): ExtractState {
+  Sentry.addBreadcrumb({
+    category: 'extract.poll',
+    level: state.status === 'error' || state.status === 'timeout' ? 'warning' : 'info',
+    message: `pollExtract end (${state.status})`,
+    data: {
+      contentHash,
+      duration_ms: Date.now() - start,
+      error: state.status === 'error' ? state.error : undefined,
+    },
+  });
+  return state;
+}
+
+function hostOf(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 function sleep(ms: number): Promise<void> {

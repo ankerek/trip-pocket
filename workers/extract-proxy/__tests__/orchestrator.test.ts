@@ -1,6 +1,7 @@
 import { orchestrate, EXTRACT_STATE_TTL_SECONDS, STALE_PENDING_MS } from '../src/orchestrator';
 import type { OrchestratorRequest, OrchestratorState } from '../src/orchestrator-schema';
 import type { FetchPostResponse } from '../src/fetch-post';
+import { RunExtractError } from '../src/index';
 import type { Env } from '../src/index';
 
 const HASH = 'a'.repeat(64);
@@ -124,6 +125,101 @@ describe('orchestrate', () => {
     const final = captureState(kv)!;
     expect(final.status).toBe('error');
     expect(final.error).toBe('fetch-failed');
+  });
+
+  it('writes done with blurb_status=failed for every enriched place (bulk-blurb is deferred)', async () => {
+    // Bulk-blurb runs in the client's per-place /blurb-retry path now —
+    // it doesn't fit inside Cloudflare's 30s ctx.waitUntil cap when a
+    // big carousel already used 25-28s on fetch-post + vision + enrich.
+    // The deferred-blurb design writes `done` immediately with every
+    // place marked failed; the client backfills lazily.
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    let bulkBlurbCalled = false;
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/x/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap', imageUrls: ['https://cdn/c.jpg'] }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async () => ({
+          places: [{ name: 'A', city: 'B', address: '', category: 'food', country_code: '' }],
+          model: 'm',
+        }),
+        fetchImageBase64: async () => 'b64',
+        searchAndDetails: async () => ({
+          id: 'place_A',
+          latitude: 1,
+          longitude: 2,
+          formattedAddress: 'addr',
+          photoName: null,
+          rating: null,
+          priceLevel: null,
+          googleMapsUri: null,
+          displayName: 'A',
+          types: [],
+          editorialSummary: null,
+          city: 'B',
+          countryCode: 'JP',
+        }),
+        buildBulkBlurb: async () => {
+          bulkBlurbCalled = true;
+          return new Map();
+        },
+      },
+    );
+
+    expect(bulkBlurbCalled).toBe(false);
+    const final = captureState(kv)!;
+    expect(final.status).toBe('done');
+    expect(final.places).toHaveLength(1);
+    expect(final.places![0]!.blurb).toBeNull();
+    expect(final.places![0]!.blurb_status).toBe('failed');
+    // Enrichment fields preserved — client only re-runs the blurb step,
+    // not the Google Places resolution.
+    expect(final.places![0]!.external_place_id).toBe('place_A');
+  });
+
+  it('writes terminal error when enrichment throws (e.g. Too many subrequests)', async () => {
+    // Real-world repro: 8-slide IG carousel extracts 20 places, then the
+    // parallel Google Places fan-out tips the Worker over the 50/1000
+    // subrequest cap. The runtime exception bubbles out of Promise.all
+    // and orchestrate must surface it as `enrich-failed` rather than let
+    // ctx.waitUntil swallow it and leave the source stuck at `partial`.
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/x/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap', imageUrls: ['https://cdn/c.jpg'] }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async () => ({
+          places: [
+            { name: 'A', city: 'B', address: '', category: 'food', country_code: '' },
+            { name: 'C', city: 'D', address: '', category: 'food', country_code: '' },
+          ],
+          model: 'm',
+        }),
+        fetchImageBase64: async () => 'b64',
+        searchAndDetails: async () => {
+          throw new Error('Too many subrequests by single Worker invocation');
+        },
+      },
+    );
+    const final = captureState(kv)!;
+    expect(final.status).toBe('error');
+    expect(final.error).toBe('enrich-failed');
+    // Partial fields (caption + cover) preserved so the UI can still
+    // render a triage card alongside the failure state.
+    expect(final.caption).toBe('cap');
+    expect(final.coverUrl).toBe('https://cdn/c.jpg');
   });
 
   it('writes error state when runExtract throws', async () => {
@@ -339,6 +435,70 @@ describe('orchestrate', () => {
     expect(observedMode).toBe('text');
   });
 
+  it('leaves state at partial (no error write) when every mode fails transient (5xx)', async () => {
+    // Real-world repro: Gemini returns 503 "model is currently experiencing
+    // high demand" on both vision AND text fallback. Both are transient.
+    // Orchestrator must NOT overwrite the partial state with terminal
+    // `error`, so the next foreground sweep's stale-pending recovery can
+    // retrigger orchestration without manual intervention.
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap', imageUrls: ['https://cdn/c.jpg'] }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async () => {
+          throw new RunExtractError('upstream-error', 502);
+        },
+        fetchImageBase64: async () => 'b64',
+      },
+    );
+    const state = captureState(kv);
+    expect(state).not.toBeNull();
+    expect(state!.status).toBe('partial');
+    expect(state!.caption).toBe('cap');
+    // Existing partial fields preserved — caller can still render the
+    // triage card while waiting for the retry.
+    expect(state!.coverUrl).toBe('https://cdn/c.jpg');
+  });
+
+  it('writes terminal error when any mode fails permanently (e.g. schema violation)', async () => {
+    // Schema violations / bad-shape from Gemini are deterministic — the
+    // same payload yields the same malformed response, retrying won't
+    // help. A single permanent failure across the fallback chain flips
+    // the run terminal so the user sees "failed" rather than spinning.
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    let call = 0;
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap', imageUrls: ['https://cdn/c.jpg'] }),
+          cacheKind: 'apify',
+        }),
+        runExtract: async () => {
+          call++;
+          // First call (vision) → transient. Second call (text fallback)
+          // → permanent (schema violation). Mixed → terminal error.
+          if (call === 1) throw new RunExtractError('upstream-error', 502);
+          throw new RunExtractError('upstream-schema-violation', 502);
+        },
+        fetchImageBase64: async () => 'b64',
+      },
+    );
+    const state = captureState(kv);
+    expect(state!.status).toBe('error');
+    expect(state!.error).toBe('extract-failed');
+  });
+
   it('writes error when no extractable content is available', async () => {
     const kv = makeKv();
     const env = makeEnv(kv);
@@ -466,7 +626,7 @@ describe('orchestrate', () => {
 });
 
 describe('orchestrate — enrichment', () => {
-  it('runs searchAndDetails per place, dedups by place_id, then one bulk blurb call', async () => {
+  it('runs searchAndDetails per place, dedups by place_id, defers blurbs to client retry', async () => {
     const kv = makeKv();
     const env = makeEnv(kv);
 
@@ -552,20 +712,22 @@ describe('orchestrate — enrichment', () => {
     // place_ids survive after dedup.
     expect(searchAndDetailsCalls).toHaveLength(3);
     expect(final.places).toHaveLength(2);
-    // One bulk blurb call for the two survivors.
-    expect(bulkBlurbCalls).toEqual([2]);
+    // Bulk-blurb deliberately skipped — see orchestrator.ts comment near
+    // the `blurb_deferred` log event. Client backfills via /enrich.
+    expect(bulkBlurbCalls).toEqual([]);
 
     const tartine = final.places!.find((p) => p.name === 'Tartine');
     expect(tartine).toMatchObject({
       external_place_id: 'place-tartine',
       formatted_address: '600 Guerrero St',
       photo_name: 'places/place-tartine/photos/Y',
-      blurb: 'Blurb for Tartine.',
-      blurb_status: 'ok',
+      blurb: null,
+      blurb_status: 'failed',
     });
 
     const mrJius = final.places!.find((p) => p.name === 'Mister Jius');
     expect(mrJius?.external_place_id).toBe('place-mr-jius');
+    expect(mrJius?.blurb_status).toBe('failed');
   });
 
   it('marks blurb_status=failed when bulk blurb returns no entry for a place', async () => {

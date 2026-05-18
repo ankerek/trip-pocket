@@ -32,16 +32,108 @@ Each box is a `PipelineStage` emitted via `startStage(...)` from
 
 ## Observability surfaces
 
-| Surface              | What it shows                                                                     | How to enable / view                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| In-app diagnostics   | Last N stage transitions (done/failed, duration, error summary) — no content.     | Settings → Developer → "Pipeline log" navigates to `app/diagnostics/pipeline-log.tsx`.                |
-| Metro firehose       | Same stages **with full `extra` content** — the LLM output, OCR text, debug echo. | Settings → Developer → "Pipeline firehose" toggle. Dev builds only. Logs to the Metro console.        |
-| AI Gateway dashboard | Raw Gemini request + response for `/extract` and the `/enrich` blurb step.        | Cloudflare dashboard → AI Gateway → the configured gateway. Filters by model and timestamp.           |
-| `wrangler tail`      | Worker stdout/stderr — Places API URL, status codes, anything `console.error`'d.  | `cd workers/extract-proxy && wrangler tail`. Use sparingly; the firehose covers most worker outcomes. |
-| Sentry               | Unhandled errors + breadcrumbs per stage (prod and TestFlight).                   | Sentry web UI. The `pipeline_stage` tag scopes to a single stage.                                     |
+| Surface                    | What it shows                                                                                                                    | How to enable / view                                                                                               |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| In-app diagnostics         | Last N stage transitions (done/failed, duration, error summary) — no content.                                                    | Settings → Developer → "Pipeline log" navigates to `app/diagnostics/pipeline-log.tsx`.                             |
+| Metro firehose             | Same stages **with full `extra` content** — the LLM output, OCR text, debug echo.                                                | Settings → Developer → "Pipeline firehose" toggle. Dev builds only. Logs to the Metro console.                     |
+| AI Gateway dashboard       | Raw Gemini request + response for `/extract` and the `/enrich` blurb step. Includes per-call cost + latency.                     | Cloudflare dashboard → AI Gateway → the configured gateway. Filters by model and timestamp.                        |
+| `wrangler tail` (terminal) | Live structured JSON per stage transition (`share_received`, `stage_start`, `stage_done`, `stage_warn`, `stage_error`) + errors. | `cd workers/extract-proxy && npx wrangler tail`. Use `--search '"contentHash":"..."'` to scope to one share.       |
+| Workers Logs (dashboard)   | Same JSON lines as `wrangler tail`, retained 7 days. Free-text + field search, savable queries.                                  | Cloudflare dashboard → Workers & Pages → `trip-pocket-extract-proxy` → Logs. Enabled by `[observability]` in TOML. |
+| Sentry (client)            | Unhandled JS errors + per-stage breadcrumbs (prod and TestFlight). `extract.poll` breadcrumbs trace the share→poll→render flow.  | Sentry web UI. The `pipeline_stage` tag scopes to a device-side stage.                                             |
+| Sentry (worker)            | Every `logStageError` from the worker, tagged by `stage` / `source` / `mode` / `error_code`. Per-share isolation scope.          | Sentry web UI, same project. Set `wrangler secret put SENTRY_DSN` to enable; without it the SDK is a silent no-op. |
 
 Persisted rows in `pipeline_events` are content-free by design. Anything you
 need to see _what actually flowed_ requires the firehose or AI Gateway.
+
+## Worker pipeline observability
+
+The Cloudflare Worker (share-time pre-warm orchestrator + `/enrich` + `/photo`)
+emits one structured JSON line per stage transition through `src/logger.ts`.
+The `contentHash` doubles as a per-share trace id — grep it once and you see
+the full chain from receipt through every stage.
+
+### Event schema
+
+Every line is `{ ts, event, ...fields }`. Stable fields:
+
+| Field         | Values                                                                                                                                         | Where it comes from                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `event`       | `share_received`, `share_cache_hit`, `orchestrate_skip`, `orchestrate_stale_pending`, `stage_start`, `stage_done`, `stage_warn`, `stage_error` | Logger action.                                       |
+| `stage`       | `fetch-post`, `extract`, `enrich`, `blurb`                                                                                                     | Which orchestrator step.                             |
+| `contentHash` | SHA-256 of the canonical URL                                                                                                                   | Trace id; matches `sources.content_hash` on-device.  |
+| `source`      | `instagram`, `tiktok`, `unknown`                                                                                                               | Derived from URL host (entry) or `fetched.platform`. |
+| `mode`        | `video`, `vision`, `text`                                                                                                                      | Only on `stage=extract`. Reveals fallback path.      |
+| `duration_ms` | number                                                                                                                                         | On `*_done` / `*_warn` / `*_error`.                  |
+| `error_code`  | stable short token (`video-fetch-403`, `apify-timeout`, `gemini-429`, …)                                                                       | On `*_warn` / `*_error`.                             |
+| `cache_kind`  | `og`, `apify`                                                                                                                                  | Which fetcher served `fetch-post`.                   |
+
+The vocabulary is closed. No raw exception messages, no caption/OCR text.
+
+### Cheat-sheet — `wrangler tail`
+
+```bash
+# everything (live)
+npx wrangler tail
+
+# errors only
+npx wrangler tail --status error
+
+# scope to one share
+npx wrangler tail --search '"contentHash":"abc123..."'
+
+# all TikTok failures
+npx wrangler tail --search '"source":"tiktok"' --status error
+
+# only the blurb step
+npx wrangler tail --search '"stage":"blurb"'
+```
+
+`--search` is a substring match against the rendered log line. JSON-formatted
+events mean every field is a filter token.
+
+### Cheat-sheet — Workers Logs dashboard
+
+`Cloudflare → Workers & Pages → trip-pocket-extract-proxy → Logs`. Useful
+queries (paste into the top search bar):
+
+| Question                                | Query                                                |
+| --------------------------------------- | ---------------------------------------------------- |
+| All errors today                        | `$workers.event.type:"error"`                        |
+| One share end-to-end                    | `"contentHash":"abc123..."`                          |
+| TikTok video-mode failures              | `"stage":"extract" "mode":"video" "source":"tiktok"` |
+| Stale-pending re-orchestrations         | `orchestrate_stale_pending`                          |
+| Cache hits (free, didn't run pipeline)  | `share_cache_hit`                                    |
+| Blurb step timing (sort by duration_ms) | `"stage_done" "stage":"blurb"`                       |
+
+Save the queries that earn their keep as Saved Searches in the dashboard.
+
+### Sentry tags
+
+Every `logStageError` lands in Sentry as an Issue. Filter the Issues list by:
+
+- `stage:fetch-post` / `extract` / `enrich` / `blurb` — narrow to a pipeline step
+- `source:instagram` / `tiktok` — narrow to a platform
+- `mode:video` / `vision` / `text` — narrow to an extract fallback path
+- `error_code:upstream-rate-limited` (or any closed-vocab token) — narrow to a failure class
+
+Each event also has a `share` context block with the `contentHash` — copy it,
+paste into the Workers Logs dashboard, and you get the full per-stage trace
+around the moment of failure.
+
+### Workflow — "a user says their share didn't work"
+
+1. Get the `contentHash` — either from the client (`sources.content_hash` for
+   the offending row), or from the Sentry breadcrumb trail on a captured error.
+2. If live, `npx wrangler tail --search '"contentHash":"..."'`. If already
+   happened, paste the hash into the Workers Logs dashboard.
+3. Read the JSON lines top-to-bottom:
+   `share_received` → `stage_start fetch-post` → `stage_done/error fetch-post`
+   → `stage_start extract` → per-mode warns/done → `stage_start enrich` → …
+   The first `stage_error` (or last `stage_warn` before pipeline gives up) is
+   the root cause; its `error_code` is the closed-vocab failure class.
+4. For LLM-specific weirdness (model went off-spec, hallucinated place names),
+   open AI Gateway and filter by the same timestamp — you'll see the exact
+   Gemini request and response.
 
 ## How to localize a bug
 

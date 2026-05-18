@@ -205,6 +205,97 @@ describe('runExtract — error classification', () => {
   });
 });
 
+describe('runExtract — Gemini retry on transient', () => {
+  let original: typeof fetch;
+  beforeEach(() => {
+    original = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = original;
+  });
+
+  it('retries once on Gemini 503 then succeeds', async () => {
+    // Real-world: Gemini's "model is currently experiencing high demand"
+    // 503 typically clears within a second. One in-call retry catches
+    // it without surfacing a failure to the user.
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      if (calls === 1) return new Response('high demand', { status: 503 });
+      return geminiOk([{ name: 'A', city: 'B', category: 'food' }]);
+    }) as typeof fetch;
+    const result = await runExtract({ mode: 'text', text: 'hi' }, makeEnv());
+    expect(calls).toBe(2);
+    expect(result.places).toHaveLength(1);
+  });
+
+  it('retries once on Gemini 429 then succeeds', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      if (calls === 1) return new Response('rate limited', { status: 429 });
+      return geminiOk([{ name: 'A', city: 'B', category: 'food' }]);
+    }) as typeof fetch;
+    const result = await runExtract({ mode: 'text', text: 'hi' }, makeEnv());
+    expect(calls).toBe(2);
+    expect(result.places).toHaveLength(1);
+  });
+
+  it('retries once on network error then succeeds', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      if (calls === 1) throw new TypeError('connection reset');
+      return geminiOk([{ name: 'A', city: 'B', category: 'food' }]);
+    }) as typeof fetch;
+    const result = await runExtract({ mode: 'text', text: 'hi' }, makeEnv());
+    expect(calls).toBe(2);
+    expect(result.places).toHaveLength(1);
+  });
+
+  it('throws upstream-error after exhausting one retry on persistent 503', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response('high demand', { status: 503 });
+    }) as typeof fetch;
+    await expect(runExtract({ mode: 'text', text: 'hi' }, makeEnv())).rejects.toMatchObject({
+      code: 'upstream-error',
+      status: 502,
+    });
+    expect(calls).toBe(2);
+  });
+
+  it('does NOT retry on 4xx (permanent)', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response('bad request', { status: 400 });
+    }) as typeof fetch;
+    await expect(runExtract({ mode: 'text', text: 'hi' }, makeEnv())).rejects.toMatchObject({
+      code: 'upstream-error',
+    });
+    expect(calls).toBe(1);
+  });
+
+  it('does NOT retry on malformed-inner-json (deterministic)', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '{ "places": [' }] } }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    await expect(runExtract({ mode: 'text', text: 'hi' }, makeEnv())).rejects.toMatchObject({
+      code: 'upstream-malformed-inner-json',
+    });
+    expect(calls).toBe(1);
+  });
+});
+
 describe('runExtract — AI Gateway integration (HTTP-wire concerns)', () => {
   let original: typeof fetch;
   beforeEach(() => {

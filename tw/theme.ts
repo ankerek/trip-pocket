@@ -22,6 +22,9 @@ export const palette = {
     warningText: '#92400e',
     hairline: 'rgba(15, 23, 42, 0.06)',
     overlayStrong: 'rgba(0, 0, 0, 0.55)',
+    // Distinct from `surface` so skeleton bars stay visible against the
+    // white `bg` — `surface` (#f8fafc) is too close to #ffffff to read.
+    skeleton: '#e2e8f0',
   },
   dark: {
     bg: '#020617',
@@ -38,6 +41,9 @@ export const palette = {
     warningText: '#fcd34d',
     hairline: 'rgba(255, 255, 255, 0.08)',
     overlayStrong: 'rgba(0, 0, 0, 0.55)',
+    // Slightly lighter than `surface` (#0f172a) so skeleton bars read
+    // against dark surfaces too.
+    skeleton: '#1e293b',
   },
 } as const;
 

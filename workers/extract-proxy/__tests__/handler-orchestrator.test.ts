@@ -143,6 +143,85 @@ describe('handleExtractPost', () => {
     expect(ctx.waitUntil).not.toHaveBeenCalled();
   });
 
+  it('short-circuits with 200 when cached state is error (terminal)', async () => {
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'error',
+        error: 'extract-failed',
+        startedAt: '2026-05-18T00:00:00.000Z',
+      }),
+    );
+    const env = makeEnv(kv);
+    const ctx = { waitUntil: jest.fn() };
+    const res = await handleExtractPost(
+      postExtract({ contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/a/' }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; error?: string };
+    expect(body.status).toBe('error');
+    expect(body.error).toBe('extract-failed');
+    expect(ctx.waitUntil).not.toHaveBeenCalled();
+  });
+
+  it('returns 202 and re-schedules orchestrate when cached state is partial', async () => {
+    // Stale-pending recovery: an isolate that died between writing
+    // `partial` and the terminal write would otherwise leave the hash
+    // stuck for 72h, because the cached state short-circuit would block
+    // every subsequent POST from reaching orchestrate(). Partial must
+    // fall through.
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'partial',
+        caption: 'cap',
+        coverUrl: 'https://cdn/c.jpg',
+        startedAt: '2026-05-18T00:00:00.000Z',
+      }),
+    );
+    const env = makeEnv(kv);
+    const ctx = { waitUntil: jest.fn() };
+    const res = await handleExtractPost(
+      postExtract({ contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/a/' }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { status: string; caption?: string };
+    expect(body.status).toBe('partial');
+    expect(body.caption).toBe('cap');
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 202 and re-schedules orchestrate when cached state is pending', async () => {
+    const kv = makeKv();
+    kv.store.set(
+      `state:${HASH}`,
+      JSON.stringify({
+        contentHash: HASH,
+        status: 'pending',
+        startedAt: '2026-05-18T00:00:00.000Z',
+      }),
+    );
+    const env = makeEnv(kv);
+    const ctx = { waitUntil: jest.fn() };
+    const res = await handleExtractPost(
+      postExtract({ contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/a/' }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe('pending');
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+  });
+
   it('returns 400 for invalid contentHash shape', async () => {
     const env = makeEnv();
     const ctx = { waitUntil: jest.fn() };
