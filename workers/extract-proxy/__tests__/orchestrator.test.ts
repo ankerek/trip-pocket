@@ -359,6 +359,185 @@ describe('orchestrate', () => {
   });
 });
 
+describe('orchestrate — enrichment', () => {
+  it('runs searchAndDetails per place, dedups by place_id, then one bulk blurb call', async () => {
+    const kv = makeKv();
+    const env = makeEnv(kv);
+
+    const searchAndDetailsCalls: string[] = [];
+    const bulkBlurbCalls: number[] = [];
+
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'best brunch in SF' }),
+          cacheKind: 'og',
+        }),
+        runExtract: async () => ({
+          places: [
+            { name: 'Tartine', city: 'SF', address: '', category: 'food', country_code: 'US' },
+            // Same Google place_id as above — should be deduped after Places lookup.
+            { name: 'Tartine Bakery SF', city: 'SF', address: '', category: 'food', country_code: 'US' },
+            // Distinct place — should survive.
+            { name: 'Mister Jius', city: 'SF', address: '', category: 'food', country_code: 'US' },
+          ],
+          model: 'gemini-test',
+        }),
+        fetchImageBase64: async () => 'b64',
+        searchAndDetails: async (req) => {
+          searchAndDetailsCalls.push(req.name);
+          if (req.name === 'Mister Jius') {
+            return {
+              id: 'place-mr-jius',
+              displayName: 'Mister Jius',
+              formattedAddress: '28 Waverly Pl',
+              photoName: 'places/place-mr-jius/photos/X',
+              rating: 4.5,
+              priceLevel: 3,
+              googleMapsUri: 'https://maps.example/mr-jius',
+              latitude: 37.79,
+              longitude: -122.41,
+              types: ['restaurant'],
+              editorialSummary: 'Modern Chinese.',
+              city: 'San Francisco',
+              countryCode: 'US',
+            };
+          }
+          // Both "Tartine" and "Tartine Bakery SF" → same place_id.
+          return {
+            id: 'place-tartine',
+            displayName: 'Tartine Bakery',
+            formattedAddress: '600 Guerrero St',
+            photoName: 'places/place-tartine/photos/Y',
+            rating: 4.6,
+            priceLevel: 2,
+            googleMapsUri: 'https://maps.example/tartine',
+            latitude: 37.76,
+            longitude: -122.42,
+            types: ['bakery'],
+            editorialSummary: null,
+            city: 'San Francisco',
+            countryCode: 'US',
+          };
+        },
+        buildBulkBlurb: async (items) => {
+          bulkBlurbCalls.push(items.length);
+          const out = new Map();
+          for (const it of items) {
+            out.set(it.id, { text: `Blurb for ${it.name}.`, outcome: 'ok' });
+          }
+          return out;
+        },
+      },
+    );
+
+    const final = captureState(kv)!;
+    expect(final.status).toBe('done');
+    // All three places hit Places (parallel) but only the two distinct
+    // place_ids survive after dedup.
+    expect(searchAndDetailsCalls).toHaveLength(3);
+    expect(final.places).toHaveLength(2);
+    // One bulk blurb call for the two survivors.
+    expect(bulkBlurbCalls).toEqual([2]);
+
+    const tartine = final.places!.find((p) => p.name === 'Tartine');
+    expect(tartine).toMatchObject({
+      external_place_id: 'place-tartine',
+      formatted_address: '600 Guerrero St',
+      photo_name: 'places/place-tartine/photos/Y',
+      blurb: 'Blurb for Tartine.',
+      blurb_status: 'ok',
+    });
+
+    const mrJius = final.places!.find((p) => p.name === 'Mister Jius');
+    expect(mrJius?.external_place_id).toBe('place-mr-jius');
+  });
+
+  it('marks blurb_status=failed when bulk blurb returns no entry for a place', async () => {
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap' }),
+          cacheKind: 'og',
+        }),
+        runExtract: async () => ({
+          places: [
+            { name: 'X', city: 'SF', address: '', category: 'food', country_code: 'US' },
+          ],
+          model: 'gemini-test',
+        }),
+        fetchImageBase64: async () => 'b64',
+        searchAndDetails: async () => ({
+          id: 'place-x',
+          displayName: 'X',
+          formattedAddress: '1 X St',
+          photoName: null,
+          rating: null,
+          priceLevel: null,
+          googleMapsUri: null,
+          latitude: null,
+          longitude: null,
+          types: [],
+          editorialSummary: null,
+          city: 'SF',
+          countryCode: 'US',
+        }),
+        // Empty map — simulates the bulk call returning nothing usable.
+        buildBulkBlurb: async () => new Map(),
+      },
+    );
+    const final = captureState(kv)!;
+    expect(final.places).toHaveLength(1);
+    expect(final.places![0]).toMatchObject({
+      external_place_id: 'place-x',
+      blurb: null,
+      blurb_status: 'failed',
+    });
+  });
+
+  it('keeps a place with blurb_status=not-found when Google Places returns null', async () => {
+    const kv = makeKv();
+    const env = makeEnv(kv);
+    await orchestrate(
+      { contentHash: HASH, kind: 'url', url: 'https://www.instagram.com/p/z/' },
+      env,
+      noopCtx,
+      {
+        runFetchPost: async () => ({
+          result: makeFetched({ caption: 'cap' }),
+          cacheKind: 'og',
+        }),
+        runExtract: async () => ({
+          places: [
+            { name: 'Imaginary Spot', city: 'Nowhere', address: '', category: 'food', country_code: '' },
+          ],
+          model: 'gemini-test',
+        }),
+        fetchImageBase64: async () => 'b64',
+        searchAndDetails: async () => null,
+        buildBulkBlurb: async () => new Map(),
+      },
+    );
+    const final = captureState(kv)!;
+    expect(final.places).toHaveLength(1);
+    expect(final.places![0]).toMatchObject({
+      name: 'Imaginary Spot',
+      blurb: null,
+      blurb_status: 'not-found',
+    });
+    // No external_place_id when Google didn't match.
+    expect(final.places![0]?.external_place_id).toBeUndefined();
+  });
+});
+
 describe('EXTRACT_STATE_TTL_SECONDS', () => {
   it('is 72 hours', () => {
     expect(EXTRACT_STATE_TTL_SECONDS).toBe(72 * 60 * 60);

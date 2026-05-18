@@ -103,6 +103,67 @@ function errorResponse(
   });
 }
 
+/**
+ * Pure (no Request, no Response) helper around the Google Places
+ * `searchText` + `placeDetails` chain. Returns the populated
+ * PlaceDetails or null when Google didn't find a match. Throws
+ * PlacesError on any Google Places upstream error so the caller can
+ * decide HTTP vs orchestrator-state handling.
+ */
+export async function searchAndDetailsForPlace(
+  req: EnrichRequest,
+  env: Env,
+): Promise<PlaceDetails | null> {
+  const foundPlaceId = await searchText(req, env);
+  if (foundPlaceId === null) return null;
+  return getPlaceDetails(foundPlaceId, env);
+}
+
+/**
+ * Pure (no Request, no Response) wrapper around the full /enrich chain:
+ *   searchText → details → safeBuildBlurb (single).
+ * Returns the EnrichResponse shape. The orchestrator does NOT call this —
+ * it calls searchAndDetailsForPlace + buildBulkBlurb separately so the
+ * blurb work can be batched.
+ */
+export async function runEnrich(req: EnrichRequest, env: Env): Promise<EnrichResponse> {
+  const details = await searchAndDetailsForPlace(req, env);
+  if (details === null) {
+    return {
+      status: 'not-found',
+      _debug: {
+        searchOutcome: 'empty',
+        detailsOutcome: 'not_called',
+        blurbOutcome: 'not_called',
+      },
+    };
+  }
+
+  const blurb = await safeBuildBlurb(req, details, env);
+
+  return {
+    status: 'enriched',
+    external_place_id: details.id,
+    latitude: details.latitude,
+    longitude: details.longitude,
+    formatted_address: details.formattedAddress,
+    photo_name: details.photoName,
+    description: blurb.text,
+    rating: details.rating,
+    price_level: details.priceLevel,
+    external_url: details.googleMapsUri,
+    city: details.city,
+    country_code: details.countryCode,
+    display_name: trimToNull(details.displayName),
+    model: GEMINI_MODEL,
+    _debug: {
+      searchOutcome: 'ok',
+      detailsOutcome: 'ok',
+      blurbOutcome: blurb.outcome,
+    },
+  };
+}
+
 export async function handleEnrich(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return errorResponse('method-not-allowed', 405);
 
@@ -140,60 +201,18 @@ export async function handleEnrich(request: Request, env: Env): Promise<Response
   const { success: rateOk } = await env.RATE_LIMIT.limit({ key: ip });
   if (!rateOk) return errorResponse('rate-limited', 429, { 'retry-after': '60' });
 
-  // 1. Find Place from Text — Places API (New) `places:searchText`.
-  let foundPlaceId: string;
   try {
-    const result = await searchText(parsed.data, env);
-    if (result === null) {
-      return jsonResponse({
-        status: 'not-found' satisfies EnrichResponse['status'],
-        _debug: {
-          searchOutcome: 'empty',
-          detailsOutcome: 'not_called',
-          blurbOutcome: 'not_called',
-        },
-      });
+    const response = await runEnrich(parsed.data, env);
+    return jsonResponse(response);
+  } catch (err) {
+    if (err instanceof PlacesError) {
+      // Stage label is approximate — both searchText and getPlaceDetails
+      // throw PlacesError; the message embedded in the error carries the
+      // specifics for log triage.
+      return placesErrorToResponse('places', err);
     }
-    foundPlaceId = result;
-  } catch (err) {
-    return placesErrorToResponse('searchText', err);
+    throw err;
   }
-
-  // 2. Place Details — Places API (New) GET /v1/places/{place_id}.
-  let details: PlaceDetails;
-  try {
-    details = await getPlaceDetails(foundPlaceId, env);
-  } catch (err) {
-    return placesErrorToResponse('details', err);
-  }
-
-  // 3. Gemini blurb — best-effort. If it fails, return the Places data
-  // with description=null. The user gets the photo + rating without a
-  // narrative; the next /enrich on the same row will retry the blurb.
-  const blurb = await safeBuildBlurb(parsed.data, details, env);
-
-  const response: EnrichResponse = {
-    status: 'enriched',
-    external_place_id: details.id,
-    latitude: details.latitude,
-    longitude: details.longitude,
-    formatted_address: details.formattedAddress,
-    photo_name: details.photoName,
-    description: blurb.text,
-    rating: details.rating,
-    price_level: details.priceLevel,
-    external_url: details.googleMapsUri,
-    city: details.city,
-    country_code: details.countryCode,
-    display_name: trimToNull(details.displayName),
-    model: GEMINI_MODEL,
-    _debug: {
-      searchOutcome: 'ok',
-      detailsOutcome: 'ok',
-      blurbOutcome: blurb.outcome,
-    },
-  };
-  return jsonResponse(response);
 }
 
 function trimToNull(value: string | null): string | null {
@@ -204,7 +223,7 @@ function trimToNull(value: string | null): string | null {
 
 // --- Google Places client ---
 
-class PlacesError extends Error {
+export class PlacesError extends Error {
   constructor(
     public readonly status: number,
     message: string,
@@ -257,7 +276,7 @@ async function searchText(req: EnrichRequest, env: Env): Promise<string | null> 
   return id;
 }
 
-type PlaceDetails = {
+export type PlaceDetails = {
   id: string;
   latitude: number | null;
   longitude: number | null;
@@ -427,7 +446,7 @@ class BlurbError extends Error {
 const BLURB_RETRY_DELAY_MS = 500;
 const BLURB_MAX_ATTEMPTS = 2;
 
-async function safeBuildBlurb(
+export async function safeBuildBlurb(
   req: EnrichRequest,
   details: PlaceDetails,
   env: Env,
@@ -456,6 +475,159 @@ async function safeBuildBlurb(
   }
   console.error('extract-proxy/enrich: blurb-failed', String(lastErr));
   return { text: null, outcome: 'failed' };
+}
+
+// --- Bulk blurb (orchestrator path) ---
+
+/**
+ * Output of a single bulk-blurb slot. Mirrors safeBuildBlurb's per-place
+ * shape so consumers can treat single + bulk uniformly.
+ */
+export type BlurbResult = { text: string | null; outcome: BlurbOutcome };
+
+/**
+ * Input to the bulk blurb call. The orchestrator already has each
+ * place's `PlaceDetails` and the post caption from `runFetchPost`.
+ * The `id` field is just a stable handle (place_id from Google) so
+ * callers can map results back to their places.
+ */
+export type BulkBlurbItem = {
+  id: string;
+  name: string;
+  city: string;
+  ocr_caption: string;
+  details: PlaceDetails;
+};
+
+const BULK_BLURB_SYSTEM_PROMPT = `${BLURB_SYSTEM_PROMPT}
+
+You will receive a JSON array of places under \`places\`. Return a JSON object
+with a top-level \`blurbs\` array, one entry per input place, in input order,
+each with the input \`id\` and your \`blurb\` text. If a place's inputs are
+too thin to produce a meaningful blurb, return an empty string for that
+entry; do not invent details.`;
+
+const BULK_BLURB_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    blurbs: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          blurb: { type: 'string' },
+        },
+        required: ['id', 'blurb'],
+      },
+    },
+  },
+  required: ['blurbs'],
+};
+
+/**
+ * Generate blurbs for N places in a single Gemini call. Returns a Map
+ * keyed by the caller's `id` (the place_id) so callers can join back to
+ * their inputs even when the model omits or reorders entries.
+ *
+ * Best-effort: a hard failure of the bulk call returns an empty Map; the
+ * caller should treat any missing id as `outcome: 'failed'` and trigger
+ * a single-blurb retry via /blurb-retry. A returned `''` (empty string)
+ * means the model deliberately abstained — treat as `outcome: 'empty'`
+ * (do NOT retry).
+ */
+export async function buildBulkBlurb(
+  items: BulkBlurbItem[],
+  env: Env,
+): Promise<Map<string, BlurbResult>> {
+  const out = new Map<string, BlurbResult>();
+  if (items.length === 0) return out;
+
+  // Same prompt shape as the single-blurb call, but the user message is
+  // an array of place facts + caption snippets.
+  const userPayload = {
+    places: items.map((it) => ({
+      id: it.id,
+      name: it.details.displayName ?? it.name,
+      city: it.city,
+      formatted_address: it.details.formattedAddress,
+      rating: it.details.rating,
+      price_level: it.details.priceLevel,
+      types: it.details.types,
+      editorial_summary: it.details.editorialSummary,
+      ocr_caption: it.ocr_caption.slice(0, 4000),
+    })),
+  };
+
+  const gatewayUrl =
+    `https://gateway.ai.cloudflare.com/v1/${env.CF_ACCOUNT_ID}/${env.AI_GATEWAY_NAME}` +
+    `/google-ai-studio/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(gatewayUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'cf-aig-authorization': `Bearer ${env.CF_AIG_TOKEN}`,
+      },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: JSON.stringify(userPayload) }] }],
+        systemInstruction: { parts: [{ text: BULK_BLURB_SYSTEM_PROMPT }] },
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: BULK_BLURB_RESPONSE_SCHEMA,
+          maxOutputTokens: 200 * items.length, // budget per item, same as single
+          temperature: 0.4,
+        },
+      }),
+    });
+  } catch (err) {
+    console.error('extract-proxy/enrich: bulk-blurb network', String(err));
+    return out; // empty — caller treats all as 'failed'
+  }
+
+  if (!resp.ok) {
+    console.error('extract-proxy/enrich: bulk-blurb upstream', resp.status);
+    return out;
+  }
+
+  let body: unknown;
+  try {
+    body = await resp.json();
+  } catch {
+    console.error('extract-proxy/enrich: bulk-blurb non-json');
+    return out;
+  }
+
+  const candidateText = (body as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> })
+    .candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof candidateText !== 'string') return out;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidateText);
+  } catch {
+    console.error('extract-proxy/enrich: bulk-blurb inner-parse-failed');
+    return out;
+  }
+
+  const blurbsRaw = (parsed as { blurbs?: unknown }).blurbs;
+  if (!Array.isArray(blurbsRaw)) return out;
+  for (const slot of blurbsRaw) {
+    if (typeof slot !== 'object' || slot === null) continue;
+    const id = (slot as { id?: unknown }).id;
+    const blurbText = (slot as { blurb?: unknown }).blurb;
+    if (typeof id !== 'string' || typeof blurbText !== 'string') continue;
+    const trimmed = blurbText.trim();
+    if (trimmed.length === 0) {
+      out.set(id, { text: null, outcome: 'empty' });
+      continue;
+    }
+    const capped = trimmed.length > 240 ? `${trimmed.slice(0, 237)}…` : trimmed;
+    out.set(id, { text: capped, outcome: 'ok' });
+  }
+  return out;
 }
 
 async function buildBlurb(

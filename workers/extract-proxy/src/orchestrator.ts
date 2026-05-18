@@ -1,11 +1,22 @@
 import type { Env } from './index';
-import type { OrchestratorRequest, OrchestratorState } from './orchestrator-schema';
+import type {
+  OrchestratorRequest,
+  OrchestratorState,
+  EnrichedPlace,
+} from './orchestrator-schema';
 import type { WaitUntilCtx } from './video';
 import type { RequestBody, ExtractedPlace } from './schema';
 import { runFetchPost as defaultRunFetchPost } from './fetch-post';
 import { runExtract as defaultRunExtract } from './index';
 import type { FetchPostResponse } from './fetch-post';
 import { dedupePlaces } from './dedupe';
+import {
+  searchAndDetailsForPlace as defaultSearchAndDetails,
+  buildBulkBlurb as defaultBuildBulkBlurb,
+  PlacesError,
+  type PlaceDetails,
+  type BlurbResult,
+} from './enrich';
 
 export const EXTRACT_STATE_TTL_SECONDS = 72 * 60 * 60;
 
@@ -30,9 +41,27 @@ export type RunExtractFn = (
   ctx: WaitUntilCtx,
 ) => Promise<{ places: ExtractedPlace[]; model: string }>;
 
+export type SearchAndDetailsFn = (
+  req: { name: string; city: string; address: string; ocr_caption: string; extracted_place_id: string },
+  env: Env,
+) => Promise<PlaceDetails | null>;
+
+export type BuildBulkBlurbFn = (
+  items: Array<{
+    id: string;
+    name: string;
+    city: string;
+    ocr_caption: string;
+    details: PlaceDetails;
+  }>,
+  env: Env,
+) => Promise<Map<string, BlurbResult>>;
+
 export type OrchestrateDeps = {
   runFetchPost?: RunFetchPostFn;
   runExtract?: RunExtractFn;
+  searchAndDetails?: SearchAndDetailsFn;
+  buildBulkBlurb?: BuildBulkBlurbFn;
   /** Test seam — fetches the cover URL and returns base64 image data. */
   fetchImageBase64?: (url: string) => Promise<string>;
 };
@@ -97,6 +126,8 @@ export async function orchestrate(
 
   const runFetchPost = deps.runFetchPost ?? defaultRunFetchPost;
   const runExtract = deps.runExtract ?? defaultRunExtract;
+  const searchAndDetails = deps.searchAndDetails ?? defaultSearchAndDetails;
+  const buildBulkBlurb = deps.buildBulkBlurb ?? defaultBuildBulkBlurb;
   const fetchImageBase64 = deps.fetchImageBase64 ?? defaultFetchImageBase64;
 
   let fetched: FetchPostResponse;
@@ -156,7 +187,17 @@ export async function orchestrate(
         );
         return;
       }
-      await runExtractAndWriteDone(extractBody, env, ctx, runExtract, req, fetched, startedAt);
+      await runExtractAndWriteDone(
+        extractBody,
+        env,
+        ctx,
+        runExtract,
+        searchAndDetails,
+        buildBulkBlurb,
+        req,
+        fetched,
+        startedAt,
+      );
       return;
     }
     extractBody = { mode: 'vision', imageBase64, caption: fetched.caption };
@@ -175,7 +216,17 @@ export async function orchestrate(
     return;
   }
 
-  await runExtractAndWriteDone(extractBody, env, ctx, runExtract, req, fetched, startedAt);
+  await runExtractAndWriteDone(
+    extractBody,
+    env,
+    ctx,
+    runExtract,
+    searchAndDetails,
+    buildBulkBlurb,
+    req,
+    fetched,
+    startedAt,
+  );
 }
 
 async function runExtractAndWriteDone(
@@ -183,6 +234,8 @@ async function runExtractAndWriteDone(
   env: Env,
   ctx: WaitUntilCtx,
   runExtract: RunExtractFn,
+  searchAndDetails: SearchAndDetailsFn,
+  buildBulkBlurb: BuildBulkBlurbFn,
   req: OrchestratorRequest,
   fetched: FetchPostResponse,
   startedAt: string,
@@ -207,7 +260,108 @@ async function runExtractAndWriteDone(
     return;
   }
 
-  const places = dedupePlaces(result.places);
+  const extractedDeduped = dedupePlaces(result.places);
+
+  // Enrich each place against Google Places in parallel. PlacesError per
+  // place becomes "not-found" — the place still ships, just without the
+  // enrichment fields. This is the same fallback the client uses today.
+  const enrichmentInput = extractedDeduped.map((p, i) => ({
+    place: p,
+    enrichKey: `${i}`, // stable index id used during enrich-by-place_id dedup
+  }));
+
+  const detailsResults = await Promise.all(
+    enrichmentInput.map(async (item) => {
+      try {
+        const details = await searchAndDetails(
+          {
+            name: item.place.name,
+            city: item.place.city,
+            address: item.place.address,
+            ocr_caption: fetched.caption ?? '',
+            extracted_place_id: item.enrichKey,
+          },
+          env,
+        );
+        return { ...item, details };
+      } catch (err) {
+        if (err instanceof PlacesError) {
+          console.warn('orchestrate: places lookup failed', item.place.name, err.status);
+          return { ...item, details: null };
+        }
+        throw err;
+      }
+    }),
+  );
+
+  // Dedup by place_id. Two LLM-emitted names ("Tartine" + "Tartine Bakery SF")
+  // resolving to the same Google place_id collapse into one survivor — the
+  // first occurrence wins. Places that came back null (not-found) survive
+  // each on their own row keyed by their extraction index since we have no
+  // canonical id for them.
+  const survivors: typeof detailsResults = [];
+  const seenPlaceIds = new Set<string>();
+  for (const item of detailsResults) {
+    if (item.details === null) {
+      survivors.push(item);
+      continue;
+    }
+    if (seenPlaceIds.has(item.details.id)) continue;
+    seenPlaceIds.add(item.details.id);
+    survivors.push(item);
+  }
+
+  // Bulk-blurb only the items that have details (i.e. that Google Places
+  // matched). For not-found rows we don't have anything grounded to write
+  // a blurb against.
+  const blurbInputs = survivors
+    .filter((s): s is typeof s & { details: PlaceDetails } => s.details !== null)
+    .map((s) => ({
+      id: s.details.id,
+      name: s.place.name,
+      city: s.place.city,
+      ocr_caption: fetched.caption ?? '',
+      details: s.details,
+    }));
+
+  let blurbsByPlaceId: Map<string, BlurbResult>;
+  try {
+    blurbsByPlaceId = await buildBulkBlurb(blurbInputs, env);
+  } catch (err) {
+    console.warn('orchestrate: bulk blurb threw', String(err));
+    blurbsByPlaceId = new Map();
+  }
+
+  const enrichedPlaces: EnrichedPlace[] = survivors.map((s) => {
+    if (s.details === null) {
+      return {
+        ...s.place,
+        blurb: null,
+        blurb_status: 'not-found',
+      };
+    }
+    const blurbResult = blurbsByPlaceId.get(s.details.id);
+    return {
+      ...s.place,
+      external_place_id: s.details.id,
+      formatted_address: s.details.formattedAddress,
+      photo_name: s.details.photoName,
+      display_name: s.details.displayName,
+      latitude: s.details.latitude,
+      longitude: s.details.longitude,
+      rating: s.details.rating,
+      price_level: s.details.priceLevel,
+      external_url: s.details.googleMapsUri,
+      editorial_summary: s.details.editorialSummary,
+      blurb: blurbResult?.text ?? null,
+      // Missing entry = the bulk call returned nothing for this id, so we
+      // treat it as 'failed' — client can /blurb-retry. Present entry
+      // with outcome='empty' means the model abstained intentionally; no
+      // retry. Present entry with outcome='ok' means we have a blurb.
+      blurb_status: blurbResult ? blurbResult.outcome : 'failed',
+    };
+  });
+
   await writeState(
     {
       contentHash: req.contentHash,
@@ -215,7 +369,7 @@ async function runExtractAndWriteDone(
       caption: fetched.caption,
       coverUrl: fetched.imageUrls[0],
       videoPresent: !!fetched.videoUrl,
-      places,
+      places: enrichedPlaces,
       model: result.model,
       startedAt,
     },
