@@ -7,11 +7,28 @@
 // the pipeline and the loop polls until done or timeout.
 
 export type ExtractedPlace = {
+  // Extraction fields (always present).
   name: string;
   city: string;
   address: string;
   category: 'food' | 'drinks' | 'stays' | 'sights' | 'activities' | 'shops';
   country_code: string;
+  // Enrichment fields populated by the worker orchestrator's Google
+  // Places + bulk-blurb step (Option B). All optional because (a) the
+  // place may not have matched Google Places (`blurb_status='not-found'`)
+  // and (b) the bulk-blurb call may have lost a slot (`blurb_status='failed'`).
+  external_place_id?: string | null;
+  formatted_address?: string | null;
+  photo_name?: string | null;
+  display_name?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  rating?: number | null;
+  price_level?: number | null;
+  external_url?: string | null;
+  editorial_summary?: string | null;
+  blurb?: string | null;
+  blurb_status?: 'ok' | 'empty' | 'failed' | 'not-found' | null;
 };
 
 export type ExtractState =

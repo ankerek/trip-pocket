@@ -26,18 +26,21 @@ export type ApplyExtractDoneInput = {
  * same whether places came from the new worker-driven path or the
  * legacy image-source path.
  *
+ * For URL sources, the worker now ships ENRICHED places (Option B):
+ * each place may carry external_place_id, formatted_address, photo_name,
+ * blurb, etc. When the worker matched Google Places, we insert with
+ * enrichment_status='enriched' so the lazy client-side enricher never
+ * fires for these. When the worker didn't match (`blurb_status='not-found'`),
+ * we insert with enrichment_status='not-found'.
+ *
  * The whole thing runs inside a single transaction so the source row
  * never flips to extraction_status='done' without its places landing.
- * UI queries that gate on extraction_status='done' will see the final
- * state atomically.
  */
 export async function applyExtractDone(
   db: Database,
   input: ApplyExtractDoneInput,
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
-    // Read the source's current trip_id so newly-inserted places inherit
-    // the user's suggested trip from share time.
     const source = await db.getFirstAsync<{ trip_id: string | null }>(
       `SELECT trip_id FROM sources WHERE id = ?`,
       input.sourceId,
@@ -54,6 +57,7 @@ export async function applyExtractDone(
         countryCode,
         sourceTripId,
         input.ownerId,
+        input.model,
         input.now,
       );
       await linkPlaceSource(db, {
@@ -92,6 +96,7 @@ async function resolveOrInsertPlace(
   countryCode: string | null,
   sourceTripId: string | null,
   ownerId: string,
+  model: string,
   ts: string,
 ): Promise<string> {
   const existing = await findSoleMatchByNormalizedKey(db, normalizedKey, ownerId);
@@ -123,21 +128,67 @@ async function resolveOrInsertPlace(
   }
 
   const newId = Crypto.randomUUID();
+
+  // If the worker shipped Google-Places-enriched data with the place,
+  // insert the row already in 'enriched' state so the client enricher
+  // never fires for it. When the worker matched a place_id (success or
+  // failed bulk-blurb) we still mark it 'enriched' — failed blurbs leave
+  // `description` null but the rest of the enrichment data is sound.
+  // 'not-found' means Google didn't match; the row goes in as such so
+  // the UI can surface the place without enrichment data instead of
+  // showing a skeleton forever.
+  const externalPlaceId = candidate.external_place_id ?? null;
+  const blurbStatus = candidate.blurb_status ?? null;
+  const enrichmentStatus =
+    externalPlaceId !== null
+      ? 'enriched'
+      : blurbStatus === 'not-found'
+        ? 'not-found'
+        : 'pending';
+
+  // Use the worker's authoritative display_name when present (Google's
+  // displayName is canonical — e.g. "Tartine Bakery" rather than the
+  // LLM-extracted "Tartine"). Falls back to the LLM name when null.
+  const displayName = candidate.display_name?.trim() || candidate.name;
+
   await db.runAsync(
     `INSERT INTO places (
        id, trip_id, name, city, country_code, category, normalized_key,
-       enrichment_status, owner_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+       enrichment_status, owner_id, created_at, updated_at,
+       external_place_id, photo_name, description,
+       rating, price_level, external_url,
+       latitude, longitude, formatted_address,
+       enriched_at, enrichment_model
+     ) VALUES (
+       ?, ?, ?, ?, ?, ?, ?,
+       ?, ?, ?, ?,
+       ?, ?, ?,
+       ?, ?, ?,
+       ?, ?, ?,
+       ?, ?
+     )`,
     newId,
     sourceTripId,
-    candidate.name,
+    displayName,
     candidate.city,
     countryCode,
     candidate.category,
-    normalizedKey,
+    normalizePlaceKey(displayName, candidate.city),
+    enrichmentStatus,
     ownerId,
     ts,
     ts,
+    externalPlaceId,
+    candidate.photo_name ?? null,
+    candidate.blurb ?? null,
+    candidate.rating ?? null,
+    candidate.price_level ?? null,
+    candidate.external_url ?? null,
+    candidate.latitude ?? null,
+    candidate.longitude ?? null,
+    candidate.formatted_address ?? null,
+    enrichmentStatus === 'enriched' ? ts : null,
+    enrichmentStatus === 'enriched' ? model : null,
   );
   return newId;
 }
