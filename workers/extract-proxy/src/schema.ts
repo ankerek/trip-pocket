@@ -62,6 +62,10 @@ const videoModeSchema = z.object({
   video: z.object({
     url: z.string().url(),
     durationSec: z.number().nonnegative().optional(),
+    // Optional Referer URL for the CDN fetch (typically the canonical
+    // post page). TikTok's CDN tightened auth enforcement and rejects
+    // requests that don't carry the per-video page URL as Referer.
+    refererUrl: z.string().url().optional(),
   }),
   caption: z.string().optional(),
 });

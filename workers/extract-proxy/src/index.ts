@@ -107,7 +107,11 @@ export async function runExtract(
   if (body.mode === 'video') {
     try {
       const { part } = await buildVideoPart(
-        { url: body.video.url, durationSec: body.video.durationSec },
+        {
+          url: body.video.url,
+          durationSec: body.video.durationSec,
+          refererUrl: body.video.refererUrl,
+        },
         env,
         ctx,
       );

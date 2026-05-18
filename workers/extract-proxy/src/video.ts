@@ -90,6 +90,15 @@ export type VideoEnv = {
 export type BuildVideoPartInput = {
   url: string;
   durationSec?: number;
+  /**
+   * Optional Referer to use when fetching the video bytes from the CDN.
+   * TikTok in particular has tightened auth-context enforcement on
+   * `playAddr` URLs: a homepage Referer (https://www.tiktok.com/) is no
+   * longer enough — the CDN wants the canonical video page URL
+   * (https://www.tiktok.com/@user/video/123). The orchestrator passes
+   * `fetched.permalink` here.
+   */
+  refererUrl?: string;
 };
 
 /**
@@ -115,7 +124,7 @@ export async function buildVideoPart(
     throw new VideoError('video-too-long', 400);
   }
 
-  const bytes = await fetchVideoBytes(input.url);
+  const bytes = await fetchVideoBytes(input.url, input.refererUrl);
 
   if (bytes.length < INLINE_TRANSPORT_CUTOFF_BYTES) {
     return {
@@ -134,11 +143,38 @@ export async function buildVideoPart(
   };
 }
 
-async function fetchVideoBytes(url: string): Promise<Uint8Array> {
+async function fetchVideoBytes(
+  url: string,
+  refererUrl?: string,
+): Promise<Uint8Array> {
   const platform = detectPlatform(url);
-  const headers: Record<string, string> = { 'User-Agent': BROWSER_UA };
-  if (platform === 'instagram') headers['Referer'] = 'https://www.instagram.com/';
-  else if (platform === 'tiktok') headers['Referer'] = 'https://www.tiktok.com/';
+  // Browser-realistic header set. TikTok's CDN (and increasingly IG's)
+  // checks a combination of Referer, Origin, sec-fetch-*, and the
+  // Range/Accept headers — a curl-shaped request gets a flat 403.
+  const headers: Record<string, string> = {
+    'User-Agent': BROWSER_UA,
+    Accept: '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'identity', // no gzip — Workers fetch streams raw bytes
+    Range: 'bytes=0-',
+    'sec-fetch-dest': 'video',
+    'sec-fetch-mode': 'no-cors',
+    'sec-fetch-site': 'cross-site',
+  };
+  // Per-request Referer wins over the platform default. TikTok playAddr
+  // URLs now require the canonical video-page URL as Referer; falling
+  // back to the homepage Referer 403s.
+  const referer =
+    refererUrl ??
+    (platform === 'instagram'
+      ? 'https://www.instagram.com/'
+      : platform === 'tiktok'
+        ? 'https://www.tiktok.com/'
+        : null);
+  if (referer) headers['Referer'] = referer;
+  // Origin pairs with Referer for cross-site fetches.
+  if (platform === 'tiktok') headers['Origin'] = 'https://www.tiktok.com';
+  else if (platform === 'instagram') headers['Origin'] = 'https://www.instagram.com';
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -153,9 +189,18 @@ async function fetchVideoBytes(url: string): Promise<Uint8Array> {
   }
 
   if (resp.status >= 400 && resp.status < 500) {
+    // 206 Partial Content is OK when a Range header was honoured; only
+    // 4xx terminal codes should fail. Log the actual status so a 403
+    // (auth) is distinguishable from a 410 (gone / expired URL) etc.
+    console.error(
+      'extract-proxy/video: fetch-4xx',
+      'status=' + resp.status,
+      'platform=' + (platform ?? 'unknown'),
+    );
     throw new VideoError('video-fetch-4xx', 502);
   }
-  if (!resp.ok) {
+  if (!resp.ok && resp.status !== 206) {
+    console.error('extract-proxy/video: fetch-5xx', 'status=' + resp.status);
     throw new VideoError('video-fetch-5xx', 502);
   }
 

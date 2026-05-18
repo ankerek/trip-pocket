@@ -162,6 +162,11 @@ export async function orchestrate(
       video: {
         url: fetched.videoUrl,
         durationSec: fetched.videoDuration ?? undefined,
+        // Use the canonical post URL as Referer for the CDN fetch.
+        // TikTok's CDN rejects playAddr URLs that don't carry the
+        // per-video page URL here; IG's videoUrl historically tolerates
+        // homepage Referer but the per-post URL is friendlier.
+        refererUrl: fetched.permalink,
       },
       caption: fetched.caption,
     };
