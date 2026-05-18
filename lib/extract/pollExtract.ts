@@ -32,13 +32,14 @@ export type ExtractedPlace = {
 };
 
 export type ExtractState =
-  | { status: 'pending'; contentHash?: string }
+  | { status: 'pending'; contentHash?: string; startedAt?: string }
   | {
       status: 'partial';
       contentHash?: string;
       caption?: string;
       coverUrl?: string;
       videoPresent?: boolean;
+      startedAt?: string;
     }
   | {
       status: 'done';
@@ -65,9 +66,41 @@ export type PollExtractOptions = {
   url?: string;
 };
 
+/**
+ * Mirrors the orchestrator's STALE_PENDING_MS. If a pending/partial state
+ * in KV is older than this, the worker isolate that owned the pipeline
+ * is presumed dead (Workers Free `ctx.waitUntil` budget exhausted, etc.)
+ * and a new POST will trigger the orchestrator's stale-pending re-run.
+ */
+const STALE_PENDING_MS = 5 * 60_000;
+
+async function postExtract(opts: PollExtractOptions): Promise<void> {
+  if (!opts.url) return;
+  await fetch(`${opts.workerBase}/extract`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-RC-User-Id': opts.rcUserId,
+    },
+    body: JSON.stringify({
+      contentHash: opts.contentHash,
+      kind: 'url',
+      url: opts.url,
+    }),
+  });
+}
+
+function isStaleStartedAt(startedAt: string | undefined): boolean {
+  if (!startedAt) return false;
+  const t = Date.parse(startedAt);
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t > STALE_PENDING_MS;
+}
+
 export async function pollExtract(opts: PollExtractOptions): Promise<ExtractState> {
   const getUrl = `${opts.workerBase}/extract/${opts.contentHash}`;
-  let triggered = false;
+  let missingTriggered = false;
+  let staleTriggered = false;
 
   for (let attempt = 0; attempt < opts.maxAttempts; attempt++) {
     const resp = await fetch(getUrl, {
@@ -76,20 +109,9 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
     });
 
     if (resp.status === 404) {
-      if (opts.triggerOnMissing && opts.url && !triggered) {
-        triggered = true;
-        await fetch(`${opts.workerBase}/extract`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'X-RC-User-Id': opts.rcUserId,
-          },
-          body: JSON.stringify({
-            contentHash: opts.contentHash,
-            kind: 'url',
-            url: opts.url,
-          }),
-        });
+      if (opts.triggerOnMissing && opts.url && !missingTriggered) {
+        missingTriggered = true;
+        await postExtract(opts);
         if (attempt < opts.maxAttempts - 1) await sleep(opts.delayMs);
         continue;
       }
@@ -106,6 +128,19 @@ export async function pollExtract(opts: PollExtractOptions): Promise<ExtractStat
     if (body.status === 'done') return body;
     if (body.status === 'error') return body;
     if (body.status === 'pending' || body.status === 'partial') {
+      // Stale-state recovery: if the worker wrote this state more than
+      // STALE_PENDING_MS ago, the pipeline isolate is presumed dead.
+      // POST /extract once to wake the orchestrator's stale-pending
+      // re-run path; subsequent polls then see the new attempt's state.
+      if (
+        opts.triggerOnMissing &&
+        opts.url &&
+        !staleTriggered &&
+        isStaleStartedAt(body.startedAt)
+      ) {
+        staleTriggered = true;
+        await postExtract(opts);
+      }
       if (attempt < opts.maxAttempts - 1) await sleep(opts.delayMs);
       continue;
     }

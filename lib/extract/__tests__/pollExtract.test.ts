@@ -159,4 +159,97 @@ describe('pollExtract', () => {
     })) as ExtractState;
     expect(result.status).toBe('error');
   });
+
+  it('retriggers via POST when the first GET returns pending with a stale startedAt', async () => {
+    // ctx.waitUntil exhausted on a prior worker isolate → KV stuck on
+    // pending. The orchestrator's stale-pending check will re-run when a
+    // new POST arrives, so pollExtract POSTs once before continuing to
+    // poll.
+    const calls: Array<{ url: string; method: string }> = [];
+    const stalePending = {
+      contentHash: HASH,
+      status: 'pending',
+      startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    };
+    globalThis.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      // GET #1 → stale pending; GET #2 → done; POST is the retrigger.
+      if (method === 'POST') return rjson({ status: 'pending' }, 202);
+      if (calls.filter((c) => c.method === 'GET').length === 1) {
+        return rjson(stalePending, 200);
+      }
+      return rjson({ status: 'done', places: [], model: 'm' }, 200);
+    }) as unknown as typeof fetch;
+
+    const result = await pollExtract({
+      contentHash: HASH,
+      rcUserId: VALID_ID,
+      workerBase: 'https://w.test',
+      maxAttempts: 5,
+      delayMs: 1,
+      triggerOnMissing: true,
+      url: 'https://www.instagram.com/reel/a/',
+    });
+    expect(result.status).toBe('done');
+    const posts = calls.filter((c) => c.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.url).toBe('https://w.test/extract');
+  });
+
+  it('does NOT retrigger when pending state is fresh (still within stale window)', async () => {
+    const calls: Array<{ method: string }> = [];
+    const freshPending = {
+      contentHash: HASH,
+      status: 'pending',
+      startedAt: new Date().toISOString(),
+    };
+    globalThis.fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ method });
+      if (method === 'POST') return rjson({ status: 'pending' }, 202);
+      if (calls.filter((c) => c.method === 'GET').length < 3) return rjson(freshPending, 200);
+      return rjson({ status: 'done', places: [], model: 'm' }, 200);
+    }) as unknown as typeof fetch;
+    const result = await pollExtract({
+      contentHash: HASH,
+      rcUserId: VALID_ID,
+      workerBase: 'https://w.test',
+      maxAttempts: 5,
+      delayMs: 1,
+      triggerOnMissing: true,
+      url: 'https://www.instagram.com/reel/a/',
+    });
+    expect(result.status).toBe('done');
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('only retriggers stale-pending once per pollExtract call', async () => {
+    const stalePending = {
+      contentHash: HASH,
+      status: 'pending',
+      startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    };
+    const calls: Array<{ method: string }> = [];
+    globalThis.fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ method });
+      // Permanently stale → if pollExtract retriggered every cycle, we'd
+      // see N POSTs. We expect exactly one.
+      if (method === 'POST') return rjson({ status: 'pending' }, 202);
+      return rjson(stalePending, 200);
+    }) as unknown as typeof fetch;
+    const result = await pollExtract({
+      contentHash: HASH,
+      rcUserId: VALID_ID,
+      workerBase: 'https://w.test',
+      maxAttempts: 4,
+      delayMs: 1,
+      triggerOnMissing: true,
+      url: 'https://www.instagram.com/reel/a/',
+    });
+    expect(result.status).toBe('timeout');
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+  });
 });

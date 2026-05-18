@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import Purchases from 'react-native-purchases';
 import { Directory, File, Paths } from 'expo-file-system';
 import type { Database } from '@/modules/storage/db';
+import { notifyChange } from '@/modules/storage/live-query';
 import { pollExtract } from '@/lib/extract/pollExtract';
 import { applyExtractDone } from './applyExtractDone';
 import { getAppGroupContainerUri } from './paths';
@@ -89,6 +90,17 @@ async function pollAndApplyOne(
     console.warn('[poll-extract] failed for', row.id, err);
     return;
   }
+  // Terminal worker error (KV has status='error'): surface to the source
+  // row so the user sees a failed import rather than an eternally-pending
+  // one. Mirrors the legacy extractor's failure marker. Note: 'timeout'
+  // (poll budget exhausted while state stayed pending/partial) is NOT
+  // a terminal — we leave the source in pending so the next foreground
+  // sweep retries; pollExtract's stale-state retrigger will wake the
+  // orchestrator if the original pipeline died.
+  if (result.status === 'error') {
+    await markSourceFailed(db, row.id, result.error ?? 'worker-error');
+    return;
+  }
   if (result.status !== 'done') return;
 
   let coverPath: string | null = null;
@@ -109,6 +121,30 @@ async function pollAndApplyOne(
     ownerId,
     now: new Date().toISOString(),
   });
+}
+
+/**
+ * Mark a URL source as failed when the worker orchestrator reports a
+ * terminal error. The legacy pipeline tracked per-source retry budgets
+ * and flipped extraction_status='failed' after exhausting them; the
+ * worker-driven path collapses that to "if the orchestrator gave up,
+ * we give up here too." A user-facing retry is a manual re-share, same
+ * as the legacy path.
+ */
+async function markSourceFailed(
+  db: Database,
+  sourceId: string,
+  reason: string,
+): Promise<void> {
+  console.warn('[poll-extract] source failed', sourceId, reason);
+  await db.runAsync(
+    `UPDATE sources
+        SET extraction_status = 'failed', ocr_status = 'failed', updated_at = ?
+      WHERE id = ?`,
+    new Date().toISOString(),
+    sourceId,
+  );
+  notifyChange('sources');
 }
 
 async function getRcUserId(): Promise<string | null> {
